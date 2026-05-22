@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#8e0000"/><stop offset="100%" style="stop-color:#c62828"/></linearGradient></defs>
+  <circle cx="96" cy="96" r="96" fill="url(#bg)"/>
+  <path d="M58 74 L68 128 Q70 136 76 136 L116 136 Q122 136 124 128 L134 74 Z" fill="rgba(255,255,255,0.92)"/>
+  <path d="M127 88 Q148 88 148 104 Q148 120 127 120" fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="7" stroke-linecap="round"/>
+  <ellipse cx="96" cy="77" rx="37" ry="7" fill="#6d3a1f" opacity="0.5"/>
+  <path d="M80 60 Q83 52 80 44" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M96 56 Q99 46 96 38" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M112 60 Q115 52 112 44" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="96" cy="139" rx="45" ry="6" fill="rgba(255,255,255,0.28)"/>
+  <text x="96" y="168" text-anchor="middle" font-family="Georgia,serif" font-size="14" font-weight="bold" fill="white">Nardeen</text>
+</svg>
