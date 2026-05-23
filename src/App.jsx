@@ -245,8 +245,7 @@ export default function NardeenCaffe(){
 // LOGIN — FIX 2: اختيار زبون أو عامل من البداية
 // ═══════════════════════════════════
 function LoginScreen({store,onLogin,showToast,dm}){
-  // شاشة الاختيار محذوفة — دخول الموظفين مباشرة
-  // const [mode,...] replaced with direct staff login
+  const [mode,setMode]=useState("choose"); // "choose" | "staff" | "customer"
   const [username,setUsername]=useState("");
   const [password,setPassword]=useState("");
   const [showPass,setShowPass]=useState(false);
@@ -260,8 +259,11 @@ function LoginScreen({store,onLogin,showToast,dm}){
     else{setError("اسم المستخدم أو كلمة المرور غير صحيحة");setShake(true);setTimeout(()=>setShake(false),600)}
   };
 
-  // دخول الزبون معطّل — يجب أن يمر عبر الكاشير فقط
-  // const enterAsCustomer = () => { ... };
+  const enterAsCustomer=()=>{
+    let guestId=localStorage.getItem("nc_guest_id");
+    if(!guestId){guestId="guest_"+Date.now();localStorage.setItem("nc_guest_id",guestId);}
+    onLogin({id:guestId,username:"guest",name:"زبون",role:"customer",active:true});
+  };
 
   const cafeName=store.settings?.cafeName||"Nardeen Caffe";
   const sig=store.settings?.signature||"بإدارة يحيى داؤود";
@@ -293,9 +295,47 @@ function LoginScreen({store,onLogin,showToast,dm}){
           <p style={{fontSize:13,color:"rgba(255,255,255,0.7)"}}>{sig}</p>
         </div>
 
-        {/* ── دخول الموظفين مباشرة (دخول الزبون معطّل) ── */}
-        {true&&(
+        {/* ── شاشة الاختيار ── */}
+        {mode==="choose"&&(
+          <div style={{animation:"floatUp .4s ease"}}>
+            <p style={{textAlign:"center",color:"rgba(255,255,255,0.85)",fontSize:15,
+              fontWeight:700,marginBottom:20}}>
+              كيف تريد الدخول؟
+            </p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+              {/* زبون */}
+              <div className="role-card" onClick={enterAsCustomer}>
+                <div style={{fontSize:52,marginBottom:12}}>🧑‍💼</div>
+                <div style={{color:"#fff",fontWeight:900,fontSize:18,marginBottom:6}}>زبون</div>
+                <div style={{color:"rgba(255,255,255,0.65)",fontSize:12}}>تصفح القائمة وأطلب مباشرة</div>
+                <div style={{marginTop:14,background:"rgba(255,255,255,0.2)",borderRadius:10,
+                  padding:"8px 0",color:"#fff",fontWeight:700,fontSize:13}}>
+                  دخول فوري ←
+                </div>
+              </div>
+              {/* عامل / موظف */}
+              <div className="role-card" onClick={()=>setMode("staff")}>
+                <div style={{fontSize:52,marginBottom:12}}>👨‍🍳</div>
+                <div style={{color:"#fff",fontWeight:900,fontSize:18,marginBottom:6}}>موظف</div>
+                <div style={{color:"rgba(255,255,255,0.65)",fontSize:12}}>إدارة الطلبات والعمليات</div>
+                <div style={{marginTop:14,background:"rgba(255,255,255,0.2)",borderRadius:10,
+                  padding:"8px 0",color:"#fff",fontWeight:700,fontSize:13}}>
+                  تسجيل دخول ←
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── شاشة دخول الموظف ── */}
+        {mode==="staff"&&(
           <div style={{animation:"floatUp .3s ease"}}>
+            <button onClick={()=>setMode("choose")}
+              style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",
+                color:"#fff",borderRadius:10,padding:"6px 16px",fontSize:13,fontWeight:700,
+                marginBottom:16,cursor:"pointer"}}>
+              ← رجوع
+            </button>
             <div style={{background:"rgba(255,255,255,0.07)",backdropFilter:"blur(14px)",
               border:"1.5px solid rgba(255,255,255,0.15)",borderRadius:20,padding:28,
               animation:shake?"shakeX .5s":"none"}}>
@@ -462,12 +502,10 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
   const [cat,setCat]=useState("all");
   const [notes,setNotes]=useState("");
   const [submitting,setSubmitting]=useState(false);
-  // ── حقول التأكيد قبل الإرسال ──
   const [showConfirm,setShowConfirm]=useState(false);
   const [tableInput,setTableInput]=useState("");
   const [codeInput,setCodeInput]=useState("");
   const [codeError,setCodeError]=useState("");
-
   const settings=store.settings||{};
   const CUR=settings.currency||"ل.س";
   const lang=settings.appLang||"ar";
@@ -477,21 +515,15 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
     codeErr:"❌ Wrong code — ask the cashier",
     tableErr:"Please enter table number",
     sending:"Sending…",confirm:"✓ Confirm & Send",
-    cancel:"Cancel",
-    cartEmpty:"Cart is empty",
-    sent:"Order sent",
-    confirmTitle:"Confirm Order",
-    confirmNote:"Enter your table number and the cashier code to send your order.",
+    cancel:"Cancel",confirmTitle:"Confirm Order",
+    confirmNote:"Enter your table number and cashier code.",
   }:{
     tableLabel:"رقم الطاولة",tablePh:"مثال: 5",
     codeLabel:"رمز الكاشير",codePh:"أدخل الرمز",
     codeErr:"❌ الرمز غير صحيح — اسأل الكاشير",
     tableErr:"يرجى إدخال رقم الطاولة",
     sending:"⏳ جاري الإرسال...",confirm:"✓ تأكيد وإرسال الطلب",
-    cancel:"إلغاء",
-    cartEmpty:"السلة فارغة",
-    sent:"تم إرسال طلبك",
-    confirmTitle:"تأكيد الطلب",
+    cancel:"إلغاء",confirmTitle:"تأكيد الطلب",
     confirmNote:"أدخل رقم طاولتك ورمز الكاشير لإتمام الطلب.",
   };
   const SECRET="narden";
@@ -519,13 +551,11 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
 
-  // ── فتح نافذة التأكيد ──
   const openConfirm=()=>{
-    if(!cart.length){showToast(T.cartEmpty,"error");return;}
+    if(!cart.length){showToast("السلة فارغة","error");return;}
     setTableInput("");setCodeInput("");setCodeError("");setShowConfirm(true);
   };
 
-  // ── إرسال الطلب الفعلي بعد التحقق ──
   const placeOrder=()=>{
     setCodeError("");
     if(!tableInput.trim()){setCodeError(T.tableErr);return;}
@@ -549,10 +579,10 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
       const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
       if(hasDrinks) addNotification(`🍹 طلب زبون #${orderNum} للبار`,[ROLES.BAR],newOrder.id);
       if(hasHookah) addNotification(`💨 طلب نرجيلة #${orderNum}`,[ROLES.HOOKAH],newOrder.id);
-      addNotification(`📋 طلب جديد #${orderNum} من ${user.name} • طاولة ${tableInput}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
+      addNotification(`📋 طلب جديد #${orderNum} من ${user.name} • طاولة ${tableInput.trim()}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
       setCart([]);setNotes("");setSubmitting(false);setShowConfirm(false);
       setTableInput("");setCodeInput("");
-      showToast(`✓ ${T.sent} #${orderNum}`);
+      showToast(`✓ تم إرسال طلبك #${orderNum}`);
       setTab("myorders");
     },700);
   };
@@ -740,59 +770,66 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
 
       {/* ── نافذة تأكيد الطلب ── */}
       {showConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:999,
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:999,
           display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
           onClick={e=>{if(e.target===e.currentTarget)setShowConfirm(false);}}>
           <div style={{background:"var(--card)",borderRadius:20,padding:28,width:"100%",maxWidth:380,
             boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}>
-            <div style={{textAlign:"center",marginBottom:20}}>
-              <div style={{fontSize:44,marginBottom:8}}>🧾</div>
+            <div style={{textAlign:"center",marginBottom:18}}>
+              <div style={{fontSize:44,marginBottom:6}}>🧾</div>
               <h2 style={{fontSize:18,fontWeight:900,marginBottom:6}}>{T.confirmTitle}</h2>
               <p style={{fontSize:13,color:"var(--sub)",lineHeight:1.6}}>{T.confirmNote}</p>
             </div>
-            <div style={{background:"var(--card2)",borderRadius:12,padding:"10px 14px",marginBottom:16,
-              maxHeight:120,overflowY:"auto"}}>
+            {/* ملخص السلة */}
+            <div style={{background:"var(--card2)",borderRadius:12,padding:"10px 14px",
+              marginBottom:14,maxHeight:110,overflowY:"auto"}}>
               {cart.map((c,i)=>(
-                <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"3px 0",
+                <div key={i} style={{display:"flex",justifyContent:"space-between",
+                  fontSize:12,padding:"3px 0",
                   borderBottom:i<cart.length-1?"1px solid var(--border)":"none"}}>
                   <span>{c.emoji} {c.itemName} ×{c.qty}</span>
-                  <span style={{fontWeight:700,color:"#c62828"}}>{(c.price*c.qty).toLocaleString()} {CUR}</span>
+                  <span style={{fontWeight:700,color:"#c62828"}}>
+                    {(c.price*c.qty).toLocaleString()} {CUR}
+                  </span>
                 </div>
               ))}
-              <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,
-                marginTop:8,fontSize:13,color:"#c62828"}}>
+              <div style={{display:"flex",justifyContent:"space-between",
+                fontWeight:900,marginTop:8,fontSize:13,color:"#c62828"}}>
                 <span>{lang==="en"?"Total":"الإجمالي"}</span>
                 <span>{cartTotal.toLocaleString()} {CUR}</span>
               </div>
             </div>
+            {/* رقم الطاولة */}
             <div style={{marginBottom:12}}>
-              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:6,display:"block"}}>
-                🪑 {T.tableLabel}
-              </label>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",
+                marginBottom:6,display:"block"}}>🪑 {T.tableLabel}</label>
               <input className="input" placeholder={T.tablePh} value={tableInput}
                 onChange={e=>{setTableInput(e.target.value);setCodeError("");}}
-                style={{textAlign:"center",fontSize:18,fontWeight:900,letterSpacing:2}}/>
+                style={{textAlign:"center",fontSize:20,fontWeight:900,letterSpacing:3}}/>
             </div>
-            <div style={{marginBottom:16}}>
-              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:6,display:"block"}}>
-                🔑 {T.codeLabel}
-              </label>
-              <input className="input" type="password" placeholder={T.codePh} value={codeInput}
+            {/* رمز الكاشير */}
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",
+                marginBottom:6,display:"block"}}>🔑 {T.codeLabel}</label>
+              <input className="input" type="password" placeholder={T.codePh}
+                value={codeInput}
                 onChange={e=>{setCodeInput(e.target.value);setCodeError("");}}
                 onKeyDown={e=>e.key==="Enter"&&placeOrder()}
-                style={{textAlign:"center",fontSize:18,letterSpacing:4}}/>
+                style={{textAlign:"center",fontSize:20,letterSpacing:5}}/>
             </div>
+            {/* رسالة خطأ */}
             {codeError&&(
-              <div style={{background:"rgba(198,40,40,.15)",color:"#c62828",borderRadius:10,
-                padding:"10px 14px",fontSize:13,fontWeight:700,marginBottom:14,
-                border:"1px solid rgba(198,40,40,.3)",textAlign:"center"}}>
+              <div style={{background:"rgba(198,40,40,.15)",color:"#c62828",
+                borderRadius:10,padding:"10px 14px",fontSize:13,fontWeight:700,
+                marginBottom:14,border:"1px solid rgba(198,40,40,.3)",textAlign:"center"}}>
                 {codeError}
               </div>
             )}
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>setShowConfirm(false)}
-                style={{flex:1,padding:12,borderRadius:12,border:"1.5px solid var(--border)",
-                  background:"none",color:"var(--text)",fontWeight:700,fontSize:14,cursor:"pointer"}}>
+                style={{flex:1,padding:12,borderRadius:12,
+                  border:"1.5px solid var(--border)",background:"none",
+                  color:"var(--text)",fontWeight:700,fontSize:14,cursor:"pointer"}}>
                 {T.cancel}
               </button>
               <button className="btn btn-red" onClick={placeOrder} disabled={submitting}
@@ -803,6 +840,7 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
           </div>
         </div>
       )}
+
     </div>
   );
 }
@@ -1576,28 +1614,21 @@ function DebtsTab({store,user,showToast,dm,settings}){
       const newRemaining=d.remaining-pay;
       return{...d,remaining:newRemaining,settled:newRemaining<=0,settledAt:newRemaining<=0?new Date().toISOString():null};
     }));
-    // سجل الكاش
     store.setCashLog(p=>[{id:Date.now().toString(),orderId:"debt_"+id,orderNum:"دين",amount,at:new Date().toISOString(),by:user.name,type:"debt_payment"},...p]);
-    // ✅ إضافة إلى الإيرادات: طلب بحالة "paid" مع ملاحظة "دين مستوفى"
-    const revenueEntry={
+    // ✅ إضافة الدين المستوفى إلى الإيرادات
+    const revEntry={
       id:"debt_rev_"+id+"_"+Date.now(),
       orderNum:"D-"+(debt?.customerName||id).slice(0,6),
       customerName:(debt?.customerName||"زبون")+" — دين",
-      customerId:"debt",
-      table:"-",
+      customerId:"debt",table:"-",
       items:[{itemId:"debt",itemName:"استيفاء دين",emoji:"💳",qty:1,price:amount}],
-      total:amount,
-      status:"paid",
-      paymentType:"debt_settled",
-      notes:"دين مستوفى — "+((debt?.notes||debt?.customerName)||""),
-      createdAt:new Date().toISOString(),
-      paidAt:new Date().toISOString(),
-      paidBy:user.name,
-      discount:0,
-      isDebtSettlement:true,
+      total:amount,status:"paid",paymentType:"debt_settled",
+      notes:"دين مستوفى — "+(debt?.notes||debt?.customerName||""),
+      createdAt:new Date().toISOString(),paidAt:new Date().toISOString(),
+      paidBy:user.name,discount:0,isDebtSettlement:true,
     };
-    store.setOrders(p=>[revenueEntry,...p]);
-    showToast(`تم استيفاء الدين وإضافته للإيرادات 💳✅`);
+    store.setOrders(p=>[revEntry,...p]);
+    showToast(`✅ تم استيفاء الدين وإضافته للإيرادات`);
   };
 
   const addManualDebt=()=>{
@@ -2512,9 +2543,11 @@ function SettingsTab({store,showToast,dm}){
             <div style={{display:"flex",gap:10}}>
               {[["ar","🇸🇦 عربي"],["en","🇬🇧 English"]].map(([v,l])=>(
                 <button key={v} onClick={()=>setForm(f=>({...f,appLang:v}))}
-                  style={{flex:1,padding:"10px 0",borderRadius:12,border:"none",fontWeight:700,fontSize:14,
-                    cursor:"pointer",background:(form.appLang||"ar")===v?"#c62828":"var(--card2)",
-                    color:(form.appLang||"ar")===v?"#fff":"var(--sub)",transition:"all .2s"}}>
+                  style={{flex:1,padding:"10px 0",borderRadius:12,border:"none",
+                    fontWeight:700,fontSize:14,cursor:"pointer",
+                    background:(form.appLang||"ar")===v?"#c62828":"var(--card2)",
+                    color:(form.appLang||"ar")===v?"#fff":"var(--sub)",
+                    transition:"all .2s"}}>
                   {l}
                 </button>
               ))}
