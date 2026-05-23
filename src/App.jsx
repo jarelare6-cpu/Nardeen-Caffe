@@ -2082,7 +2082,7 @@ function ExpensesTab({store,user,showToast,dm,settings}){
                   </span>
                 </label>
               </div>
-              <button className="btn btn-red" style={{flex:1,background:form.isSecondary?"#f9a825":"undefined"}} onClick={addExpense}>تسجيل</button>
+              <button className="btn btn-red" style={{flex:1,background:form.isSecondary?"#f9a825":undefined}} onClick={addExpense}>تسجيل</button>
               <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setShowAdd(false)}>إلغاء</button>
             </div>
           </div>
@@ -2600,7 +2600,7 @@ function ReportsTab({store,dm,settings}){
 
   const start=getStart();
   const pOrders=store.orders.filter(o=>new Date(o.createdAt)>=start);
-  const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=new Date(dateRange.from)&&new Date(o.paidAt||o.createdAt)<=new Date(dateRange.to+"T23:59:59"));
+  const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=start);
   const revenue=paidOrders.reduce((s,o)=>s+o.total,0);
   const expenses=(store.expenses||[]).filter(e=>new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0);
   const netProfit=revenue-expenses;
