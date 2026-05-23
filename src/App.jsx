@@ -53,7 +53,7 @@ const PERMISSIONS = {
   bar:          ["admin","bar"],
   hookah:       ["admin","hookah"],
   menu:         ["admin"],
-  tables:       ["admin","cashier","worker","bar","hookah"],
+  tables:       ["admin","cashier"],
   staff:        ["admin"],
   reports:      ["admin"],
   debts:        ["admin","cashier"],
@@ -66,45 +66,6 @@ const PERMISSIONS = {
 const canAccess = (role, section) => (PERMISSIONS[section]||[]).includes(role);
 
 // ═══════════════════════════════════
-// PDF ARCHIVE UTILITY
-// ═══════════════════════════════════
-const savePdfArchive=(order,menu,settings)=>{
-  try{
-    const CUR=settings?.currency||"ل.س";
-    const cafeName=settings?.cafeName||"Nardeen Caffe";
-    const html=`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8">
-      <style>body{font-family:sans-serif;padding:20px;direction:rtl;max-width:320px;margin:0 auto}
-      h2{color:#c62828;text-align:center;margin:0 0 4px}
-      .sub{text-align:center;font-size:12px;color:#666;margin-bottom:12px}
-      .row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
-      .total{border-top:2px solid #333;font-weight:900;font-size:15px;margin-top:8px;padding-top:8px}
-      .badge{background:#c62828;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
-      </style></head><body>
-      <h2>☕ ${cafeName}</h2>
-      <div class="sub">${settings?.signature||""}</div>
-      <div class="sub">${new Date(order.createdAt).toLocaleString("ar-SY")}</div>
-      <div class="row"><span>رقم الطلب:</span><span class="badge">#${order.orderNum}</span></div>
-      <div class="row"><span>الزبون:</span><span>${order.customerName||""}</span></div>
-      ${order.table?`<div class="row"><span>الطاولة:</span><span>🪑 ${order.table}</span></div>`:""}
-      <hr/>
-      ${order.items.map(i=>`<div class="row"><span>${i.emoji||""} ${i.itemName} ×${i.qty}</span><span>${(i.price*i.qty).toLocaleString()} ${CUR}</span></div>`).join("")}
-      ${order.discount?`<div class="row" style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${Math.round((order.originalTotal||order.total)*order.discount/100).toLocaleString()} ${CUR}</span></div>`:""}
-      <div class="row total"><span>الإجمالي</span><span style="color:#c62828">${order.total.toLocaleString()} ${CUR}</span></div>
-      ${order.notes?`<div style="margin-top:8px;font-size:11px;color:#666">📝 ${order.notes}</div>`:""}
-      </body></html>`;
-    const archived=JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]");
-    archived.unshift({id:order.id,orderNum:order.orderNum,customerName:order.customerName,table:order.table,total:order.total,createdAt:order.createdAt,html});
-    if(archived.length>200) archived.splice(200);
-    localStorage.setItem("nc_pdf_archive",JSON.stringify(archived));
-  }catch{}
-};
-
-const openPdfArchive=(html)=>{
-  const w=window.open("","_blank","width=400,height=600");
-  if(w){w.document.write(html);w.document.close();}
-};
-
-// ═══════════════════════════════════
 // PRINT WRAPPER
 // ═══════════════════════════════════
 const printOrder = (order, menu, copy, settings) => utilPrint(order, menu, copy, settings);
@@ -112,12 +73,22 @@ const printOrder = (order, menu, copy, settings) => utilPrint(order, menu, copy,
 // ═══════════════════════════════════
 // GLOBAL CSS
 // ═══════════════════════════════════
-const GlobalStyle = ({dm}) => (
+const THEMES = {
+  default: { primary:"#c62828", secondary:"#1565c0", accent:"#f9a825" },
+  green:   { primary:"#2e7d32", secondary:"#1b5e20", accent:"#66bb6a" },
+  purple:  { primary:"#6a1b9a", secondary:"#4a148c", accent:"#ce93d8" },
+  blue:    { primary:"#1565c0", secondary:"#0d47a1", accent:"#42a5f5" },
+  gold:    { primary:"#f57f17", secondary:"#e65100", accent:"#ffd54f" },
+};
+
+const GlobalStyle = ({dm,theme="default"}) => {
+  const t = THEMES[theme]||THEMES.default;
+  return (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
     :root{
-      --red:#c62828;--red-dark:#8e0000;--green:#2e7d32;--gold:#f9a825;
+      --red:${t.primary};--red-dark:${t.secondary};--green:#2e7d32;--gold:${t.accent};
       --bg:${dm?"#0d0d18":"#f4f6fa"};
       --card:${dm?"#16182a":"#ffffff"};
       --card2:${dm?"#1e2035":"#f0f2f8"};
@@ -166,36 +137,16 @@ const GlobalStyle = ({dm}) => (
 );
 
 // ═══════════════════════════════════
-// NOTIFICATION SOUNDS
-// ═══════════════════════════════════
-const SOUNDS={
-  success:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.setValueAtTime(880,a.currentTime);o.frequency.exponentialRampToValueAtTime(1320,a.currentTime+0.1);g.gain.setValueAtTime(0.3,a.currentTime);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.4);o.start(a.currentTime);o.stop(a.currentTime+0.4);}catch{}},
-  error:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.type="sawtooth";o.frequency.setValueAtTime(200,a.currentTime);o.frequency.exponentialRampToValueAtTime(100,a.currentTime+0.3);g.gain.setValueAtTime(0.3,a.currentTime);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.3);o.start(a.currentTime);o.stop(a.currentTime+0.3);}catch{}},
-  warn:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.15].forEach(t=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=660;g.gain.setValueAtTime(0.25,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.12);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.12);});}catch{}},
-  order:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.12,0.24].forEach((t,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=[523,659,784][i];g.gain.setValueAtTime(0.3,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.18);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.18);});}catch{}},
-  ready:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[523,659,784,1047].forEach((f,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f;g.gain.setValueAtTime(0.25,a.currentTime+i*0.1);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+i*0.1+0.15);o.start(a.currentTime+i*0.1);o.stop(a.currentTime+i*0.1+0.15);});}catch{}},
-};
-
-// ═══════════════════════════════════
 // TOAST
 // ═══════════════════════════════════
 function Toast({toast}){
   if(!toast) return null;
-  const cfg={
-    success:{bg:"#2e7d32",icon:"✓"},
-    error:{bg:"#c62828",icon:"✗"},
-    warn:{bg:"#e65100",icon:"⚠"},
-    order:{bg:"#1565c0",icon:"📋"},
-    ready:{bg:"#2e7d32",icon:"✅"},
-  };
-  const c=cfg[toast.type]||cfg.success;
+  const bg = toast.type==="error"?"#c62828":toast.type==="warn"?"#e65100":"#2e7d32";
   return(
     <div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",zIndex:9999,
-      background:c.bg,color:"#fff",padding:"14px 28px",borderRadius:40,fontWeight:700,
-      boxShadow:"0 8px 32px rgba(0,0,0,.35)",fontSize:15,whiteSpace:"nowrap",
-      animation:"fadeIn .3s ease",display:"flex",alignItems:"center",gap:8}}>
-      <span style={{fontSize:18}}>{c.icon}</span>
-      {toast.msg}
+      background:bg,color:"#fff",padding:"12px 24px",borderRadius:40,fontWeight:700,
+      boxShadow:"0 8px 32px rgba(0,0,0,.3)",fontSize:14,whiteSpace:"nowrap",animation:"fadeIn .3s ease"}}>
+      {toast.type==="error"?"✗":toast.type==="warn"?"⚠":"✓"} {toast.msg}
     </div>
   );
 }
@@ -249,22 +200,14 @@ export default function NardeenCaffe(){
   const prevLen=useRef(store.orders.length);
 
   useEffect(()=>{
-    if(store.orders.length>prevLen.current&&user){
-      playOrderAlert();
-      if(store.settings?.notifSound!==false) SOUNDS.order();
-    }
+    if(store.orders.length>prevLen.current&&user) playOrderAlert();
     prevLen.current=store.orders.length;
-  },[store.orders.length,user,store.settings?.notifSound]);
+  },[store.orders.length,user]);
 
   const showToast=useCallback((msg,type="success")=>{
     setToast({msg,type,id:Date.now()});
     setTimeout(()=>setToast(null),3500);
-    // Play sound based on type
-    if(store.settings?.notifSound!==false){
-      if(SOUNDS[type]) SOUNDS[type]();
-      else SOUNDS.success();
-    }
-  },[store.settings?.notifSound]);
+  },[]);
 
   const login=(u)=>{
     const u2={...u,lastLogin:new Date().toISOString()};
@@ -292,7 +235,7 @@ export default function NardeenCaffe(){
   return(
     <div style={{fontFamily:"'Tajawal',sans-serif",direction:"rtl",minHeight:"100vh",
       background:"var(--bg)",color:"var(--text)",transition:"background .3s,color .3s"}}>
-      <GlobalStyle dm={dm}/>
+      <GlobalStyle dm={dm} theme={store.settings?.appTheme||"default"}/>
       <Toast toast={toast}/>
       <PWABanner/>
       {screen==="login"&&<LoginScreen store={store} onLogin={login} showToast={showToast} dm={dm}/>}
@@ -642,7 +585,6 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
         if(!ci) return m;
         return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
       }));
-      savePdfArchive(newOrder,store.menu,settings);
       const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
       const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
       if(hasDrinks) addNotification(`🍹 طلب زبون #${orderNum} للبار`,[ROLES.BAR],newOrder.id);
@@ -1045,7 +987,8 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
 
       {/* Content */}
       <main style={{flex:1,padding:16,maxWidth:1280,width:"100%",margin:"0 auto"}}>
-        {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings}/>}
+        {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} key={store.orders.length+"_"+store.orders.filter(o=>o.status==="paid").length}/>}
+        {tab==="inventory"  &&canAccess(user.role,"dashboard") &&<InventoryTab   store={store} settings={settings}/>}
         {tab==="order"      &&canAccess(user.role,"order")     &&<NewOrderTab    store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="orders"     &&canAccess(user.role,"orders")    &&<OrdersTab      store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="cashier"    &&canAccess(user.role,"cashier")   &&<CashierTab     store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
@@ -1057,7 +1000,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
-        {tab==="settings"   &&canAccess(user.role,"settings")  &&<SettingsTab    store={store} showToast={showToast} dm={dm}/>}
+        {tab==="settings"   &&canAccess(user.role,"settings")  &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
       </main>
       <div style={{height:"env(safe-area-inset-bottom,0px)"}}/>
     </div>
@@ -1182,6 +1125,134 @@ function DashboardTab({store,dm,settings}){
 // ═══════════════════════════════════
 // ORDER TIMER (shared component)
 // ═══════════════════════════════════
+// ══════════════════════════════════════
+// DAILY INVENTORY TAB
+// ══════════════════════════════════════
+function InventoryTab({store,settings}){
+  const CUR=settings?.currency||"ل.س";
+  const today=new Date(); today.setHours(0,0,0,0);
+
+  const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
+  const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
+
+  // مصاريف عادية (تدخل الجرد)
+  const primaryExp=(store.expenses||[]).filter(e=>!e.isSecondary&&new Date(e.date)>=today);
+  const primaryTotal=primaryExp.reduce((s,e)=>s+e.amount,0);
+
+  // مصاريف ثانوية (لا تدخل الجرد)
+  const secondaryExp=(store.expenses||[]).filter(e=>e.isSecondary&&new Date(e.date)>=today);
+  const secondaryTotal=secondaryExp.reduce((s,e)=>s+e.amount,0);
+
+  const net=todayRevenue-primaryTotal;
+
+  const [showSec,setShowSec]=useState(false);
+
+  return(
+    <div className="fade-in">
+      <h2 style={{fontSize:18,fontWeight:900,marginBottom:16}}>📊 الجرد اليومي</h2>
+
+      {/* بطاقات الملخص */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:18}}>
+        <div className="card" style={{borderTop:"4px solid #2e7d32",textAlign:"center"}}>
+          <div style={{fontSize:22,marginBottom:4}}>💵</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>الإيرادات</div>
+          <div style={{fontSize:18,fontWeight:900,color:"#2e7d32"}}>{todayRevenue.toLocaleString()} {CUR}</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>{todayPaid.length} طلب</div>
+        </div>
+        <div className="card" style={{borderTop:"4px solid #c62828",textAlign:"center"}}>
+          <div style={{fontSize:22,marginBottom:4}}>📤</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>المصاريف</div>
+          <div style={{fontSize:18,fontWeight:900,color:"#c62828"}}>{primaryTotal.toLocaleString()} {CUR}</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>{primaryExp.length} بند</div>
+        </div>
+        <div className="card" style={{borderTop:`4px solid ${net>=0?"#1565c0":"#e65100"}`,textAlign:"center"}}>
+          <div style={{fontSize:22,marginBottom:4}}>{net>=0?"📈":"📉"}</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>صافي اليوم</div>
+          <div style={{fontSize:18,fontWeight:900,color:net>=0?"#1565c0":"#e65100"}}>{net.toLocaleString()} {CUR}</div>
+        </div>
+      </div>
+
+      {/* تفاصيل الإيرادات */}
+      <div className="card" style={{marginBottom:14}}>
+        <h3 style={{fontSize:14,fontWeight:800,marginBottom:12,color:"#2e7d32"}}>✅ الطلبات المدفوعة</h3>
+        {todayPaid.length===0?<p style={{color:"var(--sub)",fontSize:13}}>لا توجد طلبات مدفوعة اليوم</p>:
+          todayPaid.map(o=>(
+            <div key={o.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",
+              borderBottom:"1px solid var(--border)",fontSize:13}}>
+              <span>#{o.orderNum} — {o.customerName}</span>
+              <span style={{fontWeight:700,color:"#2e7d32"}}>{o.total.toLocaleString()} {CUR}</span>
+            </div>
+          ))
+        }
+        <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,
+          marginTop:10,fontSize:14,color:"#2e7d32",borderTop:"2px solid #2e7d32",paddingTop:8}}>
+          <span>الإجمالي</span><span>{todayRevenue.toLocaleString()} {CUR}</span>
+        </div>
+      </div>
+
+      {/* تفاصيل المصاريف */}
+      <div className="card" style={{marginBottom:14}}>
+        <h3 style={{fontSize:14,fontWeight:800,marginBottom:12,color:"#c62828"}}>📤 المصاريف الأساسية</h3>
+        {primaryExp.length===0?<p style={{color:"var(--sub)",fontSize:13}}>لا توجد مصاريف اليوم</p>:
+          primaryExp.map(e=>(
+            <div key={e.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",
+              borderBottom:"1px solid var(--border)",fontSize:13}}>
+              <span>{e.label}</span>
+              <span style={{fontWeight:700,color:"#c62828"}}>{e.amount.toLocaleString()} {CUR}</span>
+            </div>
+          ))
+        }
+        <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,
+          marginTop:10,fontSize:14,color:"#c62828",borderTop:"2px solid #c62828",paddingTop:8}}>
+          <span>الإجمالي</span><span>{primaryTotal.toLocaleString()} {CUR}</span>
+        </div>
+      </div>
+
+      {/* صافي اليوم */}
+      <div className="card" style={{borderTop:`4px solid ${net>=0?"#1565c0":"#e65100"}`,marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:16,fontWeight:900}}>🧾 صافي اليوم</span>
+          <span style={{fontSize:22,fontWeight:900,color:net>=0?"#1565c0":"#e65100"}}>
+            {net.toLocaleString()} {CUR}
+          </span>
+        </div>
+        <div style={{fontSize:12,color:"var(--sub)",marginTop:4}}>
+          {todayRevenue.toLocaleString()} إيرادات — {primaryTotal.toLocaleString()} مصاريف
+        </div>
+      </div>
+
+      {/* المصاريف الثانوية */}
+      <div className="card" style={{borderTop:"4px solid #f9a825"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:showSec?12:0}}>
+          <h3 style={{fontSize:14,fontWeight:800,color:"#f9a825"}}>⭐ المصاريف الثانوية</h3>
+          <button onClick={()=>setShowSec(s=>!s)}
+            style={{padding:"4px 12px",borderRadius:8,border:"none",
+              background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+            {showSec?"إخفاء":"عرض"} ({secondaryExp.length})
+          </button>
+        </div>
+        {showSec&&(
+          <>
+            {secondaryExp.length===0?<p style={{color:"var(--sub)",fontSize:13}}>لا توجد مصاريف ثانوية اليوم</p>:
+              secondaryExp.map(e=>(
+                <div key={e.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",
+                  borderBottom:"1px solid var(--border)",fontSize:13}}>
+                  <span>{e.label}</span>
+                  <span style={{fontWeight:700,color:"#f9a825"}}>{e.amount.toLocaleString()} {CUR}</span>
+                </div>
+              ))
+            }
+            <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,
+              marginTop:10,fontSize:14,color:"#f9a825",borderTop:"2px solid #f9a825",paddingTop:8}}>
+              <span>إجمالي الثانوية</span><span>{secondaryTotal.toLocaleString()} {CUR}</span>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OrderTimer({createdAt,dm,warnAfter=600}){
   const [elapsed,setElapsed]=useState(Math.floor((Date.now()-new Date(createdAt))/1000));
   useEffect(()=>{const t=setInterval(()=>setElapsed(e=>e+1),1000);return()=>clearInterval(t);},[]);
@@ -1205,8 +1276,11 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [tableNum,setTableNum]=useState("");
   const [notes,setNotes]=useState("");
   const [customerName,setCustomerName]=useState("");
+  const [discount,setDiscount]=useState(0);
   const [submitting,setSubmitting]=useState(false);
   const CUR=settings?.currency||"ل.س";
+  const maxDiscount=settings?.maxDiscount??50;
+  const isAdmin=user.role===ROLES.ADMIN;
 
   const filtered=store.menu.filter(m=>{
     const ms=m.name.toLowerCase().includes(search.toLowerCase())||(m.nameEn||"").toLowerCase().includes(search.toLowerCase());
@@ -1227,6 +1301,8 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
 
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
+  const discountAmt=Math.round(cartTotal*Math.min(discount,maxDiscount)/100);
+  const finalTotal=cartTotal-discountAmt;
 
   const placeOrder=()=>{
     if(!cart.length){showToast("السلة فارغة","error");return}
@@ -1238,7 +1314,7 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         id:Date.now().toString(),orderNum,
         customerId:user.id,customerName:customerName||user.name,
         workerName:user.name,table:tableNum,notes,items:cart,
-        total:cartTotal,originalTotal:cartTotal,discount:0,
+        total:finalTotal,originalTotal:cartTotal,discount,
         paymentType:"cash",
         status:ORDER_STATUS.PENDING,
         createdAt:new Date().toISOString(),paymentStatus:"pending",
@@ -1257,8 +1333,7 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
       printOrder(newOrder,store.menu,1,settings);
       setTimeout(()=>printOrder(newOrder,store.menu,2,settings),600);
-      savePdfArchive(newOrder,store.menu,settings);
-      setCart([]);setTableNum("");setNotes("");setCustomerName("");
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
       setSubmitting(false);
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
     },800);
@@ -1319,6 +1394,13 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           <input className="input" placeholder="🪑 رقم الطاولة" value={tableNum} onChange={e=>setTableNum(e.target.value)} style={{fontSize:13}}/>
           <input className="input" placeholder="👤 اسم الزبون (اختياري)" value={customerName} onChange={e=>setCustomerName(e.target.value)} style={{fontSize:13}}/>
           <textarea className="input" placeholder="📝 ملاحظات..." value={notes} onChange={e=>setNotes(e.target.value)} style={{resize:"none",height:50,fontSize:13}}/>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <label style={{fontSize:12,color:"var(--sub)",whiteSpace:"nowrap"}}>خصم %</label>
+            <input className="input" type="number" min="0" max={isAdmin?100:maxDiscount} value={discount}
+              onChange={e=>setDiscount(Math.min(isAdmin?100:maxDiscount,Math.max(0,+e.target.value)))}
+              style={{fontSize:13}}/>
+          </div>
+
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}} className="scroll-hide">
           {!cart.length?(
@@ -1342,9 +1424,19 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           ))}
         </div>
         <div style={{padding:"12px 14px",borderTop:"2px solid var(--border)"}}>
+          {discount>0&&(
+            <>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:3,fontSize:12,color:"var(--sub)"}}>
+                <span>قبل الخصم</span><span>{cartTotal.toLocaleString()} {CUR}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:12,color:"#2e7d32",fontWeight:700}}>
+                <span>خصم {discount}%</span><span>-{discountAmt.toLocaleString()} {CUR}</span>
+              </div>
+            </>
+          )}
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,fontSize:15,fontWeight:900}}>
             <span>الإجمالي</span>
-            <span style={{color:"#c62828"}}>{cartTotal.toLocaleString()} {CUR}</span>
+            <span style={{color:"#c62828"}}>{finalTotal.toLocaleString()} {CUR}</span>
           </div>
 
           <button onClick={placeOrder} disabled={submitting||!cart.length}
@@ -1354,6 +1446,50 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           </button>
         </div>
       </div>
+
+      {/* ── modal تسجيل الدين ── */}
+      {debtModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:999,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
+          onClick={e=>{if(e.target===e.currentTarget)setDebtModal(null);}}>
+          <div style={{background:"var(--card)",borderRadius:20,padding:28,width:"100%",maxWidth:380,
+            boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}>
+            <div style={{textAlign:"center",marginBottom:18}}>
+              <div style={{fontSize:44,marginBottom:6}}>💳</div>
+              <h2 style={{fontSize:18,fontWeight:900,marginBottom:4}}>تسجيل دين</h2>
+              <p style={{fontSize:13,color:"var(--sub)"}}>طلب #{debtModal.orderNum} — {debtModal.total.toLocaleString()} {CUR}</p>
+            </div>
+            <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:6,display:"block"}}>
+              👤 اسم الزبون <span style={{color:"#c62828"}}>*</span>
+            </label>
+            <input className="input" placeholder="أدخل اسم الزبون..." value={debtNameInput}
+              autoFocus
+              onChange={e=>{setDebtNameInput(e.target.value);setDebtNameError("");}}
+              onKeyDown={e=>e.key==="Enter"&&confirmDebt()}
+              style={{marginBottom:10,fontSize:16,fontWeight:700}}/>
+            {debtNameError&&(
+              <div style={{background:"rgba(198,40,40,.15)",color:"#c62828",borderRadius:10,
+                padding:"8px 14px",fontSize:13,fontWeight:700,marginBottom:12,
+                border:"1px solid rgba(198,40,40,.3)"}}>
+                {debtNameError}
+              </div>
+            )}
+            <div style={{display:"flex",gap:10,marginTop:4}}>
+              <button onClick={()=>setDebtModal(null)}
+                style={{flex:1,padding:12,borderRadius:12,border:"1.5px solid var(--border)",
+                  background:"none",color:"var(--text)",fontWeight:700,cursor:"pointer"}}>
+                إلغاء
+              </button>
+              <button onClick={confirmDebt}
+                style={{flex:2,padding:12,borderRadius:12,border:"none",
+                  background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>
+                ✓ تسجيل الدين
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1545,44 +1681,39 @@ function OrdersTab({store,user,showToast,addNotification,dm,settings}){
 // ═══════════════════════════════════
 function CashierTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
-  const maxDiscount=settings?.maxDiscount??50;
-  const isAdmin=user.role===ROLES.ADMIN;
-  const [discounts,setDiscounts]=useState({});
   const today=new Date();today.setHours(0,0,0,0);
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
   const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
   const readyOrders=store.orders.filter(o=>o.status==="ready");
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
 
-  const getDiscount=(orderId)=>discounts[orderId]||0;
-  const setDiscount=(orderId,val)=>setDiscounts(p=>({...p,[orderId]:Math.min(isAdmin?100:maxDiscount,Math.max(0,val))}));
-  const getFinal=(order)=>{
-    const d=getDiscount(order.id);
-    return{disc:d,amt:Math.round(order.total*d/100),final:order.total-Math.round(order.total*d/100)};
+  const markPaid=(order)=>{
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"paid",paymentStatus:"paid",paidAt:new Date().toISOString(),paidBy:user.id}:o));
+    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,amount:order.total,at:new Date().toISOString(),by:user.name},...p]);
+    showToast(`تم استلام الدفع للطلب #${order.orderNum} 💰`);
   };
 
-  const markPaid=(order)=>{
-    const {disc,amt,final}=getFinal(order);
-    const updated={...order,status:"paid",paymentStatus:"paid",
-      paidAt:new Date().toISOString(),paidBy:user.id,
-      discount:disc,originalTotal:order.total,total:final};
-    store.setOrders(p=>p.map(o=>o.id===order.id?updated:o));
-    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,
-      amount:final,at:new Date().toISOString(),by:user.name},...p]);
-    savePdfArchive(updated,store.menu,settings);
-    showToast(`تم استلام الدفع للطلب #${order.orderNum} 💰`);
-    setDiscounts(p=>{const n={...p};delete n[order.id];return n;});
-  };
+  const [debtModal,setDebtModal]=useState(null);
+  const [debtNameInput,setDebtNameInput]=useState("");
+  const [debtNameError,setDebtNameError]=useState("");
 
   const markDebt=(order)=>{
-    const cName=window.prompt(`اسم الزبون لتسجيل الدين (طلب #${order.orderNum}):`)||order.customerName;
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"debt",paymentStatus:"debt",paymentType:"debt"}:o));
+    setDebtNameInput(order.customerName!=="زبون"?order.customerName:"");
+    setDebtNameError("");
+    setDebtModal(order);
+  };
+
+  const confirmDebt=()=>{
+    if(!debtNameInput.trim()){setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين");return;}
+    const order=debtModal;
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"debt",paymentStatus:"debt",paymentType:"debt",customerName:debtNameInput.trim()}:o));
     store.setDebts(p=>[{
       id:"d"+Date.now(),orderId:order.id,orderNum:order.orderNum,
-      customerName:cName,amount:order.total,remaining:order.total,
+      customerName:debtNameInput.trim(),amount:order.total,remaining:order.total,
       date:new Date().toISOString(),settled:false,settledAt:null,createdBy:user.name,notes:order.notes||"",
     },...p]);
     showToast(`تم تسجيل الدين للطلب #${order.orderNum} 💳`,"warn");
+    setDebtModal(null);setDebtNameInput("");
   };
 
   return(
@@ -1610,50 +1741,12 @@ function CashierTab({store,user,showToast,dm,settings}){
               <div key={order.id} className="card" style={{borderRight:"4px solid #2e7d32"}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
                   <span style={{fontWeight:900}}># {order.orderNum}</span>
-                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    {order.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",fontSize:11,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 طاولة {order.table}</span>}
-                    <span style={{background:"rgba(46,125,50,.15)",color:"#2e7d32",fontSize:10,padding:"2px 8px",borderRadius:6,fontWeight:700}}>✅ جاهز</span>
-                  </div>
+                  {order.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",fontSize:11,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 {order.table}</span>}
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,background:"rgba(21,101,192,.07)",borderRadius:8,padding:"6px 10px"}}>
-                  <span style={{fontSize:18}}>👤</span>
-                  <div>
-                    <div style={{fontWeight:800,fontSize:13,color:"#1565c0"}}>{order.customerName||"زبون"}</div>
-                    {order.workerName&&<div style={{fontSize:10,color:"var(--sub)"}}>سجّل: {order.workerName}</div>}
-                  </div>
-                  {/* Flag if another order exists for same table - different customer */}
-                  {readyOrders.filter(o=>o.table===order.table&&o.id!==order.id).length>0&&(
-                    <span style={{marginRight:"auto",background:"#fff3e0",color:"#e65100",fontSize:10,padding:"2px 6px",borderRadius:6,fontWeight:700}}>
-                      ⚠ {readyOrders.filter(o=>o.table===order.table&&o.id!==order.id).length} زبون آخر بنفس الطاولة
-                    </span>
-                  )}
-                </div>
-                {order.items.map((i,idx)=><div key={idx} style={{fontSize:12,padding:"1px 4px"}}>{i.emoji} {i.itemName} ×{i.qty} <span style={{color:"#c62828",fontWeight:700}}>— {(i.price*i.qty).toLocaleString()} {CUR}</span></div>)}
-                {/* حقل الخصم — يظهر عند الكاشير فقط قبل الدفع */}
-                <div style={{marginTop:10,padding:"10px",background:"var(--card2)",borderRadius:10}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                    <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",whiteSpace:"nowrap"}}>🏷 خصم %</label>
-                    <input type="number" min="0" max={isAdmin?100:maxDiscount} value={getDiscount(order.id)||""}
-                      onChange={e=>setDiscount(order.id,+e.target.value)}
-                      placeholder="0"
-                      style={{flex:1,padding:"6px 10px",border:"1.5px solid var(--border)",borderRadius:8,
-                        fontSize:13,fontWeight:700,background:"var(--card)",color:"var(--text)",textAlign:"center"}}/>
-                  </div>
-                  {getDiscount(order.id)>0&&(
-                    <div style={{fontSize:12}}>
-                      <div style={{display:"flex",justifyContent:"space-between",color:"var(--sub)"}}>
-                        <span>قبل الخصم</span><span>{order.total.toLocaleString()} {CUR}</span>
-                      </div>
-                      <div style={{display:"flex",justifyContent:"space-between",color:"#2e7d32",fontWeight:700}}>
-                        <span>الخصم {getDiscount(order.id)}%</span>
-                        <span>-{getFinal(order).amt.toLocaleString()} {CUR}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:16,borderTop:"1px dashed var(--border)",paddingTop:8}}>
-                  المجموع: {getFinal(order).final.toLocaleString()} {CUR}
-                </div>
+                <div style={{fontSize:12,color:"var(--sub)",marginBottom:6}}>👤 {order.customerName}</div>
+                {order.items.map((i,idx)=><div key={idx} style={{fontSize:12,padding:"1px 0"}}>{i.emoji} {i.itemName} ×{i.qty}</div>)}
+                {order.discount>0&&<div style={{fontSize:11,color:"#2e7d32",marginTop:4}}>خصم {order.discount}%</div>}
+                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:14}}>{order.total.toLocaleString()} {CUR}</div>
                 <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
                   <button onClick={()=>markPaid(order)}
                     style={{flex:1,minWidth:90,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
@@ -1871,7 +1964,7 @@ function ExpensesTab({store,user,showToast,dm,settings}){
   const today=new Date();today.setHours(0,0,0,0);
   const [showAdd,setShowAdd]=useState(false);
   const [period,setPeriod]=useState("today");
-  const [form,setForm]=useState({description:"",amount:"",category:"other",notes:""});
+  const [form,setForm]=useState({description:"",amount:"",category:"other",notes:"",isSecondary:false});
 
   const expCats=[
     {id:"supplies",label:"🛒 مستلزمات"},
@@ -1897,11 +1990,13 @@ function ExpensesTab({store,user,showToast,dm,settings}){
   const addExpense=()=>{
     if(!form.description||!form.amount){showToast("يرجى ملء الحقول","error");return}
     store.setExpenses(p=>[{
-      id:"exp"+Date.now(),description:form.description,amount:+form.amount,
+      id:"exp"+Date.now(),description:form.description,label:form.description,amount:+form.amount,
       category:form.category,notes:form.notes,
-      date:new Date().toISOString(),createdBy:user.name,
+      date:new Date().toISOString(),createdBy:user.name,by:user.name,
+      isSecondary:form.isSecondary||false,
     },...p]);
-    showToast("تم تسجيل المصروف");setShowAdd(false);setForm({description:"",amount:"",category:"other",notes:""});
+    showToast(form.isSecondary?"تم تسجيل المصروف الثانوي ⭐":"تم تسجيل المصروف");
+    setShowAdd(false);setForm({description:"",amount:"",category:"other",notes:"",isSecondary:false});
   };
 
   return(
@@ -1973,7 +2068,20 @@ function ExpensesTab({store,user,showToast,dm,settings}){
               <textarea className="input" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={{height:60,resize:"none"}}/>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn btn-red" style={{flex:1}} onClick={addExpense}>تسجيل</button>
+              <div style={{marginBottom:10}}>
+                <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",
+                  padding:"10px 14px",borderRadius:12,
+                  background:form.isSecondary?"rgba(249,168,37,.15)":"var(--card2)",
+                  border:form.isSecondary?"1.5px solid #f9a825":"1.5px solid var(--border)"}}>
+                  <input type="checkbox" checked={form.isSecondary||false}
+                    onChange={e=>setForm(f=>({...f,isSecondary:e.target.checked}))}
+                    style={{width:18,height:18,accentColor:"#f9a825"}}/>
+                  <span style={{fontWeight:700,fontSize:13,color:form.isSecondary?"#f9a825":"var(--text)"}}>
+                    ⭐ مصروف ثانوي (لا يدخل في الجرد اليومي)
+                  </span>
+                </label>
+              </div>
+              <button className="btn btn-red" style={{flex:1,background:form.isSecondary?"#f9a825":"undefined"}} onClick={addExpense}>تسجيل</button>
               <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setShowAdd(false)}>إلغاء</button>
             </div>
           </div>
@@ -2186,20 +2294,10 @@ function HookahTab({store,user,showToast,addNotification,dm,settings}){
 function MenuTab({store,showToast,dm,settings}){
   const [showForm,setShowForm]=useState(false);
   const [editItem,setEditItem]=useState(null);
-  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕",image:""});
+  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕"});
   const [cat,setCat]=useState("all");
-  const imgRef=useRef(null);
 
   const filtered=cat==="all"?store.menu:store.menu.filter(m=>m.category===cat);
-
-  const handleImageUpload=(e)=>{
-    const file=e.target.files[0];
-    if(!file) return;
-    if(file.size>2*1024*1024){showToast("الصورة أكبر من 2MB","error");return;}
-    const reader=new FileReader();
-    reader.onload=(ev)=>setForm(f=>({...f,image:ev.target.result,emoji:""}));
-    reader.readAsDataURL(file);
-  };
 
   const save=()=>{
     if(!form.name||!form.price){showToast("يرجى ملء الحقول الأساسية","error");return}
@@ -2210,12 +2308,12 @@ function MenuTab({store,showToast,dm,settings}){
       store.setMenu(p=>[...p,{id:"m"+Date.now(),...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,totalSold:0}]);
       showToast("تم إضافة الصنف");
     }
-    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕",image:""});
+    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕"});
   };
 
   const openEdit=(item)=>{
     setEditItem(item);
-    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),emoji:item.emoji||"☕",image:item.image||""});
+    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),emoji:item.emoji||"☕"});
     setShowForm(true);
   };
 
@@ -2242,10 +2340,7 @@ function MenuTab({store,showToast,dm,settings}){
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(185px,1fr))",gap:12}}>
         {filtered.map(item=>(
           <div key={item.id} className="card" style={{position:"relative"}}>
-            {item.image
-              ?<img src={item.image} alt={item.name} style={{width:"100%",height:80,objectFit:"cover",borderRadius:10,marginBottom:6}}/>
-              :<div style={{fontSize:32,textAlign:"center",marginBottom:6}}>{item.emoji}</div>
-            }
+            <div style={{fontSize:32,textAlign:"center",marginBottom:6}}>{item.emoji}</div>
             <div style={{fontWeight:800,fontSize:13,textAlign:"center"}}>{item.name}</div>
             <div style={{fontSize:11,textAlign:"center",color:"var(--sub)",marginBottom:2}}>{CAT_LABELS[item.category]}</div>
             <div style={{color:"#c62828",fontWeight:900,textAlign:"center",fontSize:14,marginTop:4}}>
@@ -2267,32 +2362,12 @@ function MenuTab({store,showToast,dm,settings}){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:400,maxHeight:"88vh",overflowY:"auto"}}>
             <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>{editItem?"✏ تعديل الصنف":"➕ إضافة صنف"}</div>
-            {[["الاسم بالعربية","name","text"],["الاسم بالإنجليزية","nameEn","text"],["السعر","price","number"],["المخزون","stock","number"],["الحد الأدنى","minStock","number"]].map(([label,key,type])=>(
+            {[["الاسم بالعربية","name","text"],["الاسم بالإنجليزية","nameEn","text"],["السعر","price","number"],["المخزون","stock","number"],["الحد الأدنى","minStock","number"],["إيموجي","emoji","text"]].map(([label,key,type])=>(
               <div key={key} style={{marginBottom:12}}>
                 <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>{label}</label>
                 <input className="input" type={type} value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))}/>
               </div>
             ))}
-            {/* Emoji OR Image */}
-            <div style={{marginBottom:12}}>
-              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>إيموجي أو صورة</label>
-              <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <input className="input" type="text" value={form.emoji} onChange={e=>setForm(f=>({...f,emoji:e.target.value,image:""}))} placeholder="☕" style={{flex:1}}/>
-                <span style={{color:"var(--sub)",fontSize:12}}>أو</span>
-                <button type="button" onClick={()=>imgRef.current?.click()}
-                  style={{flex:2,padding:"9px",border:"1.5px dashed var(--border)",borderRadius:10,background:"var(--card2)",color:"var(--sub)",cursor:"pointer",fontSize:12,fontWeight:600}}>
-                  📷 رفع صورة
-                </button>
-                <input ref={imgRef} type="file" accept="image/*" onChange={handleImageUpload} style={{display:"none"}}/>
-              </div>
-              {form.image&&(
-                <div style={{marginTop:8,position:"relative",display:"inline-block"}}>
-                  <img src={form.image} alt="preview" style={{height:60,borderRadius:10,objectFit:"cover"}}/>
-                  <button onClick={()=>setForm(f=>({...f,image:""}))}
-                    style={{position:"absolute",top:-6,right:-6,background:"#c62828",color:"#fff",border:"none",borderRadius:"50%",width:20,height:20,fontSize:11,cursor:"pointer"}}>✕</button>
-                </div>
-              )}
-            </div>
             <div style={{marginBottom:16}}>
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>الفئة</label>
               <select className="input" value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}>
@@ -2387,18 +2462,9 @@ function TablesTab({store,showToast,dm,settings}){
                 <div style={{textAlign:"center",marginTop:8}}><TableTimer openedAt={t.openedAt}/></div>
               )}
               {orders.length>0&&(
-                <div style={{marginTop:8,background:"var(--card2)",borderRadius:8,padding:"6px 8px"}}>
-                  <div style={{fontSize:10,color:"var(--sub)",fontWeight:700,marginBottom:4}}>{orders.length} طلب نشط</div>
-                  {orders.slice(0,3).map((ord,i)=>(
-                    <div key={ord.id} style={{fontSize:10,padding:"2px 0",borderBottom:i<Math.min(orders.length,3)-1?"1px dashed var(--border)":"none",color:"var(--text)"}}>
-                      <span style={{fontWeight:700}}>#{ord.orderNum}</span> — {ord.customerName||"زبون"}
-                      {ord.items.slice(0,2).map((it,j)=>(
-                        <span key={j} style={{display:"block",paddingRight:8,color:"var(--sub)",fontSize:9}}>{it.emoji} {it.itemName} ×{it.qty}</span>
-                      ))}
-                    </div>
-                  ))}
-                  {orders.length>3&&<div style={{fontSize:9,color:"var(--sub)",marginTop:2}}>+{orders.length-3} طلبات أخرى</div>}
-                  <div style={{fontSize:12,fontWeight:700,color:"#c62828",marginTop:4,textAlign:"center"}}>{orders.reduce((s,o)=>s+o.total,0).toLocaleString()} {CUR}</div>
+                <div style={{marginTop:8,background:"var(--card2)",borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:10,color:"var(--sub)"}}>{orders.length} طلب نشط</div>
+                  <div style={{fontSize:12,fontWeight:700,color:"#c62828"}}>{total.toLocaleString()} {CUR}</div>
                 </div>
               )}
               <button onClick={async(e)=>{
@@ -2522,13 +2588,6 @@ function StaffTab({store,showToast,dm}){
 function ReportsTab({store,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   const [period,setPeriod]=useState("today");
-  const [reportTab,setReportTab]=useState("summary"); // "summary" | "orders_pdf"
-  const [pdfSearch,setPdfSearch]=useState("");
-
-  const pdfArchive=JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]");
-  const filteredPdfs=pdfArchive.filter(p=>
-    !pdfSearch||(p.orderNum||"").includes(pdfSearch)||(p.customerName||"").includes(pdfSearch)||(p.table||"").includes(pdfSearch)
-  );
 
   const getStart=()=>{
     const d=new Date();
@@ -2540,7 +2599,7 @@ function ReportsTab({store,dm,settings}){
 
   const start=getStart();
   const pOrders=store.orders.filter(o=>new Date(o.createdAt)>=start);
-  const paidOrders=pOrders.filter(o=>o.status==="paid");
+  const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=new Date(dateRange.from)&&new Date(o.paidAt||o.createdAt)<=new Date(dateRange.to+"T23:59:59"));
   const revenue=paidOrders.reduce((s,o)=>s+o.total,0);
   const expenses=(store.expenses||[]).filter(e=>new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0);
   const netProfit=revenue-expenses;
@@ -2595,51 +2654,6 @@ function ReportsTab({store,dm,settings}){
           <button className="btn btn-ghost" onClick={printReport} style={{fontSize:12,padding:"8px 12px"}}>🖨 طباعة</button>
         </div>
       </div>
-      {/* Report sub-tabs */}
-      <div style={{display:"flex",gap:8,marginBottom:16}}>
-        {[["summary","📊 الملخص"],["orders_pdf","📁 أرشيف الطلبات PDF"]].map(([v,l])=>(
-          <button key={v} onClick={()=>setReportTab(v)} style={{padding:"8px 18px",borderRadius:20,border:"none",
-            background:reportTab===v?"#c62828":"var(--card2)",color:reportTab===v?"#fff":"var(--sub)",fontWeight:700,fontSize:13}}>
-            {l}
-          </button>
-        ))}
-      </div>
-
-      {reportTab==="orders_pdf"&&(
-        <div className="fade-in">
-          <div style={{marginBottom:12}}>
-            <input className="input" placeholder="🔍 بحث بالرقم أو الزبون أو الطاولة..." value={pdfSearch} onChange={e=>setPdfSearch(e.target.value)}/>
-          </div>
-          {!filteredPdfs.length?(
-            <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
-              <div style={{fontSize:48}}>📁</div>
-              <div style={{marginTop:10}}>لا توجد ملفات PDF محفوظة</div>
-              <div style={{fontSize:12,marginTop:6}}>كل طلب يحفظ تلقائياً عند تسجيله</div>
-            </div>
-          ):(
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10}}>
-              {filteredPdfs.map(p=>(
-                <div key={p.id} className="card" style={{borderRight:"4px solid #1565c0"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                    <span style={{fontWeight:900,fontSize:14}}>📄 #{p.orderNum}</span>
-                    {p.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",fontSize:11,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 {p.table}</span>}
-                  </div>
-                  <div style={{fontSize:12,color:"var(--sub)",marginBottom:4}}>👤 {p.customerName||"—"}</div>
-                  <div style={{fontSize:11,color:"var(--sub)",marginBottom:8}}>{new Date(p.createdAt).toLocaleString("ar-SY",{hour:"2-digit",minute:"2-digit",month:"short",day:"numeric"})}</div>
-                  <div style={{fontWeight:900,color:"#c62828",fontSize:14,marginBottom:8}}>{p.total?.toLocaleString()} {CUR}</div>
-                  <button onClick={()=>openPdfArchive(p.html)}
-                    style={{width:"100%",background:"#1565c0",color:"#fff",border:"none",borderRadius:8,padding:"8px",fontWeight:700,fontSize:12}}>
-                    👁 عرض / طباعة
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {reportTab==="summary"&&(
-      <>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
         {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l])=>(
           <button key={v} onClick={()=>setPeriod(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
@@ -2694,7 +2708,6 @@ function ReportsTab({store,dm,settings}){
           ))}
         </div>
       )}
-      </>)}
     </div>
   );
 }
@@ -2702,7 +2715,8 @@ function ReportsTab({store,dm,settings}){
 // ═══════════════════════════════════
 // SETTINGS TAB (Admin) — زر الإعدادات
 // ═══════════════════════════════════
-function SettingsTab({store,showToast,dm}){
+function SettingsTab({store,showToast,dm,user}){
+  const isAdmin=user?.role==="admin";
   const [form,setForm]=useState({...store.settings});
 
   const save=()=>{
@@ -2737,6 +2751,26 @@ function SettingsTab({store,showToast,dm}){
           <S label="نسبة الضريبة %">
             <input className="input" type="number" min="0" max="100" value={form.taxPercent||0} onChange={e=>setForm(f=>({...f,taxPercent:+e.target.value}))}/>
           </S>
+          <S label="🎨 ثيم التطبيق">
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {[["default","🔴 أحمر"],["green","🟢 أخضر"],["purple","🟣 بنفسجي"],["blue","🔵 أزرق"],["gold","🟡 ذهبي"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setForm(f=>({...f,appTheme:v}))}
+                  style={{padding:"8px 14px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,
+                    cursor:"pointer",background:(form.appTheme||"default")===v?"var(--red)":"var(--card2)",
+                    color:(form.appTheme||"default")===v?"#fff":"var(--sub)",transition:"all .2s"}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </S>
+          <S label="🔑 رمز الكاشير للزبون">
+            <input className="input" placeholder="narden" value={form.cashierCode||""} 
+              onChange={e=>setForm(f=>({...f,cashierCode:e.target.value}))}
+              style={{fontFamily:"monospace",letterSpacing:2}}/>
+            <div style={{fontSize:11,color:"var(--sub)",marginTop:4}}>
+              الرمز الذي يدخله الزبون عند إرسال الطلب — اتركه فارغاً لاستخدام narden
+            </div>
+          </S>
           <S label="لغة واجهة الزبون / Customer Language">
             <div style={{display:"flex",gap:10}}>
               {[["ar","🇸🇦 عربي"],["en","🇬🇧 English"]].map(([v,l])=>(
@@ -2750,36 +2784,6 @@ function SettingsTab({store,showToast,dm}){
                 </button>
               ))}
             </div>
-          </S>
-        </div>
-
-        {/* Security & Notifications */}
-        <div className="card">
-          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#e65100"}}>🔒 الأمان والإشعارات</h3>
-          <S label="🔑 رمز الكاشير (يُستخدم عند تأكيد طلب الزبون)">
-            <div style={{position:"relative"}}>
-              <input className="input" value={form.cashierCode||"narden"} onChange={e=>setForm(f=>({...f,cashierCode:e.target.value}))}
-                placeholder="narden" style={{paddingLeft:36}}/>
-              <span style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",fontSize:16}}>🔑</span>
-            </div>
-            <p style={{fontSize:11,color:"var(--sub)",marginTop:5}}>* هذا الرمز يُعطى للزبائن لتأكيد طلباتهم. يمكنك تغييره في أي وقت.</p>
-          </S>
-          <div style={{padding:"10px 14px",background:"var(--card2)",borderRadius:10,marginBottom:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:13}}>🔔 أصوات الإشعارات</div>
-                <div style={{fontSize:11,color:"var(--sub)",marginTop:2}}>تشغيل نغمة عند كل إشعار أو طلب جديد</div>
-              </div>
-              <button onClick={()=>setForm(f=>({...f,notifSound:f.notifSound===false?true:false}))}
-                style={{width:48,height:26,borderRadius:13,border:"none",position:"relative",
-                  background:form.notifSound===false?"var(--border)":"#c62828",transition:"background .3s",cursor:"pointer"}}>
-                <div style={{position:"absolute",top:3,left:form.notifSound===false?23:3,width:20,height:20,
-                  borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 2px 4px rgba(0,0,0,.2)"}}/>
-              </button>
-            </div>
-          </div>
-          <S label="مدة ظهور الإشعار (ثانية)">
-            <input className="input" type="number" min="2" max="10" value={form.toastDuration||3.5} onChange={e=>setForm(f=>({...f,toastDuration:+e.target.value}))}/>
           </S>
         </div>
 
@@ -2841,6 +2845,26 @@ function SettingsTab({store,showToast,dm}){
             </table>
           </div>
           <p style={{fontSize:11,color:"var(--sub)",marginTop:10}}>* لتخصيص الصلاحيات بشكل أعمق، تواصل مع مطور التطبيق.</p>
+
+      {isAdmin&&(
+        <div className="card" style={{borderTop:"4px solid #c62828",marginTop:16}}>
+          <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <button onClick={()=>{if(window.confirm("تصفير جميع الطلبات والمبيعات؟ لا يمكن التراجع!")){store.setOrders([]);store.setCashLog([]);showToast("تم تصفير المبيعات","warn");}}}
+              style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+              🗑️ تصفير المبيعات
+            </button>
+            <button onClick={()=>{if(window.confirm("تصفير جميع الديون؟")){store.setDebts([]);showToast("تم تصفير الديون","warn");}}}
+              style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+              🗑️ تصفير الديون
+            </button>
+            <button onClick={()=>{if(window.confirm("تصفير المصاريف؟")){store.setExpenses([]);showToast("تم تصفير المصاريف","warn");}}}
+              style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+              🗑️ تصفير المصاريف
+            </button>
+          </div>
+        </div>
+      )}
         </div>
       </div>
 
