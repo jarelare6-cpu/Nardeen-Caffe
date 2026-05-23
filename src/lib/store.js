@@ -103,6 +103,9 @@ export const DEFAULT_SETTINGS = {
   allowCustomerOrders: true,
   taxPercent: 0,
   appLang: "ar",
+  cashierCode: "narden",
+  notifSound: true,
+  toastDuration: 3.5,
 };
 
 export const DEFAULT_USERS = [
