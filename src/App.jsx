@@ -1205,11 +1205,8 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [tableNum,setTableNum]=useState("");
   const [notes,setNotes]=useState("");
   const [customerName,setCustomerName]=useState("");
-  const [discount,setDiscount]=useState(0);
   const [submitting,setSubmitting]=useState(false);
   const CUR=settings?.currency||"ل.س";
-  const maxDiscount=settings?.maxDiscount??50;
-  const isAdmin=user.role===ROLES.ADMIN;
 
   const filtered=store.menu.filter(m=>{
     const ms=m.name.toLowerCase().includes(search.toLowerCase())||(m.nameEn||"").toLowerCase().includes(search.toLowerCase());
@@ -1230,8 +1227,6 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
 
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
-  const discountAmt=Math.round(cartTotal*Math.min(discount,maxDiscount)/100);
-  const finalTotal=cartTotal-discountAmt;
 
   const placeOrder=()=>{
     if(!cart.length){showToast("السلة فارغة","error");return}
@@ -1243,7 +1238,7 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         id:Date.now().toString(),orderNum,
         customerId:user.id,customerName:customerName||user.name,
         workerName:user.name,table:tableNum,notes,items:cart,
-        total:finalTotal,originalTotal:cartTotal,discount,
+        total:cartTotal,originalTotal:cartTotal,discount:0,
         paymentType:"cash",
         status:ORDER_STATUS.PENDING,
         createdAt:new Date().toISOString(),paymentStatus:"pending",
@@ -1263,7 +1258,7 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       printOrder(newOrder,store.menu,1,settings);
       setTimeout(()=>printOrder(newOrder,store.menu,2,settings),600);
       savePdfArchive(newOrder,store.menu,settings);
-      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");
       setSubmitting(false);
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
     },800);
@@ -1324,13 +1319,6 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           <input className="input" placeholder="🪑 رقم الطاولة" value={tableNum} onChange={e=>setTableNum(e.target.value)} style={{fontSize:13}}/>
           <input className="input" placeholder="👤 اسم الزبون (اختياري)" value={customerName} onChange={e=>setCustomerName(e.target.value)} style={{fontSize:13}}/>
           <textarea className="input" placeholder="📝 ملاحظات..." value={notes} onChange={e=>setNotes(e.target.value)} style={{resize:"none",height:50,fontSize:13}}/>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <label style={{fontSize:12,color:"var(--sub)",whiteSpace:"nowrap"}}>خصم %</label>
-            <input className="input" type="number" min="0" max={isAdmin?100:maxDiscount} value={discount}
-              onChange={e=>setDiscount(Math.min(isAdmin?100:maxDiscount,Math.max(0,+e.target.value)))}
-              style={{fontSize:13}}/>
-          </div>
-
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}} className="scroll-hide">
           {!cart.length?(
@@ -1354,19 +1342,9 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           ))}
         </div>
         <div style={{padding:"12px 14px",borderTop:"2px solid var(--border)"}}>
-          {discount>0&&(
-            <>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:3,fontSize:12,color:"var(--sub)"}}>
-                <span>قبل الخصم</span><span>{cartTotal.toLocaleString()} {CUR}</span>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:12,color:"#2e7d32",fontWeight:700}}>
-                <span>خصم {discount}%</span><span>-{discountAmt.toLocaleString()} {CUR}</span>
-              </div>
-            </>
-          )}
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,fontSize:15,fontWeight:900}}>
             <span>الإجمالي</span>
-            <span style={{color:"#c62828"}}>{finalTotal.toLocaleString()} {CUR}</span>
+            <span style={{color:"#c62828"}}>{cartTotal.toLocaleString()} {CUR}</span>
           </div>
 
           <button onClick={placeOrder} disabled={submitting||!cart.length}
@@ -1567,16 +1545,33 @@ function OrdersTab({store,user,showToast,addNotification,dm,settings}){
 // ═══════════════════════════════════
 function CashierTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
+  const maxDiscount=settings?.maxDiscount??50;
+  const isAdmin=user.role===ROLES.ADMIN;
+  const [discounts,setDiscounts]=useState({});
   const today=new Date();today.setHours(0,0,0,0);
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
   const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
   const readyOrders=store.orders.filter(o=>o.status==="ready");
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
 
+  const getDiscount=(orderId)=>discounts[orderId]||0;
+  const setDiscount=(orderId,val)=>setDiscounts(p=>({...p,[orderId]:Math.min(isAdmin?100:maxDiscount,Math.max(0,val))}));
+  const getFinal=(order)=>{
+    const d=getDiscount(order.id);
+    return{disc:d,amt:Math.round(order.total*d/100),final:order.total-Math.round(order.total*d/100)};
+  };
+
   const markPaid=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"paid",paymentStatus:"paid",paidAt:new Date().toISOString(),paidBy:user.id}:o));
-    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,amount:order.total,at:new Date().toISOString(),by:user.name},...p]);
+    const {disc,amt,final}=getFinal(order);
+    const updated={...order,status:"paid",paymentStatus:"paid",
+      paidAt:new Date().toISOString(),paidBy:user.id,
+      discount:disc,originalTotal:order.total,total:final};
+    store.setOrders(p=>p.map(o=>o.id===order.id?updated:o));
+    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,
+      amount:final,at:new Date().toISOString(),by:user.name},...p]);
+    savePdfArchive(updated,store.menu,settings);
     showToast(`تم استلام الدفع للطلب #${order.orderNum} 💰`);
+    setDiscounts(p=>{const n={...p};delete n[order.id];return n;});
   };
 
   const markDebt=(order)=>{
@@ -1634,8 +1629,31 @@ function CashierTab({store,user,showToast,dm,settings}){
                   )}
                 </div>
                 {order.items.map((i,idx)=><div key={idx} style={{fontSize:12,padding:"1px 4px"}}>{i.emoji} {i.itemName} ×{i.qty} <span style={{color:"#c62828",fontWeight:700}}>— {(i.price*i.qty).toLocaleString()} {CUR}</span></div>)}
-                {order.discount>0&&<div style={{fontSize:11,color:"#2e7d32",marginTop:4}}>خصم {order.discount}%</div>}
-                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:14,borderTop:"1px dashed var(--border)",paddingTop:8}}>{order.total.toLocaleString()} {CUR}</div>
+                {/* حقل الخصم — يظهر عند الكاشير فقط قبل الدفع */}
+                <div style={{marginTop:10,padding:"10px",background:"var(--card2)",borderRadius:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",whiteSpace:"nowrap"}}>🏷 خصم %</label>
+                    <input type="number" min="0" max={isAdmin?100:maxDiscount} value={getDiscount(order.id)||""}
+                      onChange={e=>setDiscount(order.id,+e.target.value)}
+                      placeholder="0"
+                      style={{flex:1,padding:"6px 10px",border:"1.5px solid var(--border)",borderRadius:8,
+                        fontSize:13,fontWeight:700,background:"var(--card)",color:"var(--text)",textAlign:"center"}}/>
+                  </div>
+                  {getDiscount(order.id)>0&&(
+                    <div style={{fontSize:12}}>
+                      <div style={{display:"flex",justifyContent:"space-between",color:"var(--sub)"}}>
+                        <span>قبل الخصم</span><span>{order.total.toLocaleString()} {CUR}</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",color:"#2e7d32",fontWeight:700}}>
+                        <span>الخصم {getDiscount(order.id)}%</span>
+                        <span>-{getFinal(order).amt.toLocaleString()} {CUR}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:16,borderTop:"1px dashed var(--border)",paddingTop:8}}>
+                  المجموع: {getFinal(order).final.toLocaleString()} {CUR}
+                </div>
                 <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
                   <button onClick={()=>markPaid(order)}
                     style={{flex:1,minWidth:90,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
