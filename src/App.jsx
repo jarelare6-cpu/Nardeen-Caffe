@@ -70,6 +70,29 @@ const canAccess = (role, section) => (PERMISSIONS[section]||[]).includes(role);
 // ═══════════════════════════════════
 const printOrder = (order, menu, copy, settings) => utilPrint(order, menu, copy, settings);
 
+// حفظ سجل الفاتورة في Supabase
+const saveReceipt = async (order, settings) => {
+  try {
+    const { supabase, SUPABASE_READY } = await import("./lib/supabase.js");
+    if (!SUPABASE_READY) return;
+    await supabase.from("receipts").upsert({
+      id: "rcpt_" + order.id,
+      order_id: order.id,
+      order_num: order.orderNum || order.order_num,
+      customer_name: order.customerName || order.customer_name || "",
+      table_num: order.table || order.table_num || "",
+      items: order.items,
+      total: order.total,
+      discount: order.discount || 0,
+      payment_type: order.paymentType || "cash",
+      notes: order.notes || "",
+      created_by: order.workerName || "",
+      created_at: order.createdAt || new Date().toISOString(),
+      cafe_name: settings?.cafeName || "Nardeen Caffe",
+    }, { onConflict: "id" });
+  } catch(e) { console.error("receipt save:", e); }
+};
+
 // ═══════════════════════════════════
 // GLOBAL CSS
 // ═══════════════════════════════════
@@ -1362,9 +1385,9 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
       setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
       setSubmitting(false);
+      saveReceipt(newOrder,settings);
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
-      // الطباعة اختيارية - لا تُفتح تلقائياً لتجنب popup blocker
-      if(window.confirm(`طباعة فاتورة الطلب #${orderNum}؟`)){
+      if(window.confirm(`🖨️ طباعة فاتورة الطلب #${orderNum}؟`)){
         printOrder(newOrder,store.menu,1,settings);
         setTimeout(()=>printOrder(newOrder,store.menu,2,settings),800);
       }
@@ -1478,49 +1501,6 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           </button>
         </div>
       </div>
-
-      {/* ── modal تسجيل الدين ── */}
-      {debtModal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:999,
-          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
-          onClick={e=>{if(e.target===e.currentTarget)setDebtModal(null);}}>
-          <div style={{background:"var(--card)",borderRadius:20,padding:28,width:"100%",maxWidth:380,
-            boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}>
-            <div style={{textAlign:"center",marginBottom:18}}>
-              <div style={{fontSize:44,marginBottom:6}}>💳</div>
-              <h2 style={{fontSize:18,fontWeight:900,marginBottom:4}}>تسجيل دين</h2>
-              <p style={{fontSize:13,color:"var(--sub)"}}>طلب #{debtModal.orderNum} — {debtModal.total.toLocaleString()} {CUR}</p>
-            </div>
-            <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:6,display:"block"}}>
-              👤 اسم الزبون <span style={{color:"#c62828"}}>*</span>
-            </label>
-            <input className="input" placeholder="أدخل اسم الزبون..." value={debtNameInput}
-              autoFocus
-              onChange={e=>{setDebtNameInput(e.target.value);setDebtNameError("");}}
-              onKeyDown={e=>e.key==="Enter"&&confirmDebt()}
-              style={{marginBottom:10,fontSize:16,fontWeight:700}}/>
-            {debtNameError&&(
-              <div style={{background:"rgba(198,40,40,.15)",color:"#c62828",borderRadius:10,
-                padding:"8px 14px",fontSize:13,fontWeight:700,marginBottom:12,
-                border:"1px solid rgba(198,40,40,.3)"}}>
-                {debtNameError}
-              </div>
-            )}
-            <div style={{display:"flex",gap:10,marginTop:4}}>
-              <button onClick={()=>setDebtModal(null)}
-                style={{flex:1,padding:12,borderRadius:12,border:"1.5px solid var(--border)",
-                  background:"none",color:"var(--text)",fontWeight:700,cursor:"pointer"}}>
-                إلغاء
-              </button>
-              <button onClick={confirmDebt}
-                style={{flex:2,padding:12,borderRadius:12,border:"none",
-                  background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>
-                ✓ تسجيل الدين
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );
@@ -1720,9 +1700,14 @@ function CashierTab({store,user,showToast,dm,settings}){
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
 
   const markPaid=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"paid",paymentStatus:"paid",paidAt:new Date().toISOString(),paidBy:user.id}:o));
+    const paid={...order,status:"paid",paymentStatus:"paid",paidAt:new Date().toISOString(),paidBy:user.id};
+    store.setOrders(p=>p.map(o=>o.id===order.id?paid:o));
     store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,amount:order.total,at:new Date().toISOString(),by:user.name},...p]);
+    saveReceipt(paid,settings);
     showToast(`تم استلام الدفع للطلب #${order.orderNum} 💰`);
+    if(window.confirm(`🖨️ طباعة فاتورة #${order.orderNum}؟`)){
+      printOrder(paid,store.menu,2,settings);
+    }
   };
 
   const [debtModal,setDebtModal]=useState(null);
@@ -1814,6 +1799,49 @@ function CashierTab({store,user,showToast,dm,settings}){
           </div>
         </div>
       )}
+      {/* ── modal تسجيل الدين ── */}
+      {debtModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:999,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}
+          onClick={e=>{if(e.target===e.currentTarget)setDebtModal(null);}}>
+          <div style={{background:"var(--card)",borderRadius:20,padding:28,width:"100%",maxWidth:380,
+            boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}>
+            <div style={{textAlign:"center",marginBottom:18}}>
+              <div style={{fontSize:44,marginBottom:6}}>💳</div>
+              <h2 style={{fontSize:18,fontWeight:900,marginBottom:4}}>تسجيل دين</h2>
+              <p style={{fontSize:13,color:"var(--sub)"}}>طلب #{debtModal.orderNum} — {debtModal.total.toLocaleString()} {CUR}</p>
+            </div>
+            <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:6,display:"block"}}>
+              👤 اسم الزبون <span style={{color:"#c62828"}}>*</span>
+            </label>
+            <input className="input" placeholder="أدخل اسم الزبون..." value={debtNameInput}
+              autoFocus
+              onChange={e=>{setDebtNameInput(e.target.value);setDebtNameError("");}}
+              onKeyDown={e=>e.key==="Enter"&&confirmDebt()}
+              style={{marginBottom:10,fontSize:16,fontWeight:700}}/>
+            {debtNameError&&(
+              <div style={{background:"rgba(198,40,40,.15)",color:"#c62828",borderRadius:10,
+                padding:"8px 14px",fontSize:13,fontWeight:700,marginBottom:12,
+                border:"1px solid rgba(198,40,40,.3)"}}>
+                {debtNameError}
+              </div>
+            )}
+            <div style={{display:"flex",gap:10,marginTop:4}}>
+              <button onClick={()=>setDebtModal(null)}
+                style={{flex:1,padding:12,borderRadius:12,border:"1.5px solid var(--border)",
+                  background:"none",color:"var(--text)",fontWeight:700,cursor:"pointer"}}>
+                إلغاء
+              </button>
+              <button onClick={confirmDebt}
+                style={{flex:2,padding:12,borderRadius:12,border:"none",
+                  background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer"}}>
+                ✓ تسجيل الدين
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
