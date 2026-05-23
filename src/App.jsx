@@ -2,7 +2,7 @@
 // ║          Nardeen Caffe — ناردين كافيه  v3.0                      ║
 // ║          بإدارة يحيى داؤود                                       ║
 // ╚══════════════════════════════════════════════════════════════════╝
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore } from "./lib/store.js";
 import { SUPABASE_READY } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
@@ -121,7 +121,8 @@ const GlobalStyle = ({dm,theme="default"}) => {
       --shadow:${dm?"0 4px 24px rgba(0,0,0,.45)":"0 2px 16px rgba(30,40,80,.08)"};
       --radius:14px;
     }
-    body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);color:var(--text);overflow-x:hidden}
+    html,body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);color:var(--text);overflow-x:hidden;min-height:100%;}
+    #root{min-height:100vh;background:var(--bg);}
     button{cursor:pointer;font-family:inherit;direction:rtl}
     input,select,textarea{font-family:inherit;direction:rtl;background:var(--card);color:var(--text)}
     .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
@@ -160,9 +161,70 @@ const GlobalStyle = ({dm,theme="default"}) => {
   );
 }
 
+
 // ═══════════════════════════════════
-// TOAST
+// NOTIFICATION SOUNDS
 // ═══════════════════════════════════
+const SOUNDS={
+  success:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.setValueAtTime(880,a.currentTime);o.frequency.exponentialRampToValueAtTime(1320,a.currentTime+0.1);g.gain.setValueAtTime(0.3,a.currentTime);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.4);o.start();o.stop(a.currentTime+0.4);}catch{}},
+  error:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.type="sawtooth";o.frequency.setValueAtTime(200,a.currentTime);o.frequency.exponentialRampToValueAtTime(100,a.currentTime+0.3);g.gain.setValueAtTime(0.3,a.currentTime);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.3);o.start();o.stop(a.currentTime+0.3);}catch{}},
+  warn:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.15].forEach(t=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=660;g.gain.setValueAtTime(0.25,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.12);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.12);});}catch{}},
+  order:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.12,0.24].forEach((t,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=[523,659,784][i];g.gain.setValueAtTime(0.3,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.18);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.18);});}catch{}},
+  debt:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.2].forEach((t,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=i===0?440:330;g.gain.setValueAtTime(0.3,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.18);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.18);});}catch{}},
+  paid:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[523,659,784,1047].forEach((f,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f;g.gain.setValueAtTime(0.25,a.currentTime+i*0.1);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+i*0.1+0.15);o.start(a.currentTime+i*0.1);o.stop(a.currentTime+i*0.1+0.15);});}catch{}},
+};
+
+// ═══════════════════════════════════
+// PDF ARCHIVE UTILITY
+// ═══════════════════════════════════
+const savePdfArchive=(order,settings)=>{
+  try{
+    const CUR=settings?.currency||"ل.س";
+    const cafeName=settings?.cafeName||"Nardeen Caffe";
+    const isDebt=!!order.debtName;
+    const html=`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8">
+      <style>body{font-family:sans-serif;padding:20px;direction:rtl;max-width:320px;margin:0 auto}
+      h2{color:#c62828;text-align:center;margin:0 0 4px}
+      .sub{text-align:center;font-size:12px;color:#666;margin-bottom:12px}
+      .row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
+      .total{border-top:2px solid #333;font-weight:900;font-size:15px;margin-top:8px;padding-top:8px}
+      .badge{background:#c62828;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
+      .debt-badge{background:#6a1b9a;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
+      </style></head><body>
+      <h2>☕ ${cafeName}</h2>
+      <div class="sub">${settings?.signature||""}</div>
+      <div class="sub">${new Date(order.createdAt||Date.now()).toLocaleString("ar-SY")}</div>
+      <div class="row"><span>رقم الطلب:</span><span class="badge">#${order.orderNum||order.id}</span></div>
+      <div class="row"><span>الزبون:</span><span style="font-weight:900;color:#1565c0">${order.debtName||order.customerName||""}</span></div>
+      ${order.table?`<div class="row"><span>الطاولة:</span><span>🪑 ${order.table}</span></div>`:""}
+      ${isDebt?`<div class="row"><span>نوع الدفع:</span><span class="debt-badge">💳 استيفاء دين</span></div>`:""}
+      <hr/>
+      ${(order.items||[]).map(i=>`<div class="row"><span>${i.emoji||""} ${i.itemName||i.name} ×${i.qty}</span><span>${((i.price||0)*(i.qty||1)).toLocaleString()} ${CUR}</span></div>`).join("")}
+      ${order.discount?`<div class="row" style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${Math.round((order.originalTotal||order.total)*order.discount/100).toLocaleString()} ${CUR}</span></div>`:""}
+      <div class="row total"><span>الإجمالي</span><span style="color:#c62828">${(order.total||0).toLocaleString()} ${CUR}</span></div>
+      ${order.paidBy?`<div style="margin-top:8px;font-size:11px;color:#666">💰 استلمه: ${order.paidByName||order.paidBy}</div>`:""}
+      ${order.notes?`<div style="margin-top:4px;font-size:11px;color:#666">📝 ${order.notes}</div>`:""}
+      <div style="text-align:center;margin-top:16px;font-size:11px;color:#999">شكراً لزيارتكم ☕</div>
+      </body></html>`;
+    const archived=JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]");
+    const entry={
+      id:order.id,orderNum:order.orderNum||order.id,
+      customerName:order.debtName||order.customerName,
+      table:order.table,total:order.total,
+      createdAt:order.createdAt||new Date().toISOString(),
+      isDebt,html,paidByName:order.paidByName||order.paidBy||""
+    };
+    archived.unshift(entry);
+    if(archived.length>300) archived.splice(300);
+    localStorage.setItem("nc_pdf_archive",JSON.stringify(archived));
+  }catch(e){console.error("pdf archive:",e);}
+};
+
+const openPdfArchive=(html)=>{
+  const w=window.open("","_blank","width=420,height=620");
+  if(w){w.document.write(html);w.document.close();}
+};
+
 // ═══════════════════════════════════
 // ERROR BOUNDARY
 // ═══════════════════════════════════
@@ -191,12 +253,22 @@ class ErrorBoundary extends React.Component{
 
 function Toast({toast}){
   if(!toast) return null;
-  const bg = toast.type==="error"?"#c62828":toast.type==="warn"?"#e65100":"#2e7d32";
+  const cfg={
+    success:{bg:"#2e7d32",icon:"✓"},
+    error:{bg:"#c62828",icon:"✗"},
+    warn:{bg:"#e65100",icon:"⚠"},
+    order:{bg:"#1565c0",icon:"📋"},
+    paid:{bg:"#2e7d32",icon:"💰"},
+    debt:{bg:"#6a1b9a",icon:"💳"},
+  };
+  const c=cfg[toast.type]||cfg.success;
   return(
     <div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",zIndex:9999,
-      background:bg,color:"#fff",padding:"12px 24px",borderRadius:40,fontWeight:700,
-      boxShadow:"0 8px 32px rgba(0,0,0,.3)",fontSize:14,whiteSpace:"nowrap",animation:"fadeIn .3s ease"}}>
-      {toast.type==="error"?"✗":toast.type==="warn"?"⚠":"✓"} {toast.msg}
+      background:c.bg,color:"#fff",padding:"14px 28px",borderRadius:40,fontWeight:700,
+      boxShadow:"0 8px 32px rgba(0,0,0,.35)",fontSize:15,whiteSpace:"nowrap",
+      animation:"fadeIn .3s ease",display:"flex",alignItems:"center",gap:8}}>
+      <span style={{fontSize:18}}>{c.icon}</span>
+      {toast.msg}
     </div>
   );
 }
@@ -256,8 +328,9 @@ export default function NardeenCaffe(){
 
   const showToast=useCallback((msg,type="success")=>{
     setToast({msg,type,id:Date.now()});
-    setTimeout(()=>setToast(null),3500);
-  },[]);
+    setTimeout(()=>setToast(null),3800);
+    try{if(store.settings?.notifSound!==false&&SOUNDS[type]) SOUNDS[type]();}catch{}
+  },[store.settings]);
 
   const login=(u)=>{
     const u2={...u,lastLogin:new Date().toISOString()};
@@ -1699,15 +1772,19 @@ function CashierTab({store,user,showToast,dm,settings}){
   const readyOrders=store.orders.filter(o=>o.status==="ready");
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
 
-  const markPaid=(order)=>{
-    const paid={...order,status:"paid",paymentStatus:"paid",paidAt:new Date().toISOString(),paidBy:user.id};
+  const markPaid=(order,discountPct=0)=>{
+    const discAmt=Math.round((order.originalTotal||order.total)*discountPct/100);
+    const finalTotal=(order.originalTotal||order.total)-discAmt;
+    const paid={...order,status:"paid",paymentStatus:"paid",
+      paidAt:new Date().toISOString(),paidBy:user.id,paidByName:user.name,
+      discount:discountPct,originalTotal:order.originalTotal||order.total,total:finalTotal};
     store.setOrders(p=>p.map(o=>o.id===order.id?paid:o));
-    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,amount:order.total,at:new Date().toISOString(),by:user.name},...p]);
+    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,
+      amount:finalTotal,at:new Date().toISOString(),by:user.name},...p]);
     saveReceipt(paid,settings);
-    showToast(`تم استلام الدفع للطلب #${order.orderNum} 💰`);
-    if(window.confirm(`🖨️ طباعة فاتورة #${order.orderNum}؟`)){
-      printOrder(paid,store.menu,2,settings);
-    }
+    savePdfArchive(paid,settings);
+    showToast(`💰 تم الدفع — ${order.customerName||"زبون"} | #${order.orderNum}`,"paid");
+    printOrder(paid,store.menu,2,settings);
   };
 
   const [debtModal,setDebtModal]=useState(null);
@@ -1760,12 +1837,39 @@ function CashierTab({store,user,showToast,dm,settings}){
                   <span style={{fontWeight:900}}># {order.orderNum}</span>
                   {order.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",fontSize:11,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 {order.table}</span>}
                 </div>
-                <div style={{fontSize:12,color:"var(--sub)",marginBottom:6}}>👤 {order.customerName}</div>
-                {order.items.map((i,idx)=><div key={idx} style={{fontSize:12,padding:"1px 0"}}>{i.emoji} {i.itemName} ×{i.qty}</div>)}
-                {order.discount>0&&<div style={{fontSize:11,color:"#2e7d32",marginTop:4}}>خصم {order.discount}%</div>}
-                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:14}}>{order.total.toLocaleString()} {CUR}</div>
+                {/* Customer name - prominent */}
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,
+                  background:"rgba(21,101,192,.08)",borderRadius:8,padding:"7px 10px"}}>
+                  <span style={{fontSize:20}}>👤</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:900,fontSize:14,color:"#1565c0"}}>{order.customerName||"زبون"}</div>
+                    {order.workerName&&<div style={{fontSize:10,color:"var(--sub)"}}>سجّل: {order.workerName}</div>}
+                  </div>
+                  {/* Same-table warning */}
+                  {readyOrders.filter(o2=>o2.table&&o2.table===order.table&&o2.id!==order.id).length>0&&(
+                    <span style={{background:"#fff3e0",color:"#e65100",fontSize:10,padding:"2px 7px",borderRadius:6,fontWeight:700}}>
+                      ⚠ زبون آخر بنفس الطاولة
+                    </span>
+                  )}
+                </div>
+                {order.items.map((i,idx)=><div key={idx} style={{fontSize:12,padding:"2px 4px",display:"flex",justifyContent:"space-between"}}>
+                  <span>{i.emoji} {i.itemName} ×{i.qty}</span>
+                  <span style={{color:"#c62828",fontWeight:700}}>{(i.price*i.qty).toLocaleString()} {CUR}</span>
+                </div>)}
+                {/* Discount field at cashier */}
+                <div style={{marginTop:10,padding:"8px 10px",background:"var(--card2)",borderRadius:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",whiteSpace:"nowrap"}}>🏷 خصم %</label>
+                    <input type="number" min="0" max="100" defaultValue="0" id={"disc_"+order.id}
+                      style={{flex:1,padding:"5px 8px",border:"1.5px solid var(--border)",borderRadius:8,
+                        fontSize:13,fontWeight:700,background:"var(--card)",color:"var(--text)",textAlign:"center"}}/>
+                  </div>
+                </div>
+                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:15,borderTop:"1px dashed var(--border)",paddingTop:8}}>
+                  {order.total.toLocaleString()} {CUR}
+                </div>
                 <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
-                  <button onClick={()=>markPaid(order)}
+                  <button onClick={()=>{const d=+(document.getElementById("disc_"+order.id)?.value||0);markPaid(order,d);}}
                     style={{flex:1,minWidth:90,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
                     💰 مدفوع
                   </button>
@@ -1875,16 +1979,18 @@ function DebtsTab({store,user,showToast,dm,settings}){
     const revEntry={
       id:"debt_rev_"+id+"_"+Date.now(),
       orderNum:"D-"+(debt?.customerName||id).slice(0,6),
-      customerName:(debt?.customerName||"زبون")+" — دين",
+      customerName:(debt?.customerName||"زبون"),
+      debtName:debt?.customerName||"زبون",
       customerId:"debt",table:"-",
       items:[{itemId:"debt",itemName:"استيفاء دين",emoji:"💳",qty:1,price:amount}],
       total:amount,status:"paid",paymentType:"debt_settled",
       notes:"دين مستوفى — "+(debt?.notes||debt?.customerName||""),
       createdAt:new Date().toISOString(),paidAt:new Date().toISOString(),
-      paidBy:user.name,discount:0,isDebtSettlement:true,
+      paidBy:user.id,paidByName:user.name,discount:0,isDebtSettlement:true,
     };
     store.setOrders(p=>[revEntry,...p]);
-    showToast(`✅ تم استيفاء الدين وإضافته للإيرادات`);
+    savePdfArchive({...revEntry,debtName:debt?.customerName,paidByName:user.name},settings);
+    showToast(`✅ تم استيفاء دين ${debt?.customerName||""} وحفظ الفاتورة`,"paid");
   };
 
   const addManualDebt=()=>{
@@ -2648,6 +2754,12 @@ function StaffTab({store,showToast,dm}){
 function ReportsTab({store,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   const [period,setPeriod]=useState("today");
+  const [reportTab,setReportTab]=useState("summary");
+  const [pdfSearch,setPdfSearch]=useState("");
+  const pdfArchive=useMemo(()=>JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]"),[reportTab]);
+  const filteredPdfs=useMemo(()=>pdfArchive.filter(p=>
+    !pdfSearch||(p.orderNum||"").includes(pdfSearch)||(p.customerName||"").includes(pdfSearch)||(p.table||"").includes(pdfSearch)
+  ),[pdfArchive,pdfSearch]);
 
   const getStart=()=>{
     const d=new Date();
@@ -2714,6 +2826,53 @@ function ReportsTab({store,dm,settings}){
           <button className="btn btn-ghost" onClick={printReport} style={{fontSize:12,padding:"8px 12px"}}>🖨 طباعة</button>
         </div>
       </div>
+      {/* Sub-tabs */}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {[["summary","📊 الملخص"],["orders_pdf","🧾 أرشيف الفواتير"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setReportTab(v)} style={{padding:"8px 20px",borderRadius:20,border:"none",
+            background:reportTab===v?"#c62828":"var(--card2)",color:reportTab===v?"#fff":"var(--sub)",fontWeight:700,fontSize:13}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* PDF Archive */}
+      {reportTab==="orders_pdf"&&(
+        <div className="fade-in">
+          <input className="input" placeholder="🔍 بحث بالرقم أو الزبون أو الطاولة..." value={pdfSearch} onChange={e=>setPdfSearch(e.target.value)} style={{marginBottom:14}}/>
+          {!filteredPdfs.length?(
+            <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
+              <div style={{fontSize:48}}>🧾</div>
+              <div style={{marginTop:10}}>لا توجد فواتير محفوظة بعد</div>
+              <div style={{fontSize:12,marginTop:6}}>تُحفظ كل فاتورة تلقائياً عند الدفع أو استيفاء الدين</div>
+            </div>
+          ):(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
+              {filteredPdfs.map((p,i)=>(
+                <div key={p.id||i} className="card" style={{borderRight:`4px solid ${p.isDebt?"#6a1b9a":"#1565c0"}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={{fontWeight:900,fontSize:14}}>🧾 #{p.orderNum}</span>
+                    {p.isDebt&&<span style={{background:"rgba(106,27,154,.15)",color:"#6a1b9a",fontSize:10,padding:"2px 8px",borderRadius:6,fontWeight:700}}>💳 دين</span>}
+                    {p.table&&<span style={{background:"rgba(21,101,192,.12)",color:"#1565c0",fontSize:10,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 {p.table}</span>}
+                  </div>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1565c0",marginBottom:3}}>👤 {p.customerName||"—"}</div>
+                  {p.paidByName&&<div style={{fontSize:11,color:"var(--sub)",marginBottom:4}}>💰 استلمه: {p.paidByName}</div>}
+                  <div style={{fontSize:11,color:"var(--sub)",marginBottom:8}}>
+                    {new Date(p.createdAt).toLocaleString("ar-SY",{hour:"2-digit",minute:"2-digit",month:"short",day:"numeric"})}
+                  </div>
+                  <div style={{fontWeight:900,color:"#c62828",fontSize:15,marginBottom:10}}>{(p.total||0).toLocaleString()} {CUR}</div>
+                  <button onClick={()=>openPdfArchive(p.html)}
+                    style={{width:"100%",background:"#1565c0",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontWeight:700,fontSize:12}}>
+                    👁 عرض وطباعة
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {reportTab==="summary"&&(<>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
         {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l])=>(
           <button key={v} onClick={()=>setPeriod(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
@@ -2768,6 +2927,7 @@ function ReportsTab({store,dm,settings}){
           ))}
         </div>
       )}
+      </>)}
     </div>
   );
 }
@@ -2845,6 +3005,30 @@ function SettingsTab({store,showToast,dm,user}){
               ))}
             </div>
           </S>
+        </div>
+
+        {/* Notification Settings */}
+        <div className="card">
+          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#2e7d32"}}>🔔 إعدادات الإشعارات</h3>
+          {[
+            ["notifSound","🔊 أصوات الإشعارات","تشغيل نغمة لكل إشعار (دفع، دين، طلب جديد)"],
+            ["notifOrders","📋 إشعار عند طلب جديد","إظهار إشعار فوري عند ورود أي طلب"],
+            ["notifReady","✅ إشعار عند جاهز","إشعار عند تحضير الطلب"],
+          ].map(([key,label,desc])=>(
+            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              marginBottom:14,padding:"12px 14px",background:"var(--card2)",borderRadius:12}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:13}}>{label}</div>
+                <div style={{fontSize:11,color:"var(--sub)",marginTop:2}}>{desc}</div>
+              </div>
+              <button onClick={()=>setForm(f=>({...f,[key]:f[key]===false?true:false}))}
+                style={{width:48,height:26,borderRadius:13,border:"none",position:"relative",flexShrink:0,
+                  background:form[key]===false?"var(--border)":"#2e7d32",transition:"background .3s",cursor:"pointer"}}>
+                <div style={{position:"absolute",top:3,left:form[key]===false?23:3,width:20,height:20,
+                  borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 2px 4px rgba(0,0,0,.2)"}}/>
+              </button>
+            </div>
+          ))}
         </div>
 
         {/* Permissions */}
