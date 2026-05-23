@@ -1004,7 +1004,8 @@ function DashboardTab({store,dm,settings}){
   const today=new Date();today.setHours(0,0,0,0);
   const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
   const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+o.total,0);
-  const todayRevenue=todayOrders.filter(o=>o.status==="paid").reduce((s,o)=>s+o.total,0);
+  const todayPaidOrders=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
+  const todayRevenue=todayPaidOrders.reduce((s,o)=>s+o.total,0);
   const pending=store.orders.filter(o=>o.status==="pending").length;
   const preparing=store.orders.filter(o=>o.status==="preparing").length;
   const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
@@ -1017,7 +1018,7 @@ function DashboardTab({store,dm,settings}){
     const h=now.getHours()-11+i;
     const s=new Date();s.setHours(h,0,0,0);
     const e=new Date();e.setHours(h+1,0,0,0);
-    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.createdAt)>=s&&new Date(o.createdAt)<e).reduce((s,o)=>s+o.total,0);
+    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=s&&new Date(o.paidAt||o.createdAt)<e).reduce((s,o)=>s+o.total,0);
     return{h:`${h<0?24+h:h}`,rev};
   });
   const maxRev=Math.max(...hourly.map(d=>d.rev),1);
@@ -1045,7 +1046,7 @@ function DashboardTab({store,dm,settings}){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:18}}>
         <Stat icon="💰" label="إجمالي الإيرادات" val={`${totalRevenue.toLocaleString()} ${CUR}`} sub="كل الوقت" color="#c62828"/>
-        <Stat icon="📅" label="مبيعات اليوم"    val={`${todayRevenue.toLocaleString()} ${CUR}`} sub={`${todayOrders.length} طلب`} color="#2e7d32"/>
+        <Stat icon="📅" label="مبيعات اليوم"    val={`${todayRevenue.toLocaleString()} ${CUR}`} sub={`${todayPaidOrders.length} طلب مدفوع`} color="#2e7d32"/>
         <Stat icon="⏳" label="طلبات معلقة"     val={pending}   sub="بحاجة معالجة" color="#f9a825"/>
         <Stat icon="👨‍🍳" label="قيد التحضير"    val={preparing} color="#1976d2"/>
         <Stat icon="💳" label="إجمالي الديون"   val={`${totalDebts.toLocaleString()} ${CUR}`} sub="غير مسدّدة" color="#6a1b9a"/>
@@ -1498,7 +1499,7 @@ function OrdersTab({store,user,showToast,addNotification,dm,settings}){
 function CashierTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   const today=new Date();today.setHours(0,0,0,0);
-  const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.createdAt)>=today);
+  const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
   const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
   const readyOrders=store.orders.filter(o=>o.status==="ready");
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
@@ -2388,7 +2389,7 @@ function ReportsTab({store,dm,settings}){
 
   const start=getStart();
   const pOrders=store.orders.filter(o=>new Date(o.createdAt)>=start);
-  const paidOrders=pOrders.filter(o=>o.status==="paid");
+  const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=new Date(dateRange.from)&&new Date(o.paidAt||o.createdAt)<=new Date(dateRange.to+"T23:59:59"));
   const revenue=paidOrders.reduce((s,o)=>s+o.total,0);
   const expenses=(store.expenses||[]).filter(e=>new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0);
   const netProfit=revenue-expenses;
