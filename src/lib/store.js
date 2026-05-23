@@ -1,23 +1,20 @@
-// src/lib/store.js — Nardeen Caffe v5 — CROSS-DEVICE SYNC
+// src/lib/store.js — Nardeen Caffe — Cross-Device Sync
 import { useState, useCallback, useEffect } from "react";
 import { supabase, SUPABASE_READY, subscribeOrders } from "./supabase";
 
-// ── localStorage helper ──────────────────────────────────────────────────────
 const ls = {
   get: (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
   set: (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 
-// ── BroadcastChannel: sync between tabs on same device ──────────────────────
 const bc = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nardeen_sync") : null;
 const broadcast = (key, data) => { if (bc) bc.postMessage({ key, data, ts: Date.now() }); };
 
-// ── Supabase write helpers ───────────────────────────────────────────────────
-// كل دالة تكتب إلى Supabase إذا كان متاحاً
+// ── كتابة إلى Supabase (للمزامنة بين الأجهزة) ──────────────────────────────
 const sbWrite = {
   order: async (order) => {
     if (!SUPABASE_READY) return;
-    const row = {
+    await supabase.from("orders").upsert({
       id: order.id,
       order_num: order.orderNum,
       customer_name: order.customerName,
@@ -32,12 +29,11 @@ const sbWrite = {
       paid_at: order.paidAt || null,
       paid_by: order.paidBy || null,
       discount: order.discount || 0,
-    };
-    await supabase.from("orders").upsert(row, { onConflict: "id" });
+    }, { onConflict: "id" });
   },
   debt: async (debt) => {
     if (!SUPABASE_READY) return;
-    const row = {
+    await supabase.from("debts").upsert({
       id: debt.id,
       customer_name: debt.customerName,
       amount: debt.amount,
@@ -48,24 +44,22 @@ const sbWrite = {
       notes: debt.notes || "",
       created_by: debt.createdBy || "",
       order_id: debt.orderId || null,
-    };
-    await supabase.from("debts").upsert(row, { onConflict: "id" });
+    }, { onConflict: "id" });
   },
   expense: async (expense) => {
     if (!SUPABASE_READY) return;
-    const row = {
+    await supabase.from("expenses").upsert({
       id: expense.id,
       label: expense.label,
       amount: expense.amount,
       date: expense.date,
       by: expense.by || "",
       notes: expense.notes || "",
-    };
-    await supabase.from("expenses").upsert(row, { onConflict: "id" });
+    }, { onConflict: "id" });
   },
   cashLog: async (entry) => {
     if (!SUPABASE_READY) return;
-    const row = {
+    await supabase.from("cash_log").upsert({
       id: entry.id,
       order_id: entry.orderId || null,
       order_num: entry.orderNum || "",
@@ -73,12 +67,10 @@ const sbWrite = {
       at: entry.at,
       by: entry.by || "",
       type: entry.type || "sale",
-    };
-    await supabase.from("cash_log").upsert(row, { onConflict: "id" });
+    }, { onConflict: "id" });
   },
 };
 
-// ── DEFAULT DATA ─────────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
   cafeName: "Nardeen Caffe",
   signature: "بإدارة يحيى داؤود",
@@ -86,7 +78,7 @@ export const DEFAULT_SETTINGS = {
   maxDiscount: 50,
   workerCanDecreaseStock: false,
   cashierCanSeeReports: true,
-  allowCustomerOrders: false,
+  allowCustomerOrders: true,
   taxPercent: 0,
   appLang: "ar",
 };
@@ -126,7 +118,6 @@ export const DEFAULT_MENU = [
   { id:"m14", name:"فحم إضافي",      nameEn:"Extra Charcoal",   price:3000,  category:"hookah",      stock:100, minStock:10, totalSold:0, emoji:"🔥" },
 ];
 
-// ── useStore hook ────────────────────────────────────────────────────────────
 export const useStore = () => {
   const [users,         setUsersRaw]        = useState(() => ls.get("nc_users",    DEFAULT_USERS));
   const [menu,          setMenuRaw]          = useState(() => ls.get("nc_menu",     DEFAULT_MENU));
@@ -140,98 +131,77 @@ export const useStore = () => {
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
 
-  // ── Setters ─────────────────────────────────────────────────────────────────
   const setUsers = useCallback((v) => {
-    setUsersRaw(p => { const d = typeof v === "function" ? v(p) : v; ls.set("nc_users", d); broadcast("nc_users", d); return d; });
+    setUsersRaw(p => { const d = typeof v==="function"?v(p):v; ls.set("nc_users",d); broadcast("nc_users",d); return d; });
   }, []);
-
   const setMenu = useCallback((v) => {
-    setMenuRaw(p => { const d = typeof v === "function" ? v(p) : v; ls.set("nc_menu", d); broadcast("nc_menu", d); return d; });
+    setMenuRaw(p => { const d = typeof v==="function"?v(p):v; ls.set("nc_menu",d); broadcast("nc_menu",d); return d; });
   }, []);
-
-  // setOrders: يكتب أيضاً إلى Supabase
   const setOrders = useCallback((v) => {
     setOrdersRaw(p => {
-      const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_orders", next);
-      broadcast("nc_orders", next);
-      // كتابة الطلبات الجديدة أو المحدّثة إلى Supabase
+      const next = typeof v==="function"?v(p):v;
+      ls.set("nc_orders",next); broadcast("nc_orders",next);
       if (SUPABASE_READY) {
-        const prevIds = new Set(p.map(o => o.id));
         const changed = next.filter(o => {
-          const old = p.find(x => x.id === o.id);
-          return !old || old.status !== o.status || old.paymentType !== o.paymentType;
+          const old = p.find(x=>x.id===o.id);
+          return !old || old.status!==o.status || old.paymentType!==o.paymentType;
         });
         changed.forEach(o => sbWrite.order(o));
       }
       return next;
     });
   }, []);
-
   const setNotifications = useCallback((v) => {
-    setNotificationsRaw(p => { const d = typeof v === "function" ? v(p) : v; ls.set("nc_notifs", d); broadcast("nc_notifs", d); return d; });
+    setNotificationsRaw(p => { const d=typeof v==="function"?v(p):v; ls.set("nc_notifs",d); broadcast("nc_notifs",d); return d; });
   }, []);
-
-  // setCashLog: يكتب إلى Supabase
   const setCashLog = useCallback((v) => {
     setCashLogRaw(p => {
-      const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_cash", next);
-      broadcast("nc_cash", next);
+      const next = typeof v==="function"?v(p):v;
+      ls.set("nc_cash",next); broadcast("nc_cash",next);
       if (SUPABASE_READY) {
-        const prevIds = new Set(p.map(e => e.id));
-        next.filter(e => !prevIds.has(e.id)).forEach(e => sbWrite.cashLog(e));
+        const prevIds = new Set(p.map(e=>e.id));
+        next.filter(e=>!prevIds.has(e.id)).forEach(e=>sbWrite.cashLog(e));
       }
       return next;
     });
   }, []);
-
   const setTables = useCallback((v) => {
-    setTablesRaw(p => { const d = typeof v === "function" ? v(p) : v; ls.set("nc_tables", d); broadcast("nc_tables", d); return d; });
+    setTablesRaw(p => { const d=typeof v==="function"?v(p):v; ls.set("nc_tables",d); broadcast("nc_tables",d); return d; });
   }, []);
-
-  // setDebts: يكتب إلى Supabase
   const setDebts = useCallback((v) => {
     setDebtsRaw(p => {
-      const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_debts", next);
-      broadcast("nc_debts", next);
+      const next = typeof v==="function"?v(p):v;
+      ls.set("nc_debts",next); broadcast("nc_debts",next);
       if (SUPABASE_READY) {
         next.forEach(d => {
-          const old = p.find(x => x.id === d.id);
-          if (!old || old.remaining !== d.remaining || old.settled !== d.settled) {
-            sbWrite.debt(d);
-          }
+          const old = p.find(x=>x.id===d.id);
+          if (!old || old.remaining!==d.remaining || old.settled!==d.settled) sbWrite.debt(d);
         });
       }
       return next;
     });
   }, []);
-
-  // setExpenses: يكتب إلى Supabase
   const setExpenses = useCallback((v) => {
     setExpensesRaw(p => {
-      const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_expenses", next);
-      broadcast("nc_expenses", next);
+      const next = typeof v==="function"?v(p):v;
+      ls.set("nc_expenses",next); broadcast("nc_expenses",next);
       if (SUPABASE_READY) {
-        const prevIds = new Set(p.map(e => e.id));
-        next.filter(e => !prevIds.has(e.id)).forEach(e => sbWrite.expense(e));
+        const prevIds = new Set(p.map(e=>e.id));
+        next.filter(e=>!prevIds.has(e.id)).forEach(e=>sbWrite.expense(e));
       }
       return next;
     });
   }, []);
-
   const setSettings = useCallback((v) => {
-    setSettingsRaw(p => { const d = typeof v === "function" ? v(p) : v; ls.set("nc_settings", d); broadcast("nc_settings", d); return d; });
+    setSettingsRaw(p => { const d=typeof v==="function"?v(p):v; ls.set("nc_settings",d); broadcast("nc_settings",d); return d; });
   }, []);
 
-  // ── BroadcastChannel: receive updates from other tabs ───────────────────
+  // BroadcastChannel
   useEffect(() => {
     if (!bc) return;
     const handler = (e) => {
-      const { key, data } = e.data;
-      switch (key) {
+      const {key,data}=e.data;
+      switch(key){
         case "nc_users":    setUsersRaw(data);        break;
         case "nc_menu":     setMenuRaw(data);          break;
         case "nc_orders":   setOrdersRaw(data);        break;
@@ -243,17 +213,17 @@ export const useStore = () => {
         case "nc_settings": setSettingsRaw(data);      break;
       }
     };
-    bc.addEventListener("message", handler);
-    return () => bc.removeEventListener("message", handler);
-  }, []);
+    bc.addEventListener("message",handler);
+    return ()=>bc.removeEventListener("message",handler);
+  },[]);
 
-  // ── storage event ────────────────────────────────────────────────────────
+  // storage event
   useEffect(() => {
-    const handler = (e) => {
-      if (!e.key || !e.newValue) return;
-      try {
-        const data = JSON.parse(e.newValue);
-        switch (e.key) {
+    const handler=(e)=>{
+      if(!e.key||!e.newValue) return;
+      try{
+        const data=JSON.parse(e.newValue);
+        switch(e.key){
           case "nc_users":    setUsersRaw(data);        break;
           case "nc_menu":     setMenuRaw(data);          break;
           case "nc_orders":   setOrdersRaw(data);        break;
@@ -264,71 +234,63 @@ export const useStore = () => {
           case "nc_expenses": setExpensesRaw(data);      break;
           case "nc_settings": setSettingsRaw(data);      break;
         }
-      } catch {}
+      }catch{}
     };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
-  }, []);
+    window.addEventListener("storage",handler);
+    return ()=>window.removeEventListener("storage",handler);
+  },[]);
 
-  // ── Supabase: load cloud data ────────────────────────────────────────────
-  useEffect(() => {
-    if (!SUPABASE_READY) return;
+  // Supabase: load
+  useEffect(()=>{
+    if(!SUPABASE_READY) return;
     setSyncing(true);
     Promise.all([
-      supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(500),
+      supabase.from("orders").select("*").order("created_at",{ascending:false}).limit(500),
       supabase.from("menu_items").select("*").order("category"),
       supabase.from("profiles").select("*"),
-      supabase.from("debts").select("*").order("date", { ascending: false }),
-      supabase.from("expenses").select("*").order("date", { ascending: false }),
-      supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(200),
-    ]).then(([ord, men, prof, dbt, exp, cash]) => {
-      if (ord.data?.length)  { setOrdersRaw(ord.data);   ls.set("nc_orders",   ord.data); }
-      if (men.data?.length)  { setMenuRaw(men.data);      ls.set("nc_menu",     men.data); }
-      if (prof.data?.length) { setUsersRaw(prof.data);   ls.set("nc_users",    prof.data); }
-      if (dbt.data?.length)  { setDebtsRaw(dbt.data);    ls.set("nc_debts",    dbt.data); }
-      if (exp.data?.length)  { setExpensesRaw(exp.data); ls.set("nc_expenses", exp.data); }
-      if (cash.data?.length) { setCashLogRaw(cash.data); ls.set("nc_cash",     cash.data); }
+      supabase.from("debts").select("*").order("date",{ascending:false}),
+      supabase.from("expenses").select("*").order("date",{ascending:false}),
+      supabase.from("cash_log").select("*").order("at",{ascending:false}).limit(200),
+    ]).then(([ord,men,prof,dbt,exp,cash])=>{
+      if(ord.data?.length)  {setOrdersRaw(ord.data);   ls.set("nc_orders",ord.data);}
+      if(men.data?.length)  {setMenuRaw(men.data);      ls.set("nc_menu",men.data);}
+      if(prof.data?.length) {setUsersRaw(prof.data);   ls.set("nc_users",prof.data);}
+      if(dbt.data?.length)  {setDebtsRaw(dbt.data);    ls.set("nc_debts",dbt.data);}
+      if(exp.data?.length)  {setExpensesRaw(exp.data); ls.set("nc_expenses",exp.data);}
+      if(cash.data?.length) {setCashLogRaw(cash.data); ls.set("nc_cash",cash.data);}
       setCloudReady(true);
-    }).catch(() => {}).finally(() => setSyncing(false));
-  }, []);
+    }).catch(()=>{}).finally(()=>setSyncing(false));
+  },[]);
 
-  // ── Supabase real-time orders ────────────────────────────────────────────
-  useEffect(() => {
-    if (!SUPABASE_READY) return;
+  // Supabase realtime orders
+  useEffect(()=>{
+    if(!SUPABASE_READY) return;
     return subscribeOrders(
-      (r) => setOrdersRaw(p => { const n = [r, ...p.filter(o => o.id !== r.id)]; ls.set("nc_orders", n); broadcast("nc_orders", n); return n; }),
-      (r) => setOrdersRaw(p => { const n = p.map(o => o.id === r.id ? r : o);    ls.set("nc_orders", n); broadcast("nc_orders", n); return n; }),
-      (r) => setOrdersRaw(p => { const n = p.filter(o => o.id !== r.id);          ls.set("nc_orders", n); broadcast("nc_orders", n); return n; }),
+      (r)=>setOrdersRaw(p=>{const n=[r,...p.filter(o=>o.id!==r.id)];ls.set("nc_orders",n);broadcast("nc_orders",n);return n;}),
+      (r)=>setOrdersRaw(p=>{const n=p.map(o=>o.id===r.id?r:o);ls.set("nc_orders",n);broadcast("nc_orders",n);return n;}),
+      (r)=>setOrdersRaw(p=>{const n=p.filter(o=>o.id!==r.id);ls.set("nc_orders",n);broadcast("nc_orders",n);return n;}),
     );
-  }, []);
+  },[]);
 
-  // ── Supabase real-time debts ─────────────────────────────────────────────
-  useEffect(() => {
-    if (!SUPABASE_READY) return;
-    const channel = supabase
-      .channel("debts-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "debts" }, (p) => {
-        if (p.eventType === "INSERT" || p.eventType === "UPDATE") {
-          setDebtsRaw(prev => {
-            const n = [p.new, ...prev.filter(d => d.id !== p.new.id)];
-            ls.set("nc_debts", n); broadcast("nc_debts", n); return n;
+  // Supabase realtime debts
+  useEffect(()=>{
+    if(!SUPABASE_READY) return;
+    const ch=supabase.channel("debts-rt")
+      .on("postgres_changes",{event:"*",schema:"public",table:"debts"},(p)=>{
+        if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
+          setDebtsRaw(prev=>{
+            const n=[p.new,...prev.filter(d=>d.id!==p.new.id)];
+            ls.set("nc_debts",n);broadcast("nc_debts",n);return n;
           });
         }
-      })
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, []);
+      }).subscribe();
+    return ()=>supabase.removeChannel(ch);
+  },[]);
 
   return {
-    users, setUsers,
-    menu, setMenu,
-    orders, setOrders,
-    notifications, setNotifications,
-    cashLog, setCashLog,
-    tables, setTables,
-    debts, setDebts,
-    expenses, setExpenses,
-    settings, setSettings,
-    syncing, cloudReady,
+    users,setUsers, menu,setMenu, orders,setOrders,
+    notifications,setNotifications, cashLog,setCashLog,
+    tables,setTables, debts,setDebts, expenses,setExpenses,
+    settings,setSettings, syncing,cloudReady,
   };
 };
