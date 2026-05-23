@@ -134,7 +134,8 @@ const GlobalStyle = ({dm,theme="default"}) => {
     }
     @media(min-width:641px){.show-mobile-only{display:none!important}}
   `}</style>
-);
+  );
+}
 
 // ═══════════════════════════════════
 // TOAST
