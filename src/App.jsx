@@ -106,6 +106,21 @@ const THEMES = {
 
 const GlobalStyle = ({dm,theme="default"}) => {
   const t = THEMES[theme]||THEMES.default;
+  // Apply theme vars to document root so they work outside React tree (modals, etc.)
+  React.useEffect(()=>{
+    const root=document.documentElement;
+    root.style.setProperty("--red",t.primary);
+    root.style.setProperty("--red-dark",t.secondary);
+    root.style.setProperty("--gold",t.accent);
+    root.style.setProperty("--bg",dm?"#0d0d18":"#f4f6fa");
+    root.style.setProperty("--card",dm?"#16182a":"#ffffff");
+    root.style.setProperty("--card2",dm?"#1e2035":"#f0f2f8");
+    root.style.setProperty("--border",dm?"#2a2d4a":"#dde1ed");
+    root.style.setProperty("--text",dm?"#e8eaf6":"#1a1c2e");
+    root.style.setProperty("--sub",dm?"#8890b0":"#6b7280");
+    document.body.style.background=dm?"#0d0d18":"#f4f6fa";
+    document.body.style.color=dm?"#e8eaf6":"#1a1c2e";
+  },[t.primary,t.secondary,t.accent,dm]);
   return (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
@@ -177,12 +192,24 @@ const SOUNDS={
 // ═══════════════════════════════════
 // PDF ARCHIVE UTILITY
 // ═══════════════════════════════════
-const savePdfArchive=(order,settings)=>{
+// Generate ascending filename from invoice date: YYYY-MM-DD_HH-mm-ss_#NUM
+const makePdfFilename=(order)=>{
+  const d=new Date(order.createdAt||Date.now());
+  const pad=(n,l=2)=>String(n).padStart(l,"0");
+  const date=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const time=`${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+  const num=(order.orderNum||order.id||"0000").replace(/\D/g,"").slice(-4).padStart(4,"0");
+  return `invoice_${date}_${time}_${num}.pdf`;
+};
+
+const savePdfArchive=async(order,settings)=>{
   try{
     const CUR=settings?.currency||"ل.س";
     const cafeName=settings?.cafeName||"Nardeen Caffe";
     const isDebt=!!order.debtName;
+    const filename=makePdfFilename(order);
     const html=`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8">
+      <title>${filename}</title>
       <style>body{font-family:sans-serif;padding:20px;direction:rtl;max-width:320px;margin:0 auto}
       h2{color:#c62828;text-align:center;margin:0 0 4px}
       .sub{text-align:center;font-size:12px;color:#666;margin-bottom:12px}
@@ -190,6 +217,8 @@ const savePdfArchive=(order,settings)=>{
       .total{border-top:2px solid #333;font-weight:900;font-size:15px;margin-top:8px;padding-top:8px}
       .badge{background:#c62828;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
       .debt-badge{background:#6a1b9a;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
+      .filename{text-align:center;font-size:9px;color:#bbb;margin-top:12px;font-family:monospace}
+      @media print{.filename{display:block}}
       </style></head><body>
       <h2>☕ ${cafeName}</h2>
       <div class="sub">${settings?.signature||""}</div>
@@ -205,18 +234,48 @@ const savePdfArchive=(order,settings)=>{
       ${order.paidBy?`<div style="margin-top:8px;font-size:11px;color:#666">💰 استلمه: ${order.paidByName||order.paidBy}</div>`:""}
       ${order.notes?`<div style="margin-top:4px;font-size:11px;color:#666">📝 ${order.notes}</div>`:""}
       <div style="text-align:center;margin-top:16px;font-size:11px;color:#999">شكراً لزيارتكم ☕</div>
+      <div class="filename">${filename}</div>
       </body></html>`;
+
+    // 1. Save to localStorage
     const archived=JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]");
     const entry={
       id:order.id,orderNum:order.orderNum||order.id,
       customerName:order.debtName||order.customerName,
       table:order.table,total:order.total,
       createdAt:order.createdAt||new Date().toISOString(),
-      isDebt,html,paidByName:order.paidByName||order.paidBy||""
+      isDebt,html,filename,
+      paidByName:order.paidByName||order.paidBy||""
     };
     archived.unshift(entry);
     if(archived.length>300) archived.splice(300);
     localStorage.setItem("nc_pdf_archive",JSON.stringify(archived));
+
+    // 2. Save to Supabase receipts table (async, non-blocking)
+    try{
+      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
+      if(SBR&&supabase){
+        await supabase.from("receipts").upsert({
+          id:"rcpt_"+order.id,
+          order_id:order.id,
+          order_num:order.orderNum||order.id,
+          customer_name:order.debtName||order.customerName||"",
+          table_num:order.table||"",
+          items:order.items||[],
+          total:order.total||0,
+          discount:order.discount||0,
+          payment_type:isDebt?"debt_settled":(order.paymentType||"cash"),
+          notes:order.notes||"",
+          created_by:order.paidByName||order.workerName||"",
+          created_at:order.createdAt||new Date().toISOString(),
+          paid_at:order.paidAt||new Date().toISOString(),
+          paid_by_name:order.paidByName||"",
+          cafe_name:settings?.cafeName||"Nardeen Caffe",
+          is_debt:isDebt,
+          filename,
+        },{onConflict:"id"});
+      }
+    }catch(sbErr){console.warn("Supabase receipt save (non-fatal):",sbErr);}
   }catch(e){console.error("pdf archive:",e);}
 };
 
@@ -2557,19 +2616,90 @@ function MenuTab({store,showToast,dm,settings}){
 function TablesTab({store,showToast,dm,settings}){
   const [numTables,setNumTables]=useState(store.tables.length||10);
   const [editing,setEditing]=useState(false);
+  const [syncing,setSyncing]=useState(false);
   const CUR=settings?.currency||"ل.س";
 
-  const initTables=(n)=>{
+  // ── Supabase helpers ──────────────────────────────────────
+  const sbUpsertTable=async(t)=>{
+    try{
+      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
+      if(!SBR||!supabase) return;
+      await supabase.from("tables").upsert({
+        id:t.id,num:String(t.number),number:t.number,
+        label:t.label,seats:t.seats||4,
+        status:t.status,note:t.note||"",
+        order_id:null,
+        opened_at:t.openedAt||null,
+      },{onConflict:"id"});
+    }catch(e){console.warn("table upsert:",e);}
+  };
+
+  const sbLoadTables=async()=>{
+    try{
+      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
+      if(!SBR||!supabase) return;
+      setSyncing(true);
+      const {data,error}=await supabase.from("tables").select("*").order("number");
+      if(error) throw error;
+      if(data&&data.length>0){
+        const mapped=data.map(r=>({
+          id:r.id,number:r.number||+r.num||0,
+          label:r.label||`طاولة ${r.num||r.number}`,
+          seats:r.seats||4,status:r.status||"free",
+          openedAt:r.opened_at||null,note:r.note||""
+        }));
+        store.setTables(mapped);
+      }
+    }catch(e){console.warn("table load:",e);}
+    finally{setSyncing(false);}
+  };
+
+  // Load tables from Supabase on mount if local is empty
+  React.useEffect(()=>{
+    if(store.tables.length===0) sbLoadTables();
+  },[]);
+
+  const initTables=async(n)=>{
     const tables=Array.from({length:n},(_,i)=>({
       id:`t${i+1}`,number:i+1,label:`طاولة ${i+1}`,seats:4,status:"free",openedAt:null,note:""
     }));
-    store.setTables(tables);showToast(`تم إعداد ${n} طاولة`);setEditing(false);
+    store.setTables(tables);
+    setEditing(false);
+    // Sync all to Supabase
+    setSyncing(true);
+    try{
+      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
+      if(SBR&&supabase){
+        const rows=tables.map(t=>({
+          id:t.id,num:String(t.number),number:t.number,
+          label:t.label,seats:t.seats,status:t.status,
+          note:"",order_id:null,opened_at:null
+        }));
+        await supabase.from("tables").upsert(rows,{onConflict:"id"});
+        showToast(`تم إعداد ${n} طاولة وحفظها ☁`);
+      } else {
+        showToast(`تم إعداد ${n} طاولة (محلي)`);
+      }
+    }catch(e){showToast(`تم إعداد ${n} طاولة (خطأ السحابة)`);}
+    finally{setSyncing(false);}
   };
 
-  const toggleStatus=(id)=>store.setTables(p=>p.map(t=>t.id===id?{
-    ...t,status:t.status==="free"?"occupied":"free",
-    openedAt:t.status==="free"?new Date().toISOString():null
-  }:t));
+  const toggleStatus=async(id)=>{
+    let updated;
+    store.setTables(p=>{
+      const next=p.map(t=>{
+        if(t.id!==id) return t;
+        updated={...t,
+          status:t.status==="free"?"occupied":"free",
+          openedAt:t.status==="free"?new Date().toISOString():null
+        };
+        return updated;
+      });
+      return next;
+    });
+    // Sync changed table to Supabase
+    if(updated) setTimeout(()=>sbUpsertTable(updated),50);
+  };
 
   const TableTimer=({openedAt})=>{
     const [elapsed,setElapsed]=useState(Math.floor((Date.now()-new Date(openedAt))/1000));
@@ -2607,6 +2737,9 @@ function TablesTab({store,showToast,dm,settings}){
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <span style={{background:"rgba(46,125,50,.15)",color:"#2e7d32",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>شاغرة: {free}</span>
           <span style={{background:"rgba(198,40,40,.15)",color:"#c62828",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>مشغولة: {occupied}</span>
+          <button onClick={sbLoadTables} disabled={syncing} className="btn btn-ghost" style={{padding:"7px 12px",fontSize:12,opacity:syncing?.6:1}}>
+            {syncing?"⏳":"☁"} مزامنة
+          </button>
           <button onClick={()=>setEditing(true)} className="btn btn-ghost" style={{padding:"7px 12px",fontSize:12}}>⚙ تعديل</button>
         </div>
       </div>
