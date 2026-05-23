@@ -104,8 +104,7 @@ export const DEFAULT_SETTINGS = {
   taxPercent: 0,
   appLang: "ar",
   cashierCode: "narden",
-  notifSound: true,
-  toastDuration: 3.5,
+  appTheme: "default",
 };
 
 export const DEFAULT_USERS = [
@@ -232,11 +231,23 @@ export const useStore = () => {
     });
   }, []);
 
-  // ── setTables ───────────────────────────────────────────────
+  // ── setTables: يكتب إلى Supabase ───────────────────────────
   const setTables = useCallback((v) => {
     setTablesRaw(p => {
-      const d=typeof v==="function"?v(p):v;
-      ls.set("nc_tables",d); broadcast("nc_tables",d); return d;
+      const next=typeof v==="function"?v(p):v;
+      ls.set("nc_tables",next); broadcast("nc_tables",next);
+      if(SUPABASE_READY){
+        next.forEach(t=>{
+          const old=p.find(x=>x.id===t.id);
+          if(!old||old.status!==t.status||old.orderId!==t.orderId){
+            supabase.from("tables").upsert({
+              id:t.id,num:t.num,status:t.status||"free",
+              order_id:t.orderId||null,opened_at:t.openedAt||null,
+            },{onConflict:"id"});
+          }
+        });
+      }
+      return next;
     });
   }, []);
 
@@ -385,6 +396,20 @@ export const useStore = () => {
       (r)=>setOrdersRaw(p=>{const n=p.map(o=>o.id===r.id?r:o);ls.set("nc_orders",n);broadcast("nc_orders",n);return n;}),
       (r)=>setOrdersRaw(p=>{const n=p.filter(o=>o.id!==r.id);ls.set("nc_orders",n);broadcast("nc_orders",n);return n;}),
     );
+  },[]);
+
+
+  // الطاولات — realtime
+  useEffect(()=>{
+    if(!SUPABASE_READY) return;
+    const ch=supabase.channel("tables-rt")
+      .on("postgres_changes",{event:"*",schema:"public",table:"tables"},(p)=>{
+        if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
+          const t={...p.new,orderId:p.new.order_id,openedAt:p.new.opened_at};
+          setTablesRaw(prev=>{const n=[t,...prev.filter(x=>x.id!==t.id)];ls.set("nc_tables",n);broadcast("nc_tables",n);return n;});
+        }
+      }).subscribe();
+    return ()=>supabase.removeChannel(ch);
   },[]);
 
   // الديون
