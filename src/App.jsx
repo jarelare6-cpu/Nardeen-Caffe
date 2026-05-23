@@ -2,7 +2,7 @@
 // ║          Nardeen Caffe — ناردين كافيه  v3.0                      ║
 // ║          بإدارة يحيى داؤود                                       ║
 // ╚══════════════════════════════════════════════════════════════════╝
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useStore } from "./lib/store.js";
 import { SUPABASE_READY } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
@@ -140,6 +140,32 @@ const GlobalStyle = ({dm,theme="default"}) => {
 // ═══════════════════════════════════
 // TOAST
 // ═══════════════════════════════════
+// ═══════════════════════════════════
+// ERROR BOUNDARY
+// ═══════════════════════════════════
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={error:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  componentDidCatch(e,i){console.error("Boundary caught:",e,i);}
+  render(){
+    if(this.state.error){
+      return(
+        <div style={{padding:24,textAlign:"center",color:"var(--text)"}}>
+          <div style={{fontSize:48,marginBottom:12}}>⚠️</div>
+          <h2 style={{marginBottom:8,color:"#c62828"}}>حدث خطأ في هذه الصفحة</h2>
+          <p style={{color:"var(--sub)",marginBottom:16,fontSize:13}}>{this.state.error?.message}</p>
+          <button onClick={()=>this.setState({error:null})}
+            style={{background:"#c62828",color:"#fff",border:"none",borderRadius:12,
+              padding:"10px 24px",fontWeight:700,cursor:"pointer"}}>
+            🔄 إعادة المحاولة
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function Toast({toast}){
   if(!toast) return null;
   const bg = toast.type==="error"?"#c62828":toast.type==="warn"?"#e65100":"#2e7d32";
@@ -988,6 +1014,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
 
       {/* Content */}
       <main style={{flex:1,padding:16,maxWidth:1280,width:"100%",margin:"0 auto"}}>
+        <ErrorBoundary key={tab}>
         {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} key={store.orders.length+"_"+store.orders.filter(o=>o.status==="paid").length}/>}
         {tab==="inventory"  &&canAccess(user.role,"dashboard") &&<InventoryTab   store={store} settings={settings}/>}
         {tab==="order"      &&canAccess(user.role,"order")     &&<NewOrderTab    store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
@@ -1002,6 +1029,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")  &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
+        </ErrorBoundary>
       </main>
       <div style={{height:"env(safe-area-inset-bottom,0px)"}}/>
     </div>
@@ -1332,11 +1360,14 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       if(hasDrinks) addNotification(`🍹 طلب #${orderNum} للبار${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.BAR],newOrder.id);
       if(hasHookah) addNotification(`💨 طلب نرجيلة #${orderNum}${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.HOOKAH],newOrder.id);
       addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
-      printOrder(newOrder,store.menu,1,settings);
-      setTimeout(()=>printOrder(newOrder,store.menu,2,settings),600);
       setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
       setSubmitting(false);
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
+      // الطباعة اختيارية - لا تُفتح تلقائياً لتجنب popup blocker
+      if(window.confirm(`طباعة فاتورة الطلب #${orderNum}؟`)){
+        printOrder(newOrder,store.menu,1,settings);
+        setTimeout(()=>printOrder(newOrder,store.menu,2,settings),800);
+      }
     },800);
   };
 
