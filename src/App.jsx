@@ -2725,23 +2725,40 @@ function TablesTab({store,user,showToast,dm,settings}){
     if(updated) setTimeout(()=>sbUpsertTable(updated),50);
   };
 
-  // Clear table: mark free + cancel/mark all active orders as cancelled
-  const clearTable=async(t,e)=>{
+  const [clearModal,setClearModal]=useState(null); // table object
+
+  // Full clear: DELETE orders from state + free table + sync Supabase
+  const clearTable=(t,e)=>{
     e.stopPropagation();
-    const activeOrds=store.orders.filter(o=>
-      o.table===String(t.number)&&!["paid","cancelled","debt"].includes(o.status)
-    );
-    if(activeOrds.length>0){
-      if(!window.confirm(`هذه الطاولة عليها ${activeOrds.length} طلب نشط.\nهل تريد تفريغها وإلغاء الطلبات؟`)) return;
+    setClearModal(t);
+  };
+
+  const confirmClearTable=async(t,deleteOrders)=>{
+    setClearModal(null);
+    if(deleteOrders){
+      // Hard delete all orders on this table (regardless of status)
+      store.setOrders(p=>p.filter(o=>o.table!==String(t.number)));
+    } else {
+      // Soft cancel only active orders
       store.setOrders(p=>p.map(o=>
         o.table===String(t.number)&&!["paid","cancelled","debt"].includes(o.status)
           ?{...o,status:"cancelled"}:o
       ));
     }
+    // Free the table
     const freed={...t,status:"free",openedAt:null};
     store.setTables(p=>p.map(tb=>tb.id===t.id?freed:tb));
     sbUpsertTable(freed);
-    showToast(`🪑 طاولة ${t.number} أصبحت شاغرة`);
+    // Delete from Supabase orders if hard delete
+    if(deleteOrders){
+      try{
+        const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
+        if(SBR&&supabase){
+          await supabase.from("orders").delete().eq("table_num",String(t.number));
+        }
+      }catch(e){console.warn("supabase table orders delete:",e);}
+    }
+    showToast(`🪑 طاولة ${t.number} تم تفريغها بالكامل`);
   };
 
   const canManageTable=user&&["admin","cashier"].includes(user.role);
@@ -2775,8 +2792,89 @@ function TablesTab({store,user,showToast,dm,settings}){
     );
   }
 
+  // ── Clear Table Modal ──────────────────────────────────────────
+  const ClearTableModal=()=>{
+    if(!clearModal) return null;
+    const t=clearModal;
+    const allOrds=store.orders.filter(o=>o.table===String(t.number));
+    const activeOrds=allOrds.filter(o=>!["paid","cancelled","debt"].includes(o.status));
+    const CUR2=settings?.currency||"ل.س";
+    return(
+      <div onClick={e=>{if(e.target===e.currentTarget)setClearModal(null);}}
+        style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:900,
+          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div className="card fade-in" style={{width:"100%",maxWidth:400,
+          boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}>
+          <div style={{textAlign:"center",marginBottom:16}}>
+            <div style={{fontSize:48,marginBottom:8}}>🪑</div>
+            <h2 style={{fontSize:18,fontWeight:900,marginBottom:4}}>تفريغ {t.label}</h2>
+            <p style={{fontSize:13,color:"var(--sub)"}}>
+              {allOrds.length} طلب إجمالي — {activeOrds.length} نشط
+            </p>
+          </div>
+          {/* Order list preview */}
+          {allOrds.length>0&&(
+            <div style={{background:"var(--card2)",borderRadius:12,padding:"10px 14px",
+              marginBottom:16,maxHeight:160,overflowY:"auto"}}>
+              {allOrds.map((o,i)=>(
+                <div key={o.id} style={{display:"flex",justifyContent:"space-between",
+                  fontSize:12,padding:"4px 0",
+                  borderBottom:i<allOrds.length-1?"1px solid var(--border)":"none"}}>
+                  <span style={{color:
+                    o.status==="paid"?"#2e7d32":
+                    o.status==="cancelled"?"var(--sub)":
+                    o.status==="debt"?"#6a1b9a":"var(--text)",
+                    fontWeight:600}}>
+                    #{o.orderNum} — {o.customerName||"زبون"}
+                    <span style={{marginRight:6,fontSize:10,opacity:.7}}>
+                      ({o.status==="paid"?"مدفوع":o.status==="cancelled"?"ملغي":
+                        o.status==="debt"?"دين":"نشط"})
+                    </span>
+                  </span>
+                  <span style={{fontWeight:700,color:"#c62828"}}>
+                    {(o.total||0).toLocaleString()} {CUR2}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {/* Option 1: Hard delete ALL */}
+            <button onClick={()=>confirmClearTable(t,true)}
+              style={{width:"100%",padding:"13px",borderRadius:12,border:"none",
+                background:"#c62828",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer"}}>
+              🗑 حذف جميع الطلبات وتفريغ الطاولة
+            </button>
+            {/* Option 2: Soft cancel active only */}
+            {activeOrds.length>0&&(
+              <button onClick={()=>confirmClearTable(t,false)}
+                style={{width:"100%",padding:"13px",borderRadius:12,border:"none",
+                  background:"#e65100",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer"}}>
+                🚫 إلغاء الطلبات النشطة فقط ({activeOrds.length}) وتفريغ الطاولة
+              </button>
+            )}
+            {/* Option 3: Free only (no order change) */}
+            <button onClick={()=>confirmClearTable(t,false)}
+              style={{width:"100%",padding:"11px",borderRadius:12,
+                border:"1.5px solid var(--border)",background:"none",
+                color:"var(--text)",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+              🪑 تفريغ الطاولة فقط (بدون تغيير الطلبات)
+            </button>
+            <button onClick={()=>setClearModal(null)}
+              style={{width:"100%",padding:"10px",borderRadius:12,
+                border:"1.5px solid var(--border)",background:"none",
+                color:"var(--sub)",fontWeight:600,fontSize:13,cursor:"pointer"}}>
+              إلغاء
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return(
     <div className="fade-in">
+      <ClearTableModal/>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <h2 style={{fontSize:18,fontWeight:900}}>🪑 خريطة الطاولات</h2>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
