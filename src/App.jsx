@@ -1180,7 +1180,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="bar"        &&canAccess(user.role,"bar")       &&<BarTab         store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="hookah"     &&canAccess(user.role,"hookah")    &&<HookahTab      store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings}/>}
-        {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")  &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
@@ -1831,19 +1831,40 @@ function CashierTab({store,user,showToast,dm,settings}){
   const readyOrders=store.orders.filter(o=>o.status==="ready");
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
 
+  // Auto-free table helper
+  const autoFreeTable=async(tableNum,updatedOrders)=>{
+    if(!tableNum) return;
+    const remaining=updatedOrders.filter(o=>
+      o.table===String(tableNum)&&!["paid","cancelled","debt"].includes(o.status)
+    );
+    if(remaining.length===0){
+      // All orders on this table are done → mark table free
+      store.setTables(p=>p.map(t=>{
+        if(String(t.number)!==String(tableNum)) return t;
+        const freed={...t,status:"free",openedAt:null};
+        // Sync to Supabase
+        setTimeout(()=>sbUpsertTable(freed),50);
+        return freed;
+      }));
+    }
+  };
+
   const markPaid=(order,discountPct=0)=>{
     const discAmt=Math.round((order.originalTotal||order.total)*discountPct/100);
     const finalTotal=(order.originalTotal||order.total)-discAmt;
     const paid={...order,status:"paid",paymentStatus:"paid",
       paidAt:new Date().toISOString(),paidBy:user.id,paidByName:user.name,
       discount:discountPct,originalTotal:order.originalTotal||order.total,total:finalTotal};
-    store.setOrders(p=>p.map(o=>o.id===order.id?paid:o));
+    const updatedOrders=store.orders.map(o=>o.id===order.id?paid:o);
+    store.setOrders(()=>updatedOrders);
     store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,
       amount:finalTotal,at:new Date().toISOString(),by:user.name},...p]);
     saveReceipt(paid,settings);
     savePdfArchive(paid,settings);
     showToast(`💰 تم الدفع — ${order.customerName||"زبون"} | #${order.orderNum}`,"paid");
     printOrder(paid,store.menu,2,settings);
+    // Auto-free table if no remaining active orders
+    autoFreeTable(order.table,updatedOrders);
   };
 
   const [debtModal,setDebtModal]=useState(null);
@@ -1859,13 +1880,16 @@ function CashierTab({store,user,showToast,dm,settings}){
   const confirmDebt=()=>{
     if(!debtNameInput.trim()){setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين");return;}
     const order=debtModal;
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"debt",paymentStatus:"debt",paymentType:"debt",customerName:debtNameInput.trim()}:o));
+    const debtOrder={...order,status:"debt",paymentStatus:"debt",paymentType:"debt",customerName:debtNameInput.trim()};
+    const updatedOrders2=store.orders.map(o=>o.id===order.id?debtOrder:o);
+    store.setOrders(()=>updatedOrders2);
     store.setDebts(p=>[{
       id:"d"+Date.now(),orderId:order.id,orderNum:order.orderNum,
       customerName:debtNameInput.trim(),amount:order.total,remaining:order.total,
       date:new Date().toISOString(),settled:false,settledAt:null,createdBy:user.name,notes:order.notes||"",
     },...p]);
     showToast(`تم تسجيل الدين للطلب #${order.orderNum} 💳`,"warn");
+    autoFreeTable(order.table,updatedOrders2);
     setDebtModal(null);setDebtNameInput("");
   };
 
@@ -2613,7 +2637,7 @@ function MenuTab({store,showToast,dm,settings}){
 // ═══════════════════════════════════
 // TABLES TAB
 // ═══════════════════════════════════
-function TablesTab({store,showToast,dm,settings}){
+function TablesTab({store,user,showToast,dm,settings}){
   const [numTables,setNumTables]=useState(store.tables.length||10);
   const [editing,setEditing]=useState(false);
   const [syncing,setSyncing]=useState(false);
@@ -2701,6 +2725,27 @@ function TablesTab({store,showToast,dm,settings}){
     if(updated) setTimeout(()=>sbUpsertTable(updated),50);
   };
 
+  // Clear table: mark free + cancel/mark all active orders as cancelled
+  const clearTable=async(t,e)=>{
+    e.stopPropagation();
+    const activeOrds=store.orders.filter(o=>
+      o.table===String(t.number)&&!["paid","cancelled","debt"].includes(o.status)
+    );
+    if(activeOrds.length>0){
+      if(!window.confirm(`هذه الطاولة عليها ${activeOrds.length} طلب نشط.\nهل تريد تفريغها وإلغاء الطلبات؟`)) return;
+      store.setOrders(p=>p.map(o=>
+        o.table===String(t.number)&&!["paid","cancelled","debt"].includes(o.status)
+          ?{...o,status:"cancelled"}:o
+      ));
+    }
+    const freed={...t,status:"free",openedAt:null};
+    store.setTables(p=>p.map(tb=>tb.id===t.id?freed:tb));
+    sbUpsertTable(freed);
+    showToast(`🪑 طاولة ${t.number} أصبحت شاغرة`);
+  };
+
+  const canManageTable=user&&["admin","cashier"].includes(user.role);
+
   const TableTimer=({openedAt})=>{
     const [elapsed,setElapsed]=useState(Math.floor((Date.now()-new Date(openedAt))/1000));
     useEffect(()=>{const t=setInterval(()=>setElapsed(e=>e+1),1000);return()=>clearInterval(t);},[]);
@@ -2774,6 +2819,14 @@ function TablesTab({store,showToast,dm,settings}){
               }} style={{width:"100%",marginTop:8,background:"transparent",border:"1px solid var(--border)",borderRadius:8,padding:"5px",fontSize:11,color:"var(--sub)"}}>
                 QR 📱
               </button>
+              {canManageTable&&t.status==="occupied"&&(
+                <button onClick={(e)=>clearTable(t,e)}
+                  style={{width:"100%",marginTop:6,background:"rgba(198,40,40,.12)",
+                    border:"1.5px solid rgba(198,40,40,.3)",borderRadius:8,padding:"7px",
+                    fontSize:12,color:"#c62828",fontWeight:700,cursor:"pointer"}}>
+                  🪑 تفريغ الطاولة
+                </button>
+              )}
             </div>
           );
         })}
