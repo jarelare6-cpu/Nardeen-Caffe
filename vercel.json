@@ -8,5 +8,8 @@
       "VITE_SUPABASE_URL": "https://delfjrsjofcyhtjcunqe.supabase.co",
       "VITE_SUPABASE_ANON_KEY": "sb_publishable_bVu5m4FnxXya7jTbsry6aw_-RmTcLlg"
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
