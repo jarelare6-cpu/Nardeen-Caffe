@@ -16,6 +16,8 @@
     { "src": "/(.*)\\.ico", "dest": "/$1.ico" },
     { "src": "/(.*)\\.png", "dest": "/$1.png" },
     { "src": "/(.*)\\.svg", "dest": "/$1.svg" },
+    { "src": "/(.*)\\.json", "dest": "/$1.json" },
+    { "src": "/(.*)\\.webmanifest", "dest": "/$1.webmanifest" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
