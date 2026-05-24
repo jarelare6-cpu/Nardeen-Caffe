@@ -9,7 +9,13 @@
       "VITE_SUPABASE_ANON_KEY": "sb_publishable_bVu5m4FnxXya7jTbsry6aw_-RmTcLlg"
     }
   },
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+  "routes": [
+    { "src": "/assets/(.*)", "dest": "/assets/$1" },
+    { "src": "/(.*)\\.js", "dest": "/$1.js" },
+    { "src": "/(.*)\\.css", "dest": "/$1.css" },
+    { "src": "/(.*)\\.ico", "dest": "/$1.ico" },
+    { "src": "/(.*)\\.png", "dest": "/$1.png" },
+    { "src": "/(.*)\\.svg", "dest": "/$1.svg" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
