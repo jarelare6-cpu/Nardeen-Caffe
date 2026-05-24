@@ -13,7 +13,7 @@ export const SUPABASE_READY = !!(
   url && key &&
   !url.includes("xxxx") &&
   url.startsWith("https://") &&
-  key.startsWith("eyJ")
+  (key.startsWith("eyJ") || key.startsWith("sb_"))
 );
 
 if (!SUPABASE_READY) {
