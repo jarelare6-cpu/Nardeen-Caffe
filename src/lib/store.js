@@ -1,6 +1,6 @@
 // src/lib/store.js — Nardeen Caffe — Full Cross-Device Sync
 import { useState, useCallback, useEffect } from "react";
-import { supabase, SUPABASE_READY, subscribeOrders } from "./supabase";
+import { supabase, SUPABASE_READY, subscribeOrders, subscribeTables, subscribeDebts, subscribeExpenses, subscribeMenu } from "./supabase";
 
 const ls = {
   get: (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
@@ -58,6 +58,15 @@ const sbWrite = {
       paid_at: o.paidAt || null, paid_by: o.paidBy || null,
       is_debt_settlement: o.isDebtSettlement || false,
     }, { onConflict: "id" });
+  },
+
+  deleteOrder: async (id) => {
+    if (!SUPABASE_READY) return;
+    await supabase.from("orders").delete().eq("id", id);
+  },
+  deleteOrdersByTable: async (tableNum) => {
+    if (!SUPABASE_READY) return;
+    await supabase.from("orders").delete().eq("table_num", String(tableNum));
   },
 
   // ── الديون ───────────────────────────────────────────────
@@ -200,11 +209,16 @@ export const useStore = () => {
       const next = typeof v==="function"?v(p):v;
       ls.set("nc_orders",next); broadcast("nc_orders",next);
       if (SUPABASE_READY) {
+        // Upsert new/changed
         const changed = next.filter(o => {
           const old = p.find(x=>x.id===o.id);
-          return !old || old.status!==o.status || old.paymentType!==o.paymentType;
+          return !old || old.status!==o.status || old.total!==o.total ||
+                 old.paymentType!==o.paymentType || old.discount!==o.discount;
         });
         changed.forEach(o => sbWrite.order(o));
+        // Hard-delete removed orders
+        const nextIds = new Set(next.map(o=>o.id));
+        p.filter(o=>!nextIds.has(o.id)).forEach(o=>sbWrite.deleteOrder(o.id));
       }
       return next;
     });
@@ -239,10 +253,17 @@ export const useStore = () => {
       if(SUPABASE_READY){
         next.forEach(t=>{
           const old=p.find(x=>x.id===t.id);
-          if(!old||old.status!==t.status||old.orderId!==t.orderId){
+          if(!old||old.status!==t.status||old.orderId!==t.orderId||!old.number){
             supabase.from("tables").upsert({
-              id:t.id,num:t.num,status:t.status||"free",
-              order_id:t.orderId||null,opened_at:t.openedAt||null,
+              id:t.id,
+              num:String(t.number||t.num||""),
+              number:t.number||0,
+              label:t.label||`طاولة ${t.number}`,
+              seats:t.seats||4,
+              status:t.status||"free",
+              note:t.note||"",
+              order_id:t.orderId||null,
+              opened_at:t.openedAt||null,
             },{onConflict:"id"});
           }
         });
@@ -346,7 +367,8 @@ export const useStore = () => {
       supabase.from("debts").select("*").order("date",{ascending:false}),
       supabase.from("expenses").select("*").order("date",{ascending:false}),
       supabase.from("cash_log").select("*").order("at",{ascending:false}).limit(200),
-    ]).then(([ord,men,prof,dbt,exp,cash])=>{
+      supabase.from("tables").select("*").order("number"),
+    ]).then(([ord,men,prof,dbt,exp,cash,tbl])=>{
       const mapOrder = o => ({...o,
         orderNum:     o.order_num     ?? o.orderNum,
         customerName: o.customer_name ?? o.customerName,
@@ -380,6 +402,16 @@ export const useStore = () => {
       if(dbt.data?.length)  { const d=dbt.data.map(mapDebt);  setDebtsRaw(d);   ls.set("nc_debts",d); }
       if(exp.data?.length)  { setExpensesRaw(exp.data);        ls.set("nc_expenses",exp.data); }
       if(cash.data?.length) { const d=cash.data.map(mapCash); setCashLogRaw(d); ls.set("nc_cash",d); }
+      if(tbl.data?.length)  {
+        const mapTable=t=>({
+          id:t.id, number:t.number||+t.num||0,
+          label:t.label||`طاولة ${t.num||t.number}`,
+          seats:t.seats||4, status:t.status||"free",
+          note:t.note||"", orderId:t.order_id||null,
+          openedAt:t.opened_at||null,
+        });
+        const d=tbl.data.map(mapTable); setTablesRaw(d); ls.set("nc_tables",d);
+      }
       setCloudReady(true);
     }).catch(()=>{}).finally(()=>setSyncing(false));
   },[]);
@@ -402,34 +434,39 @@ export const useStore = () => {
   // الطاولات — realtime
   useEffect(()=>{
     if(!SUPABASE_READY) return;
-    const ch=supabase.channel("tables-rt")
-      .on("postgres_changes",{event:"*",schema:"public",table:"tables"},(p)=>{
-        if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
-          const t={...p.new,orderId:p.new.order_id,openedAt:p.new.opened_at};
-          setTablesRaw(prev=>{const n=[t,...prev.filter(x=>x.id!==t.id)];ls.set("nc_tables",n);broadcast("nc_tables",n);return n;});
-        }
-      }).subscribe();
-    return ()=>supabase.removeChannel(ch);
+    return subscribeTables((newRow, deletedId)=>{
+      if(deletedId){
+        setTablesRaw(prev=>{const n=prev.filter(t=>t.id!==deletedId);ls.set("nc_tables",n);broadcast("nc_tables",n);return n;});
+      } else if(newRow){
+        const t={
+          id:newRow.id, number:newRow.number||+newRow.num||0,
+          label:newRow.label||`طاولة ${newRow.num||newRow.number}`,
+          seats:newRow.seats||4, status:newRow.status||"free",
+          note:newRow.note||"", orderId:newRow.order_id||null,
+          openedAt:newRow.opened_at||null,
+        };
+        setTablesRaw(prev=>{const n=[t,...prev.filter(x=>x.id!==t.id)];ls.set("nc_tables",n);broadcast("nc_tables",n);return n;});
+      }
+    });
   },[]);
 
-  // الديون
+  // الديون — realtime
   useEffect(()=>{
     if(!SUPABASE_READY) return;
-    const ch=supabase.channel("debts-rt")
-      .on("postgres_changes",{event:"*",schema:"public",table:"debts"},(p)=>{
-        if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
-          setDebtsRaw(prev=>{const n=[p.new,...prev.filter(d=>d.id!==p.new.id)];ls.set("nc_debts",n);broadcast("nc_debts",n);return n;});
-        }
-        if(p.eventType==="DELETE"){
-          setDebtsRaw(prev=>{const n=prev.filter(d=>d.id!==p.old.id);ls.set("nc_debts",n);broadcast("nc_debts",n);return n;});
-        }
-      }).subscribe();
-    return ()=>supabase.removeChannel(ch);
+    const mapD=d=>({...d,customerName:d.customer_name??d.customerName,
+      settledAt:d.settled_at??d.settledAt??null,
+      createdBy:d.created_by??d.createdBy??"",
+      orderId:d.order_id??d.orderId??null});
+    return subscribeDebts(
+      (r)=>setDebtsRaw(p=>{const d=mapD(r);const n=[d,...p.filter(x=>x.id!==d.id)];ls.set("nc_debts",n);broadcast("nc_debts",n);return n;}),
+      (r)=>setDebtsRaw(p=>{const d=mapD(r);const n=p.map(x=>x.id===d.id?d:x);ls.set("nc_debts",n);broadcast("nc_debts",n);return n;}),
+      (r)=>setDebtsRaw(p=>{const n=p.filter(x=>x.id!==r.id);ls.set("nc_debts",n);broadcast("nc_debts",n);return n;}),
+    );
   },[]);
 
   // الموظفين — realtime
   useEffect(()=>{
-    if(!SUPABASE_READY) return;
+    if(!SUPABASE_READY||!supabase) return;
     const ch=supabase.channel("profiles-rt")
       .on("postgres_changes",{event:"*",schema:"public",table:"profiles"},(p)=>{
         if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
@@ -445,31 +482,27 @@ export const useStore = () => {
   // المنيو — realtime
   useEffect(()=>{
     if(!SUPABASE_READY) return;
-    const ch=supabase.channel("menu-rt")
-      .on("postgres_changes",{event:"*",schema:"public",table:"menu_items"},(p)=>{
-        if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
-          setMenuRaw(prev=>{const n=[p.new,...prev.filter(m=>m.id!==p.new.id)];ls.set("nc_menu",n);broadcast("nc_menu",n);return n;});
-        }
-        if(p.eventType==="DELETE"){
-          setMenuRaw(prev=>{const n=prev.filter(m=>m.id!==p.old.id);ls.set("nc_menu",n);broadcast("nc_menu",n);return n;});
-        }
-      }).subscribe();
-    return ()=>supabase.removeChannel(ch);
+    const mapM=m=>({...m,nameEn:m.name_en??m.nameEn??"",
+      minStock:m.min_stock??m.minStock??5,
+      totalSold:m.total_sold??m.totalSold??0});
+    return subscribeMenu(
+      (r)=>setMenuRaw(p=>{const m=mapM(r);const n=[m,...p.filter(x=>x.id!==m.id)];ls.set("nc_menu",n);broadcast("nc_menu",n);return n;}),
+      (r)=>setMenuRaw(p=>{const m=mapM(r);const n=p.map(x=>x.id===m.id?m:x);ls.set("nc_menu",n);broadcast("nc_menu",n);return n;}),
+      (r)=>setMenuRaw(p=>{const n=p.filter(x=>x.id!==r.id);ls.set("nc_menu",n);broadcast("nc_menu",n);return n;}),
+    );
   },[]);
 
   // المصاريف — realtime
   useEffect(()=>{
     if(!SUPABASE_READY) return;
-    const ch=supabase.channel("expenses-rt")
-      .on("postgres_changes",{event:"*",schema:"public",table:"expenses"},(p)=>{
-        if(p.eventType==="INSERT"||p.eventType==="UPDATE"){
-          setExpensesRaw(prev=>{const n=[p.new,...prev.filter(e=>e.id!==p.new.id)];ls.set("nc_expenses",n);broadcast("nc_expenses",n);return n;});
-        }
-        if(p.eventType==="DELETE"){
-          setExpensesRaw(prev=>{const n=prev.filter(e=>e.id!==p.old.id);ls.set("nc_expenses",n);broadcast("nc_expenses",n);return n;});
-        }
-      }).subscribe();
-    return ()=>supabase.removeChannel(ch);
+    const mapE=e=>({...e,createdBy:e.created_by??e.createdBy??e.by??"",
+      isComplimentary:e.is_complimentary??e.isComplimentary??false,
+      orderId:e.order_id??e.orderId??null});
+    return subscribeExpenses(
+      (r)=>setExpensesRaw(p=>{const e=mapE(r);const n=[e,...p.filter(x=>x.id!==e.id)];ls.set("nc_expenses",n);broadcast("nc_expenses",n);return n;}),
+      (r)=>setExpensesRaw(p=>{const e=mapE(r);const n=p.map(x=>x.id===e.id?e:x);ls.set("nc_expenses",n);broadcast("nc_expenses",n);return n;}),
+      (r)=>setExpensesRaw(p=>{const n=p.filter(x=>x.id!==r.id);ls.set("nc_expenses",n);broadcast("nc_expenses",n);return n;}),
+    );
   },[]);
 
   return {
