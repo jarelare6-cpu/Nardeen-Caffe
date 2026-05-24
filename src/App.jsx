@@ -24,15 +24,15 @@ const ROLE_COLORS = {
 };
 const ORDER_STATUS = {
   PENDING:"pending", PREPARING:"preparing",
-  READY:"ready", PAID:"paid", CANCELLED:"cancelled", DEBT:"debt"
+  READY:"ready", PAID:"paid", CANCELLED:"cancelled", DEBT:"debt", COMPLIMENTARY:"complimentary"
 };
 const STATUS_LABELS = {
   pending:"قيد الانتظار", preparing:"قيد التحضير",
-  ready:"جاهز", paid:"مدفوع", cancelled:"ملغي", debt:"دين"
+  ready:"جاهز", paid:"مدفوع", cancelled:"ملغي", debt:"دين", complimentary:"ضيافة"
 };
 const STATUS_COLORS = {
   pending:"#ff9800", preparing:"#1976d2",
-  ready:"#2e7d32", paid:"#546e7a", cancelled:"#c62828", debt:"#6a1b9a"
+  ready:"#2e7d32", paid:"#546e7a", cancelled:"#c62828", debt:"#6a1b9a", complimentary:"#00897b"
 };
 
 // Category labels
@@ -106,21 +106,6 @@ const THEMES = {
 
 const GlobalStyle = ({dm,theme="default"}) => {
   const t = THEMES[theme]||THEMES.default;
-  // Apply theme vars to document root so they work outside React tree (modals, etc.)
-  React.useEffect(()=>{
-    const root=document.documentElement;
-    root.style.setProperty("--red",t.primary);
-    root.style.setProperty("--red-dark",t.secondary);
-    root.style.setProperty("--gold",t.accent);
-    root.style.setProperty("--bg",dm?"#0d0d18":"#f4f6fa");
-    root.style.setProperty("--card",dm?"#16182a":"#ffffff");
-    root.style.setProperty("--card2",dm?"#1e2035":"#f0f2f8");
-    root.style.setProperty("--border",dm?"#2a2d4a":"#dde1ed");
-    root.style.setProperty("--text",dm?"#e8eaf6":"#1a1c2e");
-    root.style.setProperty("--sub",dm?"#8890b0":"#6b7280");
-    document.body.style.background=dm?"#0d0d18":"#f4f6fa";
-    document.body.style.color=dm?"#e8eaf6":"#1a1c2e";
-  },[t.primary,t.secondary,t.accent,dm]);
   return (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
@@ -136,8 +121,7 @@ const GlobalStyle = ({dm,theme="default"}) => {
       --shadow:${dm?"0 4px 24px rgba(0,0,0,.45)":"0 2px 16px rgba(30,40,80,.08)"};
       --radius:14px;
     }
-    html,body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);color:var(--text);overflow-x:hidden;min-height:100%;}
-    #root{min-height:100vh;background:var(--bg);}
+    body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);color:var(--text);overflow-x:hidden}
     button{cursor:pointer;font-family:inherit;direction:rtl}
     input,select,textarea{font-family:inherit;direction:rtl;background:var(--card);color:var(--text)}
     .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
@@ -176,114 +160,9 @@ const GlobalStyle = ({dm,theme="default"}) => {
   );
 }
 
-
 // ═══════════════════════════════════
-// NOTIFICATION SOUNDS
+// TOAST
 // ═══════════════════════════════════
-const SOUNDS={
-  success:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.setValueAtTime(880,a.currentTime);o.frequency.exponentialRampToValueAtTime(1320,a.currentTime+0.1);g.gain.setValueAtTime(0.3,a.currentTime);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.4);o.start();o.stop(a.currentTime+0.4);}catch{}},
-  error:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.type="sawtooth";o.frequency.setValueAtTime(200,a.currentTime);o.frequency.exponentialRampToValueAtTime(100,a.currentTime+0.3);g.gain.setValueAtTime(0.3,a.currentTime);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.3);o.start();o.stop(a.currentTime+0.3);}catch{}},
-  warn:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.15].forEach(t=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=660;g.gain.setValueAtTime(0.25,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.12);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.12);});}catch{}},
-  order:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.12,0.24].forEach((t,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=[523,659,784][i];g.gain.setValueAtTime(0.3,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.18);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.18);});}catch{}},
-  debt:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[0,0.2].forEach((t,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=i===0?440:330;g.gain.setValueAtTime(0.3,a.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+t+0.18);o.start(a.currentTime+t);o.stop(a.currentTime+t+0.18);});}catch{}},
-  paid:()=>{try{const a=new(window.AudioContext||window.webkitAudioContext)();[523,659,784,1047].forEach((f,i)=>{const o=a.createOscillator();const g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f;g.gain.setValueAtTime(0.25,a.currentTime+i*0.1);g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+i*0.1+0.15);o.start(a.currentTime+i*0.1);o.stop(a.currentTime+i*0.1+0.15);});}catch{}},
-};
-
-// ═══════════════════════════════════
-// PDF ARCHIVE UTILITY
-// ═══════════════════════════════════
-// Generate ascending filename from invoice date: YYYY-MM-DD_HH-mm-ss_#NUM
-const makePdfFilename=(order)=>{
-  const d=new Date(order.createdAt||Date.now());
-  const pad=(n,l=2)=>String(n).padStart(l,"0");
-  const date=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-  const time=`${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
-  const num=(order.orderNum||order.id||"0000").replace(/\D/g,"").slice(-4).padStart(4,"0");
-  return `invoice_${date}_${time}_${num}.pdf`;
-};
-
-const savePdfArchive=async(order,settings)=>{
-  try{
-    const CUR=settings?.currency||"ل.س";
-    const cafeName=settings?.cafeName||"Nardeen Caffe";
-    const isDebt=!!order.debtName;
-    const filename=makePdfFilename(order);
-    const html=`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8">
-      <title>${filename}</title>
-      <style>body{font-family:sans-serif;padding:20px;direction:rtl;max-width:320px;margin:0 auto}
-      h2{color:#c62828;text-align:center;margin:0 0 4px}
-      .sub{text-align:center;font-size:12px;color:#666;margin-bottom:12px}
-      .row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
-      .total{border-top:2px solid #333;font-weight:900;font-size:15px;margin-top:8px;padding-top:8px}
-      .badge{background:#c62828;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
-      .debt-badge{background:#6a1b9a;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px}
-      .filename{text-align:center;font-size:9px;color:#bbb;margin-top:12px;font-family:monospace}
-      @media print{.filename{display:block}}
-      </style></head><body>
-      <h2>☕ ${cafeName}</h2>
-      <div class="sub">${settings?.signature||""}</div>
-      <div class="sub">${new Date(order.createdAt||Date.now()).toLocaleString("ar-SY")}</div>
-      <div class="row"><span>رقم الطلب:</span><span class="badge">#${order.orderNum||order.id}</span></div>
-      <div class="row"><span>الزبون:</span><span style="font-weight:900;color:#1565c0">${order.debtName||order.customerName||""}</span></div>
-      ${order.table?`<div class="row"><span>الطاولة:</span><span>🪑 ${order.table}</span></div>`:""}
-      ${isDebt?`<div class="row"><span>نوع الدفع:</span><span class="debt-badge">💳 استيفاء دين</span></div>`:""}
-      <hr/>
-      ${(order.items||[]).map(i=>`<div class="row"><span>${i.emoji||""} ${i.itemName||i.name} ×${i.qty}</span><span>${((i.price||0)*(i.qty||1)).toLocaleString()} ${CUR}</span></div>`).join("")}
-      ${order.discount?`<div class="row" style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${Math.round((order.originalTotal||order.total)*order.discount/100).toLocaleString()} ${CUR}</span></div>`:""}
-      <div class="row total"><span>الإجمالي</span><span style="color:#c62828">${(order.total||0).toLocaleString()} ${CUR}</span></div>
-      ${order.paidBy?`<div style="margin-top:8px;font-size:11px;color:#666">💰 استلمه: ${order.paidByName||order.paidBy}</div>`:""}
-      ${order.notes?`<div style="margin-top:4px;font-size:11px;color:#666">📝 ${order.notes}</div>`:""}
-      <div style="text-align:center;margin-top:16px;font-size:11px;color:#999">شكراً لزيارتكم ☕</div>
-      <div class="filename">${filename}</div>
-      </body></html>`;
-
-    // 1. Save to localStorage
-    const archived=JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]");
-    const entry={
-      id:order.id,orderNum:order.orderNum||order.id,
-      customerName:order.debtName||order.customerName,
-      table:order.table,total:order.total,
-      createdAt:order.createdAt||new Date().toISOString(),
-      isDebt,html,filename,
-      paidByName:order.paidByName||order.paidBy||""
-    };
-    archived.unshift(entry);
-    if(archived.length>300) archived.splice(300);
-    localStorage.setItem("nc_pdf_archive",JSON.stringify(archived));
-
-    // 2. Save to Supabase receipts table (async, non-blocking)
-    try{
-      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
-      if(SBR&&supabase){
-        await supabase.from("receipts").upsert({
-          id:"rcpt_"+order.id,
-          order_id:order.id,
-          order_num:order.orderNum||order.id,
-          customer_name:order.debtName||order.customerName||"",
-          table_num:order.table||"",
-          items:order.items||[],
-          total:order.total||0,
-          discount:order.discount||0,
-          payment_type:isDebt?"debt_settled":(order.paymentType||"cash"),
-          notes:order.notes||"",
-          created_by:order.paidByName||order.workerName||"",
-          created_at:order.createdAt||new Date().toISOString(),
-          paid_at:order.paidAt||new Date().toISOString(),
-          paid_by_name:order.paidByName||"",
-          cafe_name:settings?.cafeName||"Nardeen Caffe",
-          is_debt:isDebt,
-          filename,
-        },{onConflict:"id"});
-      }
-    }catch(sbErr){console.warn("Supabase receipt save (non-fatal):",sbErr);}
-  }catch(e){console.error("pdf archive:",e);}
-};
-
-const openPdfArchive=(html)=>{
-  const w=window.open("","_blank","width=420,height=620");
-  if(w){w.document.write(html);w.document.close();}
-};
-
 // ═══════════════════════════════════
 // ERROR BOUNDARY
 // ═══════════════════════════════════
@@ -312,22 +191,12 @@ class ErrorBoundary extends React.Component{
 
 function Toast({toast}){
   if(!toast) return null;
-  const cfg={
-    success:{bg:"#2e7d32",icon:"✓"},
-    error:{bg:"#c62828",icon:"✗"},
-    warn:{bg:"#e65100",icon:"⚠"},
-    order:{bg:"#1565c0",icon:"📋"},
-    paid:{bg:"#2e7d32",icon:"💰"},
-    debt:{bg:"#6a1b9a",icon:"💳"},
-  };
-  const c=cfg[toast.type]||cfg.success;
+  const bg = toast.type==="error"?"#c62828":toast.type==="warn"?"#e65100":"#2e7d32";
   return(
     <div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",zIndex:9999,
-      background:c.bg,color:"#fff",padding:"14px 28px",borderRadius:40,fontWeight:700,
-      boxShadow:"0 8px 32px rgba(0,0,0,.35)",fontSize:15,whiteSpace:"nowrap",
-      animation:"fadeIn .3s ease",display:"flex",alignItems:"center",gap:8}}>
-      <span style={{fontSize:18}}>{c.icon}</span>
-      {toast.msg}
+      background:bg,color:"#fff",padding:"12px 24px",borderRadius:40,fontWeight:700,
+      boxShadow:"0 8px 32px rgba(0,0,0,.3)",fontSize:14,whiteSpace:"nowrap",animation:"fadeIn .3s ease"}}>
+      {toast.type==="error"?"✗":toast.type==="warn"?"⚠":"✓"} {toast.msg}
     </div>
   );
 }
@@ -387,9 +256,8 @@ export default function NardeenCaffe(){
 
   const showToast=useCallback((msg,type="success")=>{
     setToast({msg,type,id:Date.now()});
-    setTimeout(()=>setToast(null),3800);
-    try{if(store.settings?.notifSound!==false&&SOUNDS[type]) SOUNDS[type]();}catch{}
-  },[store.settings]);
+    setTimeout(()=>setToast(null),3500);
+  },[]);
 
   const login=(u)=>{
     const u2={...u,lastLogin:new Date().toISOString()};
@@ -1825,72 +1693,116 @@ function OrdersTab({store,user,showToast,addNotification,dm,settings}){
 // ═══════════════════════════════════
 function CashierTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
-  const today=new Date();today.setHours(0,0,0,0);
-  const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
-  const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
-  const readyOrders=store.orders.filter(o=>o.status==="ready");
-  const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
-
-  // Auto-free table helper
-  const autoFreeTable=async(tableNum,updatedOrders)=>{
-    if(!tableNum) return;
-    const remaining=updatedOrders.filter(o=>
-      o.table===String(tableNum)&&!["paid","cancelled","debt"].includes(o.status)
-    );
-    if(remaining.length===0){
-      // All orders on this table are done → mark table free
-      store.setTables(p=>p.map(t=>{
-        if(String(t.number)!==String(tableNum)) return t;
-        const freed={...t,status:"free",openedAt:null};
-        // Sync to Supabase
-        setTimeout(()=>sbUpsertTable(freed),50);
-        return freed;
-      }));
-    }
-  };
-
-  const markPaid=(order,discountPct=0)=>{
-    const discAmt=Math.round((order.originalTotal||order.total)*discountPct/100);
-    const finalTotal=(order.originalTotal||order.total)-discAmt;
-    const paid={...order,status:"paid",paymentStatus:"paid",
-      paidAt:new Date().toISOString(),paidBy:user.id,paidByName:user.name,
-      discount:discountPct,originalTotal:order.originalTotal||order.total,total:finalTotal};
-    const updatedOrders=store.orders.map(o=>o.id===order.id?paid:o);
-    store.setOrders(()=>updatedOrders);
-    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,
-      amount:finalTotal,at:new Date().toISOString(),by:user.name},...p]);
-    saveReceipt(paid,settings);
-    savePdfArchive(paid,settings);
-    showToast(`💰 تم الدفع — ${order.customerName||"زبون"} | #${order.orderNum}`,"paid");
-    printOrder(paid,store.menu,2,settings);
-    // Auto-free table if no remaining active orders
-    autoFreeTable(order.table,updatedOrders);
-  };
-
+  const maxDiscount=settings?.maxDiscount??50;
+  const isAdmin=user?.role===ROLES.ADMIN;
+  const today=useMemo(()=>{const d=new Date();d.setHours(0,0,0,0);return d;},[]);
+  const todayPaid=useMemo(()=>store.orders.filter(o=>["paid","complimentary"].includes(o.status)&&new Date(o.paidAt||o.createdAt)>=today),[store.orders,today]);
+  const todayRevenue=useMemo(()=>store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today).reduce((s,o)=>s+o.total,0),[store.orders,today]);
+  const readyOrders=useMemo(()=>store.orders.filter(o=>o.status==="ready"),[store.orders]);
+  const todayExpenses=useMemo(()=>(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0),[store.expenses,today]);
+  const [discounts,setDiscounts]=useState({});
   const [debtModal,setDebtModal]=useState(null);
   const [debtNameInput,setDebtNameInput]=useState("");
   const [debtNameError,setDebtNameError]=useState("");
+  const [compModal,setCompModal]=useState(null); // complimentary modal
 
-  const markDebt=(order)=>{
-    setDebtNameInput(order.customerName!=="زبون"?order.customerName:"");
-    setDebtNameError("");
-    setDebtModal(order);
+  // Auto-free table when all its orders are done
+  const autoFreeTable=(tableNum,updatedOrders)=>{
+    if(!tableNum) return;
+    const remaining=updatedOrders.filter(o=>
+      String(o.table)===String(tableNum)&&
+      !["paid","cancelled","debt","complimentary"].includes(o.status)
+    );
+    if(remaining.length===0){
+      store.setTables(p=>p.map(t=>
+        String(t.number)===String(tableNum)?{...t,status:"free",openedAt:null}:t
+      ));
+    }
   };
 
+  const markPaid=(order)=>{
+    const disc=discounts[order.id]||0;
+    const discAmt=Math.round(order.total*Math.min(disc,isAdmin?100:maxDiscount)/100);
+    const finalTotal=order.total-discAmt;
+    const paid={...order,status:"paid",paymentStatus:"paid",
+      paidAt:new Date().toISOString(),paidBy:user.id,paidByName:user.name,
+      discount:disc,originalTotal:order.total,total:finalTotal};
+    const updated=store.orders.map(o=>o.id===order.id?paid:o);
+    store.setOrders(()=>updated);
+    store.setCashLog(p=>[{id:Date.now().toString(),orderId:order.id,orderNum:order.orderNum,
+      amount:finalTotal,at:new Date().toISOString(),by:user.name,type:"sale"},...p]);
+    saveReceipt(paid,settings);
+    showToast(`💰 تم الدفع — ${order.customerName||"زبون"} #${order.orderNum}`);
+    printOrder(paid,store.menu,2,settings);
+    autoFreeTable(order.table,updated);
+    setDiscounts(p=>{const n={...p};delete n[order.id];return n;});
+  };
+
+  const markDebt=(order)=>{
+    setDebtNameInput(order.customerName&&order.customerName!=="زبون"?order.customerName:"");
+    setDebtNameError(""); setDebtModal(order);
+  };
   const confirmDebt=()=>{
     if(!debtNameInput.trim()){setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين");return;}
     const order=debtModal;
-    const debtOrder={...order,status:"debt",paymentStatus:"debt",paymentType:"debt",customerName:debtNameInput.trim()};
-    const updatedOrders2=store.orders.map(o=>o.id===order.id?debtOrder:o);
-    store.setOrders(()=>updatedOrders2);
+    const updated=store.orders.map(o=>o.id===order.id?{...o,status:"debt",paymentStatus:"debt",paymentType:"debt",customerName:debtNameInput.trim()}:o);
+    store.setOrders(()=>updated);
     store.setDebts(p=>[{
       id:"d"+Date.now(),orderId:order.id,orderNum:order.orderNum,
       customerName:debtNameInput.trim(),amount:order.total,remaining:order.total,
       date:new Date().toISOString(),settled:false,settledAt:null,createdBy:user.name,notes:order.notes||"",
     },...p]);
-    showToast(`تم تسجيل الدين للطلب #${order.orderNum} 💳`,"warn");
-    autoFreeTable(order.table,updatedOrders2);
+    showToast(`💳 تم تسجيل الدين — ${debtNameInput.trim()}`,"warn");
+    autoFreeTable(order.table,updated);
     setDebtModal(null);setDebtNameInput("");
+  };
+
+  // Complimentary modal state
+  const [compItems,setCompItems]=useState([]); // [{idx, qty}] items to make complimentary
+  const openComp=(order)=>{
+    setCompItems(order.items.map((_,i)=>({idx:i,qty:0,selected:false})));
+    setCompModal(order);
+  };
+  const confirmComp=(fullComp)=>{
+    const order=compModal;
+    let compAmt=0;
+    let updatedItems=[...order.items];
+    if(fullComp){
+      compAmt=order.total;
+      updatedItems=order.items.map(it=>({...it,complimentary:true}));
+    } else {
+      updatedItems=order.items.map((it,i)=>{
+        const ci=compItems[i];
+        if(!ci?.selected||!ci.qty) return it;
+        compAmt+=it.price*(ci.qty||it.qty);
+        return{...it,compQty:ci.qty,complimentary:ci.qty>=it.qty};
+      });
+    }
+    const remaining=order.total-compAmt;
+    const updated=store.orders.map(o=>o.id===order.id?{
+      ...o,
+      status:remaining<=0?"complimentary":"ready",
+      items:updatedItems,
+      compAmount:compAmt,
+      total:Math.max(0,remaining),
+      originalTotal:order.total,
+      isComplimentary:remaining<=0,
+      paidBy:user.id,paidByName:user.name,
+      paidAt:new Date().toISOString(),
+    }:o);
+    store.setOrders(()=>updated);
+    // Log complimentary as expense
+    store.setExpenses(p=>[{
+      id:"comp"+Date.now(),
+      description:`ضيافة — ${order.customerName||"زبون"} طاولة ${order.table||""}`,
+      label:"ضيافة",amount:compAmt,category:"complimentary",
+      date:new Date().toISOString(),createdBy:user.name,by:user.name,
+      orderId:order.id,orderNum:order.orderNum,
+      isComplimentary:true,
+    },...p]);
+    showToast(`🎁 تم تسجيل الضيافة — ${compAmt.toLocaleString()} ${CUR}`);
+    if(remaining<=0) autoFreeTable(order.table,updated);
+    setCompModal(null);setCompItems([]);
   };
 
   return(
@@ -1914,51 +1826,81 @@ function CashierTab({store,user,showToast,dm,settings}){
         <div style={{marginBottom:20}}>
           <h3 style={{fontSize:14,fontWeight:800,marginBottom:10,color:"#2e7d32"}}>✅ جاهزة للدفع ({readyOrders.length})</h3>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:10}}>
-            {readyOrders.map(order=>(
+            {readyOrders.map(order=>{
+              const disc=discounts[order.id]||0;
+              const discAmt=Math.round(order.total*Math.min(disc,isAdmin?100:maxDiscount)/100);
+              const finalAmt=order.total-discAmt;
+              const sameTableOthers=readyOrders.filter(o=>o.table&&o.table===order.table&&o.id!==order.id);
+              return(
               <div key={order.id} className="card" style={{borderRight:"4px solid #2e7d32"}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                  <span style={{fontWeight:900}}># {order.orderNum}</span>
-                  {order.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",fontSize:11,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 {order.table}</span>}
+                {/* Header */}
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:8,alignItems:"center"}}>
+                  <span style={{fontWeight:900,fontSize:15}}># {order.orderNum}</span>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    {order.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",fontSize:11,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 طاولة {order.table}</span>}
+                    <span style={{background:"rgba(46,125,50,.15)",color:"#2e7d32",fontSize:10,padding:"2px 7px",borderRadius:6,fontWeight:700}}>✅ جاهز</span>
+                  </div>
                 </div>
-                {/* Customer name - prominent */}
+                {/* Customer */}
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,
-                  background:"rgba(21,101,192,.08)",borderRadius:8,padding:"7px 10px"}}>
-                  <span style={{fontSize:20}}>👤</span>
+                  background:"rgba(21,101,192,.07)",borderRadius:8,padding:"6px 10px"}}>
+                  <span style={{fontSize:18}}>👤</span>
                   <div style={{flex:1}}>
-                    <div style={{fontWeight:900,fontSize:14,color:"#1565c0"}}>{order.customerName||"زبون"}</div>
+                    <div style={{fontWeight:900,fontSize:13,color:"#1565c0"}}>{order.customerName||"زبون"}</div>
                     {order.workerName&&<div style={{fontSize:10,color:"var(--sub)"}}>سجّل: {order.workerName}</div>}
                   </div>
-                  {/* Same-table warning */}
-                  {readyOrders.filter(o2=>o2.table&&o2.table===order.table&&o2.id!==order.id).length>0&&(
-                    <span style={{background:"#fff3e0",color:"#e65100",fontSize:10,padding:"2px 7px",borderRadius:6,fontWeight:700}}>
-                      ⚠ زبون آخر بنفس الطاولة
+                  {sameTableOthers.length>0&&(
+                    <span style={{background:"#fff3e0",color:"#e65100",fontSize:10,padding:"2px 6px",borderRadius:6,fontWeight:700}}>
+                      ⚠ {sameTableOthers.length} آخر بنفس الطاولة
                     </span>
                   )}
                 </div>
-                {order.items.map((i,idx)=><div key={idx} style={{fontSize:12,padding:"2px 4px",display:"flex",justifyContent:"space-between"}}>
-                  <span>{i.emoji} {i.itemName} ×{i.qty}</span>
-                  <span style={{color:"#c62828",fontWeight:700}}>{(i.price*i.qty).toLocaleString()} {CUR}</span>
-                </div>)}
-                {/* Discount field at cashier */}
+                {/* Items */}
+                {order.items.map((it,idx)=>(
+                  <div key={idx} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 4px"}}>
+                    <span style={{color:it.complimentary?"#00897b":"inherit"}}>
+                      {it.emoji} {it.itemName} ×{it.qty}
+                      {it.complimentary&&<span style={{fontSize:10,marginRight:4,color:"#00897b"}}>🎁ضيافة</span>}
+                      {it.compQty>0&&!it.complimentary&&<span style={{fontSize:10,marginRight:4,color:"#00897b"}}>({it.compQty}🎁)</span>}
+                    </span>
+                    <span style={{color:"#c62828",fontWeight:700}}>{(it.price*(it.qty-(it.compQty||0))).toLocaleString()} {CUR}</span>
+                  </div>
+                ))}
+                {/* Discount */}
                 <div style={{marginTop:10,padding:"8px 10px",background:"var(--card2)",borderRadius:10}}>
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",whiteSpace:"nowrap"}}>🏷 خصم %</label>
-                    <input type="number" min="0" max="100" defaultValue="0" id={"disc_"+order.id}
+                    <input type="number" min="0" max={isAdmin?100:maxDiscount} value={disc||""}
+                      onChange={e=>setDiscounts(p=>({...p,[order.id]:Math.min(isAdmin?100:maxDiscount,Math.max(0,+e.target.value))}))}
+                      placeholder="0"
                       style={{flex:1,padding:"5px 8px",border:"1.5px solid var(--border)",borderRadius:8,
                         fontSize:13,fontWeight:700,background:"var(--card)",color:"var(--text)",textAlign:"center"}}/>
                   </div>
+                  {disc>0&&(
+                    <div style={{marginTop:4,fontSize:11,display:"flex",justifyContent:"space-between",color:"#2e7d32",fontWeight:700}}>
+                      <span>خصم {disc}% = {discAmt.toLocaleString()} {CUR}</span>
+                    </div>
+                  )}
                 </div>
-                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:15,borderTop:"1px dashed var(--border)",paddingTop:8}}>
-                  {order.total.toLocaleString()} {CUR}
+                {/* Total */}
+                <div style={{fontWeight:900,color:"#c62828",marginTop:8,fontSize:16,
+                  borderTop:"1px dashed var(--border)",paddingTop:8,display:"flex",justifyContent:"space-between"}}>
+                  <span>المجموع</span>
+                  <span>{finalAmt.toLocaleString()} {CUR}</span>
                 </div>
+                {/* Actions */}
                 <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
-                  <button onClick={()=>{const d=+(document.getElementById("disc_"+order.id)?.value||0);markPaid(order,d);}}
-                    style={{flex:1,minWidth:90,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
+                  <button onClick={()=>markPaid(order)}
+                    style={{flex:1,minWidth:80,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
                     💰 مدفوع
                   </button>
                   <button onClick={()=>markDebt(order)}
-                    style={{flex:1,minWidth:90,background:"#6a1b9a",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
+                    style={{flex:1,minWidth:80,background:"#6a1b9a",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
                     💳 دين
+                  </button>
+                  <button onClick={()=>openComp(order)}
+                    style={{flex:1,minWidth:80,background:"#00897b",color:"#fff",border:"none",borderRadius:8,padding:"10px",fontWeight:800,fontSize:12}}>
+                    🎁 ضيافة
                   </button>
                   <button onClick={()=>printOrder(order,store.menu,2,settings)}
                     style={{background:"var(--card2)",border:"none",borderRadius:8,padding:"10px 12px",fontSize:14}}>
@@ -1966,7 +1908,73 @@ function CashierTab({store,user,showToast,dm,settings}){
                   </button>
                 </div>
               </div>
-            ))}
+            );})}
+          </div>
+        </div>
+      )}
+      {/* Debt Modal */}
+      {debtModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:800,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:380}}>
+            <h3 style={{fontWeight:900,fontSize:16,marginBottom:12}}>💳 تسجيل دين — طلب #{debtModal.orderNum}</h3>
+            <div style={{fontSize:13,color:"var(--sub)",marginBottom:12}}>المبلغ: {debtModal.total.toLocaleString()} {CUR}</div>
+            <input className="input" placeholder="اسم الزبون *" value={debtNameInput}
+              onChange={e=>{setDebtNameInput(e.target.value);setDebtNameError("");}}
+              style={{marginBottom:8}}/>
+            {debtNameError&&<div style={{color:"#c62828",fontSize:12,marginBottom:8}}>{debtNameError}</div>}
+            <div style={{display:"flex",gap:8,marginTop:8}}>
+              <button onClick={confirmDebt} style={{flex:1,background:"#6a1b9a",color:"#fff",border:"none",borderRadius:8,padding:"11px",fontWeight:800}}>تأكيد الدين</button>
+              <button onClick={()=>{setDebtModal(null);setDebtNameInput("");}} style={{flex:1,background:"var(--card2)",border:"none",borderRadius:8,padding:"11px",fontWeight:700}}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Complimentary Modal */}
+      {compModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:800,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:420,maxHeight:"90vh",overflowY:"auto"}}>
+            <h3 style={{fontWeight:900,fontSize:16,marginBottom:4}}>🎁 ضيافة — طلب #{compModal.orderNum}</h3>
+            <div style={{fontSize:13,color:"var(--sub)",marginBottom:14}}>👤 {compModal.customerName||"زبون"} | إجمالي: {compModal.total.toLocaleString()} {CUR}</div>
+            <div style={{marginBottom:14}}>
+              {compModal.items.map((it,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+                  <input type="checkbox" checked={compItems[i]?.selected||false}
+                    onChange={e=>setCompItems(p=>p.map((ci,ci_i)=>ci_i===i?{...ci,selected:e.target.checked,qty:e.target.checked?it.qty:0}:ci))}
+                    style={{width:18,height:18,accentColor:"#00897b"}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600}}>{it.emoji} {it.itemName}</div>
+                    <div style={{fontSize:11,color:"var(--sub)"}}>{it.price.toLocaleString()} {CUR} × {it.qty}</div>
+                  </div>
+                  {compItems[i]?.selected&&(
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <label style={{fontSize:11,color:"var(--sub)"}}>كمية:</label>
+                      <input type="number" min="1" max={it.qty} value={compItems[i]?.qty||it.qty}
+                        onChange={e=>setCompItems(p=>p.map((ci,ci_i)=>ci_i===i?{...ci,qty:Math.min(it.qty,Math.max(1,+e.target.value))}:ci))}
+                        style={{width:52,padding:"4px 6px",border:"1.5px solid var(--border)",borderRadius:8,fontSize:13,fontWeight:700,background:"var(--card)",color:"var(--text)",textAlign:"center"}}/>
+                    </div>
+                  )}
+                  <span style={{fontSize:12,fontWeight:700,color:"#00897b",minWidth:60,textAlign:"left"}}>
+                    {compItems[i]?.selected?`${((compItems[i]?.qty||it.qty)*it.price).toLocaleString()} ${CUR}`:""}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <button onClick={()=>confirmComp(true)}
+                style={{width:"100%",background:"#00897b",color:"#fff",border:"none",borderRadius:10,padding:"12px",fontWeight:800,fontSize:13}}>
+                🎁 ضيافة كامل الطلب ({compModal.total.toLocaleString()} {CUR})
+              </button>
+              {compItems.some(c=>c.selected&&c.qty>0)&&(
+                <button onClick={()=>confirmComp(false)}
+                  style={{width:"100%",background:"#00695c",color:"#fff",border:"none",borderRadius:10,padding:"12px",fontWeight:800,fontSize:13}}>
+                  🎁 ضيافة الأصناف المحددة فقط
+                </button>
+              )}
+              <button onClick={()=>{setCompModal(null);setCompItems([]);}}
+                style={{width:"100%",background:"var(--card2)",border:"none",borderRadius:10,padding:"11px",fontWeight:700}}>
+                إلغاء
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2062,18 +2070,16 @@ function DebtsTab({store,user,showToast,dm,settings}){
     const revEntry={
       id:"debt_rev_"+id+"_"+Date.now(),
       orderNum:"D-"+(debt?.customerName||id).slice(0,6),
-      customerName:(debt?.customerName||"زبون"),
-      debtName:debt?.customerName||"زبون",
+      customerName:(debt?.customerName||"زبون")+" — دين",
       customerId:"debt",table:"-",
       items:[{itemId:"debt",itemName:"استيفاء دين",emoji:"💳",qty:1,price:amount}],
       total:amount,status:"paid",paymentType:"debt_settled",
       notes:"دين مستوفى — "+(debt?.notes||debt?.customerName||""),
       createdAt:new Date().toISOString(),paidAt:new Date().toISOString(),
-      paidBy:user.id,paidByName:user.name,discount:0,isDebtSettlement:true,
+      paidBy:user.name,discount:0,isDebtSettlement:true,
     };
     store.setOrders(p=>[revEntry,...p]);
-    savePdfArchive({...revEntry,debtName:debt?.customerName,paidByName:user.name},settings);
-    showToast(`✅ تم استيفاء دين ${debt?.customerName||""} وحفظ الفاتورة`,"paid");
+    showToast(`✅ تم استيفاء الدين وإضافته للإيرادات`);
   };
 
   const addManualDebt=()=>{
@@ -2221,6 +2227,7 @@ function ExpensesTab({store,user,showToast,dm,settings}){
     {id:"rent",label:"🏠 إيجار"},
     {id:"utilities",label:"💡 خدمات"},
     {id:"maintenance",label:"🔧 صيانة"},
+    {id:"complimentary",label:"🎁 ضيافة"},
     {id:"other",label:"📦 أخرى"},
   ];
 
@@ -2641,127 +2648,58 @@ function TablesTab({store,user,showToast,dm,settings}){
   const [numTables,setNumTables]=useState(store.tables.length||10);
   const [editing,setEditing]=useState(false);
   const [syncing,setSyncing]=useState(false);
+  const [clearModal,setClearModal]=useState(null);
   const CUR=settings?.currency||"ل.س";
+  const canManage=user&&["admin","cashier"].includes(user.role);
 
-  // ── Supabase helpers ──────────────────────────────────────
-  const sbUpsertTable=async(t)=>{
-    try{
-      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
-      if(!SBR||!supabase) return;
-      await supabase.from("tables").upsert({
-        id:t.id,num:String(t.number),number:t.number,
-        label:t.label,seats:t.seats||4,
-        status:t.status,note:t.note||"",
-        order_id:null,
-        opened_at:t.openedAt||null,
-      },{onConflict:"id"});
-    }catch(e){console.warn("table upsert:",e);}
-  };
-
-  const sbLoadTables=async()=>{
-    try{
-      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
-      if(!SBR||!supabase) return;
-      setSyncing(true);
-      const {data,error}=await supabase.from("tables").select("*").order("number");
-      if(error) throw error;
-      if(data&&data.length>0){
-        const mapped=data.map(r=>({
-          id:r.id,number:r.number||+r.num||0,
-          label:r.label||`طاولة ${r.num||r.number}`,
-          seats:r.seats||4,status:r.status||"free",
-          openedAt:r.opened_at||null,note:r.note||""
-        }));
-        store.setTables(mapped);
-      }
-    }catch(e){console.warn("table load:",e);}
-    finally{setSyncing(false);}
-  };
-
-  // Load tables from Supabase on mount if local is empty
-  React.useEffect(()=>{
-    if(store.tables.length===0) sbLoadTables();
+  // Load tables from Supabase on mount
+  useEffect(()=>{
+    if(store.tables.length>0) return; // already loaded locally
+    const load=async()=>{
+      try{
+        const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
+        if(!SBR||!supabase) return;
+        setSyncing(true);
+        const {data}=await supabase.from("tables").select("*").order("number");
+        if(data?.length){
+          const mapped=data.map(r=>({
+            id:r.id,number:r.number||+r.num||0,
+            label:r.label||`طاولة ${r.num||r.number}`,
+            seats:r.seats||4,status:r.status||"free",
+            note:r.note||"",orderId:r.order_id||null,openedAt:r.opened_at||null,
+          }));
+          store.setTables(mapped);
+        }
+      }catch(e){console.warn("load tables:",e);}
+      finally{setSyncing(false);}
+    };
+    load();
   },[]);
 
   const initTables=async(n)=>{
     const tables=Array.from({length:n},(_,i)=>({
       id:`t${i+1}`,number:i+1,label:`طاولة ${i+1}`,seats:4,status:"free",openedAt:null,note:""
     }));
-    store.setTables(tables);
-    setEditing(false);
-    // Sync all to Supabase
-    setSyncing(true);
-    try{
-      const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
-      if(SBR&&supabase){
-        const rows=tables.map(t=>({
-          id:t.id,num:String(t.number),number:t.number,
-          label:t.label,seats:t.seats,status:t.status,
-          note:"",order_id:null,opened_at:null
-        }));
-        await supabase.from("tables").upsert(rows,{onConflict:"id"});
-        showToast(`تم إعداد ${n} طاولة وحفظها ☁`);
-      } else {
-        showToast(`تم إعداد ${n} طاولة (محلي)`);
-      }
-    }catch(e){showToast(`تم إعداد ${n} طاولة (خطأ السحابة)`);}
-    finally{setSyncing(false);}
+    store.setTables(tables);showToast(`تم إعداد ${n} طاولة`);setEditing(false);
   };
 
-  const toggleStatus=async(id)=>{
-    let updated;
-    store.setTables(p=>{
-      const next=p.map(t=>{
-        if(t.id!==id) return t;
-        updated={...t,
-          status:t.status==="free"?"occupied":"free",
-          openedAt:t.status==="free"?new Date().toISOString():null
-        };
-        return updated;
-      });
-      return next;
-    });
-    // Sync changed table to Supabase
-    if(updated) setTimeout(()=>sbUpsertTable(updated),50);
-  };
+  const toggleStatus=(id)=>store.setTables(p=>p.map(t=>t.id===id?{
+    ...t,status:t.status==="free"?"occupied":"free",
+    openedAt:t.status==="free"?new Date().toISOString():null
+  }:t));
 
-  const [clearModal,setClearModal]=useState(null); // table object
-
-  // Full clear: DELETE orders from state + free table + sync Supabase
-  const clearTable=(t,e)=>{
-    e.stopPropagation();
-    setClearModal(t);
-  };
-
-  const confirmClearTable=async(t,deleteOrders)=>{
+  const clearTable=(t,e)=>{e.stopPropagation();setClearModal(t);};
+  const confirmClear=(t,hardDelete)=>{
     setClearModal(null);
-    if(deleteOrders){
-      // Hard delete all orders on this table (regardless of status)
-      store.setOrders(p=>p.filter(o=>o.table!==String(t.number)));
+    if(hardDelete){
+      store.setOrders(p=>p.filter(o=>String(o.table)!==String(t.number)));
     } else {
-      // Soft cancel only active orders
-      store.setOrders(p=>p.map(o=>
-        o.table===String(t.number)&&!["paid","cancelled","debt"].includes(o.status)
-          ?{...o,status:"cancelled"}:o
-      ));
+      store.setOrders(p=>p.map(o=>String(o.table)===String(t.number)&&
+        !["paid","cancelled","debt","complimentary"].includes(o.status)?{...o,status:"cancelled"}:o));
     }
-    // Free the table
-    const freed={...t,status:"free",openedAt:null};
-    store.setTables(p=>p.map(tb=>tb.id===t.id?freed:tb));
-    sbUpsertTable(freed);
-    // Delete from Supabase orders if hard delete
-    if(deleteOrders){
-      try{
-        const {supabase,SUPABASE_READY:SBR}=await import("./lib/supabase.js");
-        if(SBR&&supabase){
-          await supabase.from("orders").delete().eq("table_num",String(t.number));
-        }
-      }catch(e){console.warn("supabase table orders delete:",e);}
-    }
-    showToast(`🪑 طاولة ${t.number} تم تفريغها بالكامل`);
+    store.setTables(p=>p.map(tb=>tb.id===t.id?{...tb,status:"free",openedAt:null}:tb));
+    showToast(`🪑 طاولة ${t.number} تم تفريغها`);
   };
-
-  const canManageTable=user&&["admin","cashier"].includes(user.role);
 
   const TableTimer=({openedAt})=>{
     const [elapsed,setElapsed]=useState(Math.floor((Date.now()-new Date(openedAt))/1000));
@@ -2770,7 +2708,8 @@ function TablesTab({store,user,showToast,dm,settings}){
     return<span style={{fontSize:11,color:"#f9a825",fontWeight:700}}>⏱ {h>0?`${h}س `:""}{m}د</span>;
   };
 
-  const activeOrders=(num)=>store.orders.filter(o=>o.table===String(num)&&!["paid","cancelled"].includes(o.status));
+  const activeOrders=(num)=>store.orders.filter(o=>String(o.table)===String(num)&&
+    !["paid","cancelled","complimentary"].includes(o.status));
   const free=store.tables.filter(t=>t.status==="free").length;
   const occupied=store.tables.filter(t=>t.status==="occupied").length;
 
@@ -2792,97 +2731,40 @@ function TablesTab({store,user,showToast,dm,settings}){
     );
   }
 
-  // ── Clear Table Modal ──────────────────────────────────────────
-  const ClearTableModal=()=>{
-    if(!clearModal) return null;
-    const t=clearModal;
-    const allOrds=store.orders.filter(o=>o.table===String(t.number));
-    const activeOrds=allOrds.filter(o=>!["paid","cancelled","debt"].includes(o.status));
-    const CUR2=settings?.currency||"ل.س";
-    return(
-      <div onClick={e=>{if(e.target===e.currentTarget)setClearModal(null);}}
-        style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:900,
-          display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-        <div className="card fade-in" style={{width:"100%",maxWidth:400,
-          boxShadow:"0 24px 60px rgba(0,0,0,.5)"}}>
-          <div style={{textAlign:"center",marginBottom:16}}>
-            <div style={{fontSize:48,marginBottom:8}}>🪑</div>
-            <h2 style={{fontSize:18,fontWeight:900,marginBottom:4}}>تفريغ {t.label}</h2>
-            <p style={{fontSize:13,color:"var(--sub)"}}>
-              {allOrds.length} طلب إجمالي — {activeOrds.length} نشط
-            </p>
-          </div>
-          {/* Order list preview */}
-          {allOrds.length>0&&(
-            <div style={{background:"var(--card2)",borderRadius:12,padding:"10px 14px",
-              marginBottom:16,maxHeight:160,overflowY:"auto"}}>
-              {allOrds.map((o,i)=>(
-                <div key={o.id} style={{display:"flex",justifyContent:"space-between",
-                  fontSize:12,padding:"4px 0",
-                  borderBottom:i<allOrds.length-1?"1px solid var(--border)":"none"}}>
-                  <span style={{color:
-                    o.status==="paid"?"#2e7d32":
-                    o.status==="cancelled"?"var(--sub)":
-                    o.status==="debt"?"#6a1b9a":"var(--text)",
-                    fontWeight:600}}>
-                    #{o.orderNum} — {o.customerName||"زبون"}
-                    <span style={{marginRight:6,fontSize:10,opacity:.7}}>
-                      ({o.status==="paid"?"مدفوع":o.status==="cancelled"?"ملغي":
-                        o.status==="debt"?"دين":"نشط"})
-                    </span>
-                  </span>
-                  <span style={{fontWeight:700,color:"#c62828"}}>
-                    {(o.total||0).toLocaleString()} {CUR2}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            {/* Option 1: Hard delete ALL */}
-            <button onClick={()=>confirmClearTable(t,true)}
-              style={{width:"100%",padding:"13px",borderRadius:12,border:"none",
-                background:"#c62828",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer"}}>
-              🗑 حذف جميع الطلبات وتفريغ الطاولة
-            </button>
-            {/* Option 2: Soft cancel active only */}
-            {activeOrds.length>0&&(
-              <button onClick={()=>confirmClearTable(t,false)}
-                style={{width:"100%",padding:"13px",borderRadius:12,border:"none",
-                  background:"#e65100",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer"}}>
-                🚫 إلغاء الطلبات النشطة فقط ({activeOrds.length}) وتفريغ الطاولة
-              </button>
-            )}
-            {/* Option 3: Free only (no order change) */}
-            <button onClick={()=>confirmClearTable(t,false)}
-              style={{width:"100%",padding:"11px",borderRadius:12,
-                border:"1.5px solid var(--border)",background:"none",
-                color:"var(--text)",fontWeight:700,fontSize:13,cursor:"pointer"}}>
-              🪑 تفريغ الطاولة فقط (بدون تغيير الطلبات)
-            </button>
-            <button onClick={()=>setClearModal(null)}
-              style={{width:"100%",padding:"10px",borderRadius:12,
-                border:"1.5px solid var(--border)",background:"none",
-                color:"var(--sub)",fontWeight:600,fontSize:13,cursor:"pointer"}}>
-              إلغاء
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return(
     <div className="fade-in">
-      <ClearTableModal/>
+      {syncing&&<div style={{textAlign:"center",padding:10,color:"var(--sub)",fontSize:12}}>⏳ جاري مزامنة الطاولات...</div>}
+      {clearModal&&(
+        <div onClick={e=>{if(e.target===e.currentTarget)setClearModal(null);}}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:380}}>
+            <div style={{textAlign:"center",fontSize:40,marginBottom:10}}>🪑</div>
+            <h3 style={{textAlign:"center",fontWeight:900,marginBottom:6}}>تفريغ {clearModal.label}</h3>
+            <p style={{textAlign:"center",fontSize:13,color:"var(--sub)",marginBottom:16}}>
+              {store.orders.filter(o=>String(o.table)===String(clearModal.number)&&!["paid","cancelled"].includes(o.status)).length} طلب نشط على الطاولة
+            </p>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <button onClick={()=>confirmClear(clearModal,true)}
+                style={{background:"#c62828",color:"#fff",border:"none",borderRadius:10,padding:"12px",fontWeight:800}}>
+                🗑 حذف جميع الطلبات وتفريغ الطاولة
+              </button>
+              <button onClick={()=>confirmClear(clearModal,false)}
+                style={{background:"#e65100",color:"#fff",border:"none",borderRadius:10,padding:"12px",fontWeight:800}}>
+                🚫 إلغاء الطلبات النشطة وتفريغ الطاولة
+              </button>
+              <button onClick={()=>setClearModal(null)}
+                style={{background:"var(--card2)",border:"none",borderRadius:10,padding:"11px",fontWeight:700}}>
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <h2 style={{fontSize:18,fontWeight:900}}>🪑 خريطة الطاولات</h2>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <span style={{background:"rgba(46,125,50,.15)",color:"#2e7d32",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>شاغرة: {free}</span>
           <span style={{background:"rgba(198,40,40,.15)",color:"#c62828",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>مشغولة: {occupied}</span>
-          <button onClick={sbLoadTables} disabled={syncing} className="btn btn-ghost" style={{padding:"7px 12px",fontSize:12,opacity:syncing?.6:1}}>
-            {syncing?"⏳":"☁"} مزامنة
-          </button>
           <button onClick={()=>setEditing(true)} className="btn btn-ghost" style={{padding:"7px 12px",fontSize:12}}>⚙ تعديل</button>
         </div>
       </div>
@@ -2904,10 +2786,36 @@ function TablesTab({store,user,showToast,dm,settings}){
                 <div style={{textAlign:"center",marginTop:8}}><TableTimer openedAt={t.openedAt}/></div>
               )}
               {orders.length>0&&(
-                <div style={{marginTop:8,background:"var(--card2)",borderRadius:8,padding:"6px 8px",textAlign:"center"}}>
-                  <div style={{fontSize:10,color:"var(--sub)"}}>{orders.length} طلب نشط</div>
-                  <div style={{fontSize:12,fontWeight:700,color:"#c62828"}}>{total.toLocaleString()} {CUR}</div>
+                <div style={{marginTop:8,background:"var(--card2)",borderRadius:8,padding:"6px 8px"}}>
+                  {orders.map((o,oi)=>(
+                    <div key={o.id} style={{marginBottom:oi<orders.length-1?6:0,
+                      borderBottom:oi<orders.length-1?"1px dashed var(--border)":"none",paddingBottom:oi<orders.length-1?5:0}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:11,fontWeight:800,color:"#1565c0"}}>👤 {o.customerName||"زبون"}</span>
+                        <span style={{fontSize:10,color:"#c62828",fontWeight:700}}>{(o.total||0).toLocaleString()} {CUR}</span>
+                      </div>
+                      {o.items?.slice(0,2).map((it,ii)=>(
+                        <div key={ii} style={{fontSize:9,color:"var(--sub)",paddingRight:6}}>
+                          {it.emoji} {it.itemName} ×{it.qty}
+                        </div>
+                      ))}
+                      {(o.items?.length||0)>2&&<div style={{fontSize:9,color:"var(--sub)",paddingRight:6}}>+{o.items.length-2} أخرى</div>}
+                    </div>
+                  ))}
+                  <div style={{borderTop:"1px solid var(--border)",marginTop:4,paddingTop:4,
+                    display:"flex",justifyContent:"space-between",fontSize:11,fontWeight:900}}>
+                    <span style={{color:"var(--sub)"}}>{orders.length} طلب</span>
+                    <span style={{color:"#c62828"}}>{total.toLocaleString()} {CUR}</span>
+                  </div>
                 </div>
+              )}
+              {canManage&&t.status==="occupied"&&(
+                <button onClick={(e)=>clearTable(t,e)}
+                  style={{width:"100%",marginTop:6,background:"rgba(198,40,40,.1)",
+                    border:"1.5px solid rgba(198,40,40,.25)",borderRadius:8,padding:"6px",
+                    fontSize:11,color:"#c62828",fontWeight:700}}>
+                  🗑 تفريغ الطاولة
+                </button>
               )}
               <button onClick={async(e)=>{
                 e.stopPropagation();
@@ -2917,14 +2825,6 @@ function TablesTab({store,user,showToast,dm,settings}){
               }} style={{width:"100%",marginTop:8,background:"transparent",border:"1px solid var(--border)",borderRadius:8,padding:"5px",fontSize:11,color:"var(--sub)"}}>
                 QR 📱
               </button>
-              {canManageTable&&t.status==="occupied"&&(
-                <button onClick={(e)=>clearTable(t,e)}
-                  style={{width:"100%",marginTop:6,background:"rgba(198,40,40,.12)",
-                    border:"1.5px solid rgba(198,40,40,.3)",borderRadius:8,padding:"7px",
-                    fontSize:12,color:"#c62828",fontWeight:700,cursor:"pointer"}}>
-                  🪑 تفريغ الطاولة
-                </button>
-              )}
             </div>
           );
         })}
@@ -3038,12 +2938,6 @@ function StaffTab({store,showToast,dm}){
 function ReportsTab({store,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   const [period,setPeriod]=useState("today");
-  const [reportTab,setReportTab]=useState("summary");
-  const [pdfSearch,setPdfSearch]=useState("");
-  const pdfArchive=useMemo(()=>JSON.parse(localStorage.getItem("nc_pdf_archive")||"[]"),[reportTab]);
-  const filteredPdfs=useMemo(()=>pdfArchive.filter(p=>
-    !pdfSearch||(p.orderNum||"").includes(pdfSearch)||(p.customerName||"").includes(pdfSearch)||(p.table||"").includes(pdfSearch)
-  ),[pdfArchive,pdfSearch]);
 
   const getStart=()=>{
     const d=new Date();
@@ -3110,53 +3004,6 @@ function ReportsTab({store,dm,settings}){
           <button className="btn btn-ghost" onClick={printReport} style={{fontSize:12,padding:"8px 12px"}}>🖨 طباعة</button>
         </div>
       </div>
-      {/* Sub-tabs */}
-      <div style={{display:"flex",gap:8,marginBottom:16}}>
-        {[["summary","📊 الملخص"],["orders_pdf","🧾 أرشيف الفواتير"]].map(([v,l])=>(
-          <button key={v} onClick={()=>setReportTab(v)} style={{padding:"8px 20px",borderRadius:20,border:"none",
-            background:reportTab===v?"#c62828":"var(--card2)",color:reportTab===v?"#fff":"var(--sub)",fontWeight:700,fontSize:13}}>
-            {l}
-          </button>
-        ))}
-      </div>
-
-      {/* PDF Archive */}
-      {reportTab==="orders_pdf"&&(
-        <div className="fade-in">
-          <input className="input" placeholder="🔍 بحث بالرقم أو الزبون أو الطاولة..." value={pdfSearch} onChange={e=>setPdfSearch(e.target.value)} style={{marginBottom:14}}/>
-          {!filteredPdfs.length?(
-            <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
-              <div style={{fontSize:48}}>🧾</div>
-              <div style={{marginTop:10}}>لا توجد فواتير محفوظة بعد</div>
-              <div style={{fontSize:12,marginTop:6}}>تُحفظ كل فاتورة تلقائياً عند الدفع أو استيفاء الدين</div>
-            </div>
-          ):(
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
-              {filteredPdfs.map((p,i)=>(
-                <div key={p.id||i} className="card" style={{borderRight:`4px solid ${p.isDebt?"#6a1b9a":"#1565c0"}`}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                    <span style={{fontWeight:900,fontSize:14}}>🧾 #{p.orderNum}</span>
-                    {p.isDebt&&<span style={{background:"rgba(106,27,154,.15)",color:"#6a1b9a",fontSize:10,padding:"2px 8px",borderRadius:6,fontWeight:700}}>💳 دين</span>}
-                    {p.table&&<span style={{background:"rgba(21,101,192,.12)",color:"#1565c0",fontSize:10,padding:"2px 8px",borderRadius:6,fontWeight:700}}>🪑 {p.table}</span>}
-                  </div>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1565c0",marginBottom:3}}>👤 {p.customerName||"—"}</div>
-                  {p.paidByName&&<div style={{fontSize:11,color:"var(--sub)",marginBottom:4}}>💰 استلمه: {p.paidByName}</div>}
-                  <div style={{fontSize:11,color:"var(--sub)",marginBottom:8}}>
-                    {new Date(p.createdAt).toLocaleString("ar-SY",{hour:"2-digit",minute:"2-digit",month:"short",day:"numeric"})}
-                  </div>
-                  <div style={{fontWeight:900,color:"#c62828",fontSize:15,marginBottom:10}}>{(p.total||0).toLocaleString()} {CUR}</div>
-                  <button onClick={()=>openPdfArchive(p.html)}
-                    style={{width:"100%",background:"#1565c0",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontWeight:700,fontSize:12}}>
-                    👁 عرض وطباعة
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {reportTab==="summary"&&(<>
       <div style={{display:"flex",gap:8,marginBottom:14}}>
         {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l])=>(
           <button key={v} onClick={()=>setPeriod(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
@@ -3211,7 +3058,6 @@ function ReportsTab({store,dm,settings}){
           ))}
         </div>
       )}
-      </>)}
     </div>
   );
 }
@@ -3289,30 +3135,6 @@ function SettingsTab({store,showToast,dm,user}){
               ))}
             </div>
           </S>
-        </div>
-
-        {/* Notification Settings */}
-        <div className="card">
-          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#2e7d32"}}>🔔 إعدادات الإشعارات</h3>
-          {[
-            ["notifSound","🔊 أصوات الإشعارات","تشغيل نغمة لكل إشعار (دفع، دين، طلب جديد)"],
-            ["notifOrders","📋 إشعار عند طلب جديد","إظهار إشعار فوري عند ورود أي طلب"],
-            ["notifReady","✅ إشعار عند جاهز","إشعار عند تحضير الطلب"],
-          ].map(([key,label,desc])=>(
-            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
-              marginBottom:14,padding:"12px 14px",background:"var(--card2)",borderRadius:12}}>
-              <div>
-                <div style={{fontWeight:700,fontSize:13}}>{label}</div>
-                <div style={{fontSize:11,color:"var(--sub)",marginTop:2}}>{desc}</div>
-              </div>
-              <button onClick={()=>setForm(f=>({...f,[key]:f[key]===false?true:false}))}
-                style={{width:48,height:26,borderRadius:13,border:"none",position:"relative",flexShrink:0,
-                  background:form[key]===false?"var(--border)":"#2e7d32",transition:"background .3s",cursor:"pointer"}}>
-                <div style={{position:"absolute",top:3,left:form[key]===false?23:3,width:20,height:20,
-                  borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 2px 4px rgba(0,0,0,.2)"}}/>
-              </button>
-            </div>
-          ))}
         </div>
 
         {/* Permissions */}
