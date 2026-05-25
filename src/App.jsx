@@ -1073,32 +1073,47 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
 
       {/* Nav */}
       <nav style={{background:"var(--card)",borderBottom:"2px solid var(--border)",padding:"0 8px",position:"relative"}}>
-        {/* موبايل: قائمة منسدلة */}
-        <div className="show-mobile-only" style={{padding:"6px 0"}}>
-          <select
-            value={tab}
-            onChange={e=>setTab(e.target.value)}
-            style={{width:"100%",padding:"10px 14px",border:"1.5px solid var(--border)",
-              borderRadius:10,background:"var(--card)",color:"var(--text)",
-              fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",
-              appearance:"none",paddingLeft:32}}>
+        {/* موبايل: قائمة منسدلة للأدمن فقط */}
+        {user.role==="admin"?(
+          <>
+            <div className="show-mobile-only" style={{padding:"6px 0"}}>
+              <select
+                value={tab}
+                onChange={e=>setTab(e.target.value)}
+                style={{width:"100%",padding:"10px 14px",border:"1.5px solid var(--border)",
+                  borderRadius:10,background:"var(--card)",color:"var(--text)",
+                  fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",
+                  appearance:"none",paddingLeft:32}}>
+                {navItems.map(([t,icon,label])=>(
+                  <option key={t} value={t}>{icon} {label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="hide-mobile" style={{display:"flex",overflowX:"auto"}}>
+              {navItems.map(([t,icon,label])=>(
+                <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
+                  background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
+                  fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
+                  whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
+                  <span>{icon}</span>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        ):(
+          <div style={{display:"flex",overflowX:"auto"}} className="scroll-hide">
             {navItems.map(([t,icon,label])=>(
-              <option key={t} value={t}>{icon} {label}</option>
+              <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
+                background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
+                fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
+                whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
+                <span>{icon}</span>
+                <span className="hide-mobile">{label}</span>
+              </button>
             ))}
-          </select>
-        </div>
-        {/* ديسكتوب: تبويبات أفقية */}
-        <div className="hide-mobile" style={{display:"flex",overflowX:"auto"}} >
-          {navItems.map(([t,icon,label])=>(
-            <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
-              background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
-              fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
-              whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
-              <span>{icon}</span>
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
+          </div>
+        )}
       </nav>
 
       {/* Content */}
