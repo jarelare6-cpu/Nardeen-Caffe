@@ -1879,6 +1879,8 @@ function CashierTab({ store, user, showToast, dm, settings }) {
   const [debtModal, setDebtModal] = useState(null);
   const [debtNameInput, setDebtNameInput] = useState("");
   const [debtNameError, setDebtNameError] = useState("");
+  const [debtMergeMode, setDebtMergeMode] = useState(false); // وضع الإضافة لدين سابق
+  const [debtMergeName, setDebtMergeName] = useState("");    // اسم الزبون للدمج
   const [compModal, setCompModal] = useState(null);
   const [compItems, setCompItems] = useState([]);
   const [tronModal, setTronModal] = useState(null);
@@ -1938,25 +1940,65 @@ function CashierTab({ store, user, showToast, dm, settings }) {
 
   const markDebt = (order) => {
     setDebtNameInput(order.customerName && order.customerName !== "زبون" ? order.customerName : "");
-    setDebtNameError(""); setDebtModal(order);
+    setDebtNameError("");
+    setDebtMergeMode(false);
+    setDebtMergeName("");
+    setDebtModal(order);
   };
 
   const confirmDebt = () => {
-    if (!debtNameInput.trim()) { setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين"); return; }
+    // التحقق من الاسم — إلزامي في كلا الوضعين
+    const nameToUse = debtMergeMode ? debtMergeName.trim() : debtNameInput.trim();
+    if (!nameToUse) {
+      setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين");
+      return;
+    }
     const order = debtModal;
     const updated = store.orders.map(o =>
-      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: debtNameInput.trim() } : o
+      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse } : o
     );
     store.setOrders(() => updated);
-    store.setDebts(p => [{
-      id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
-      customerName: debtNameInput.trim(), amount: order.total, remaining: order.total,
-      date: new Date().toISOString(), settled: false, settledAt: null,
-      createdBy: user.name, notes: order.notes || "",
-    }, ...p]);
-    showToast(`💳 تم تسجيل الدين — ${debtNameInput.trim()}`, "warn");
+
+    if (debtMergeMode) {
+      // ── إضافة لدين سابق: ابحث عن دين غير مسوَّى بنفس الاسم ──
+      const existingDebt = store.debts.find(
+        d => !d.settled && d.customerName.trim() === nameToUse
+      );
+      if (existingDebt) {
+        // أضف المبلغ للدين الموجود
+        store.setDebts(p => p.map(d =>
+          d.id === existingDebt.id
+            ? { ...d, amount: d.amount + order.total, remaining: d.remaining + order.total,
+                notes: (d.notes ? d.notes + " | " : "") + `طلب #${order.orderNum}: ${order.total.toLocaleString()} ${CUR}` }
+            : d
+        ));
+        showToast(`💳 تمت إضافة ${order.total.toLocaleString()} ${CUR} لدين ${nameToUse}`, "warn");
+      } else {
+        // لا يوجد دين سابق — أنشئ واحداً جديداً
+        store.setDebts(p => [{
+          id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+          customerName: nameToUse, amount: order.total, remaining: order.total,
+          date: new Date().toISOString(), settled: false, settledAt: null,
+          createdBy: user.name, notes: order.notes || "",
+        }, ...p]);
+        showToast(`💳 تم إنشاء دين جديد لـ ${nameToUse} (لم يوجد دين سابق)`, "warn");
+      }
+    } else {
+      // ── دين عادي جديد ──
+      store.setDebts(p => [{
+        id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+        customerName: nameToUse, amount: order.total, remaining: order.total,
+        date: new Date().toISOString(), settled: false, settledAt: null,
+        createdBy: user.name, notes: order.notes || "",
+      }, ...p]);
+      showToast(`💳 تم تسجيل الدين — ${nameToUse}`, "warn");
+    }
+
     autoFreeTable(order.table, updated);
-    setDebtModal(null); setDebtNameInput("");
+    setDebtModal(null);
+    setDebtNameInput("");
+    setDebtMergeMode(false);
+    setDebtMergeName("");
   };
 
   const openComp = (order) => {
@@ -2230,20 +2272,95 @@ function CashierTab({ store, user, showToast, dm, settings }) {
       {/* Debt Modal */}
       {debtModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div className="card fade-in" style={{ width: "100%", maxWidth: 380 }}>
-            <div style={{ textAlign: "center", marginBottom: 18 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 400 }}>
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 44, marginBottom: 6 }}>💳</div>
               <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>تسجيل دين</h2>
               <p style={{ fontSize: 13, color: "var(--sub)" }}>طلب #{debtModal.orderNum} — {debtModal.total.toLocaleString()} {CUR}</p>
             </div>
-            <input className="input" placeholder="اسم الزبون..." value={debtNameInput} autoFocus
-              onChange={e => { setDebtNameInput(e.target.value); setDebtNameError(""); }}
-              onKeyDown={e => e.key === "Enter" && confirmDebt()}
-              style={{ marginBottom: 10, fontSize: 16, fontWeight: 700 }} />
-            {debtNameError && <div style={{ background: "rgba(198,40,40,.15)", color: "#c62828", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{debtNameError}</div>}
+
+            {/* اختيار الوضع */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+              <button
+                onClick={() => { setDebtMergeMode(false); setDebtNameError(""); }}
+                style={{ padding: "10px 8px", borderRadius: 10, border: `2px solid ${!debtMergeMode ? "#6a1b9a" : "var(--border)"}`,
+                  background: !debtMergeMode ? "rgba(106,27,154,.15)" : "var(--card2)",
+                  color: !debtMergeMode ? "#6a1b9a" : "var(--text)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                📋 دين جديد
+              </button>
+              <button
+                onClick={() => { setDebtMergeMode(true); setDebtNameError(""); }}
+                style={{ padding: "10px 8px", borderRadius: 10, border: `2px solid ${debtMergeMode ? "#e65100" : "var(--border)"}`,
+                  background: debtMergeMode ? "rgba(230,81,0,.15)" : "var(--card2)",
+                  color: debtMergeMode ? "#e65100" : "var(--text)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                ➕ إضافة لدين سابق
+              </button>
+            </div>
+
+            {!debtMergeMode ? (
+              <>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
+                  اسم الزبون <span style={{ color: "#c62828" }}>*</span>
+                </label>
+                <input className="input" placeholder="اسم الزبون..." value={debtNameInput} autoFocus
+                  onChange={e => { setDebtNameInput(e.target.value); setDebtNameError(""); }}
+                  onKeyDown={e => e.key === "Enter" && confirmDebt()}
+                  style={{ marginBottom: 10, fontSize: 16, fontWeight: 700 }} />
+              </>
+            ) : (
+              <>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#e65100", marginBottom: 6, display: "block" }}>
+                  اسم الزبون صاحب الدين السابق <span style={{ color: "#c62828" }}>*</span>
+                </label>
+                <input className="input" placeholder="اكتب الاسم بالضبط كما في سجل الديون..." value={debtMergeName} autoFocus
+                  onChange={e => { setDebtMergeName(e.target.value); setDebtNameError(""); }}
+                  onKeyDown={e => e.key === "Enter" && confirmDebt()}
+                  style={{ marginBottom: 8, fontSize: 15, fontWeight: 700, borderColor: "#e65100" }} />
+                {/* اقتراحات أسماء من الديون الحالية */}
+                {debtMergeName.length >= 1 && (() => {
+                  const matches = (store.debts || []).filter(d =>
+                    !d.settled && d.customerName.includes(debtMergeName)
+                  ).slice(0, 4);
+                  return matches.length > 0 ? (
+                    <div style={{ background: "var(--card2)", borderRadius: 10, marginBottom: 10, overflow: "hidden" }}>
+                      {matches.map(d => (
+                        <button key={d.id} onClick={() => { setDebtMergeName(d.customerName); setDebtNameError(""); }}
+                          style={{ display: "block", width: "100%", textAlign: "right", padding: "10px 14px",
+                            background: "none", border: "none", borderBottom: "1px solid var(--border)",
+                            cursor: "pointer", fontSize: 13, color: "var(--text)" }}>
+                          <span style={{ fontWeight: 700 }}>{d.customerName}</span>
+                          <span style={{ color: "#c62828", marginRight: 8, fontSize: 12 }}>
+                            متبقي: {d.remaining.toLocaleString()} {CUR}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ background: "rgba(198,40,40,.08)", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#c62828" }}>
+                      لا يوجد دين سابق بهذا الاسم — سيُنشأ دين جديد تلقائياً
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            {debtNameError && (
+              <div style={{ background: "rgba(198,40,40,.15)", color: "#c62828", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                {debtNameError}
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setDebtModal(null)} style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>إلغاء</button>
-              <button onClick={confirmDebt} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#6a1b9a", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>✓ تسجيل الدين</button>
+              <button onClick={() => { setDebtModal(null); setDebtMergeMode(false); setDebtMergeName(""); setDebtNameInput(""); }}
+                style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
+                إلغاء
+              </button>
+              <button onClick={confirmDebt}
+                style={{ flex: 2, padding: 12, borderRadius: 12, border: "none",
+                  background: debtMergeMode ? "#e65100" : "#6a1b9a",
+                  color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                {debtMergeMode ? "➕ إضافة للدين السابق" : "✓ تسجيل الدين"}
+              </button>
             </div>
           </div>
         </div>
@@ -3876,6 +3993,10 @@ function SettingsTab({store,showToast,dm,user}){
               <button onClick={async()=>{if(window.confirm("تصفير بيانات الزبائن؟")){store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#1565c0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الزبائن
+              </button>
+              <button onClick={async()=>{if(window.confirm("تصفير سجل الفواتير؟ لا يمكن التراجع!")){store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}showToast("تم تصفير الفواتير","warn");}}}
+                style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#37474f",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🗑️ تصفير الفواتير
               </button>
             </div>
           </div>
