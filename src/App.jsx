@@ -1082,6 +1082,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
               borderRadius:10,background:"var(--card)",color:"var(--text)",
               fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",
               appearance:"none",paddingLeft:32}}>
+            {navItems.map(([t,icon,label])=>(
               <option key={t} value={t}>{icon} {label}</option>
             ))}
           </select>
