@@ -193,6 +193,7 @@ const sbWrite = {
     comp_amount: o.compAmount || 0,
     is_complimentary: o.isComplimentary || false,
     worker_name: o.workerName || "",
+    tron_amount: o.tronAmount || 0,
   }),
   deleteOrder: (id) => sbDelete("orders", id),
 
@@ -283,6 +284,7 @@ const mapOrder = o => ({
   compAmount:   o.comp_amount   ?? o.compAmount   ?? 0,
   isComplimentary: o.is_complimentary ?? o.isComplimentary ?? false,
   workerName:   o.worker_name   ?? o.workerName   ?? "",
+  tronAmount:   o.tron_amount   ?? o.tronAmount   ?? 0,
 });
 const mapMenu = m => ({
   ...m,
@@ -420,7 +422,8 @@ export const useStore = () => {
         const changed = next.filter(o => {
           const old = p.find(x => x.id === o.id);
           return !old || old.status !== o.status || old.total !== o.total ||
-                 old.paymentType !== o.paymentType || old.discount !== o.discount;
+                 old.paymentType !== o.paymentType || old.discount !== o.discount ||
+                 (old.tronAmount || 0) !== (o.tronAmount || 0);
         });
         changed.forEach(o => sbWrite.order(o));
         const nextIds = new Set(next.map(o => o.id));
