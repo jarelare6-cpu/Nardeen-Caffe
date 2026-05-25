@@ -52,6 +52,20 @@ export const DEFAULT_SETTINGS = {
   cashierCode:            "narden",
   appTheme:               "default",
   defaultTableCount:      20,
+  // إشعارات وصوت
+  soundEnabled:           false,
+  soundOnReady:           false,
+  soundOnDebt:            false,
+  soundTone:              "bell",
+  notifyBrowser:          false,
+  // طاولات
+  openTableSystem:        true,
+  autoFreeTable:          true,
+  tableTimerAlert:        false,
+  tableAlertMinutes:      60,
+  mergeTableOrders:       false,
+  requireTableOnOrder:    true,
+  printOnNewOrder:        false,
 };
 
 export const DEFAULT_USERS = [
@@ -67,26 +81,79 @@ export const DEFAULT_USERS = [
 ];
 
 export const DEFAULT_MENU = [
-  { id:"m1",  name:"قهوة عربية",     nameEn:"Arabic Coffee",    price:2500,  category:"hot_drinks",  stock:100, minStock:10, totalSold:0, emoji:"☕", active:true },
-  { id:"m2",  name:"شاي",            nameEn:"Tea",              price:1500,  category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"🍵", active:true },
-  { id:"m3",  name:"كابتشينو",       nameEn:"Cappuccino",       price:5000,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
-  { id:"m4",  name:"لاتيه",          nameEn:"Latte",            price:5500,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
-  { id:"m15", name:"أمريكانو",       nameEn:"Americano",        price:4000,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
-  { id:"m16", name:"شوكولاتة ساخنة", nameEn:"Hot Chocolate",    price:5000,  category:"hot_drinks",  stock:40,  minStock:5,  totalSold:0, emoji:"🫗", active:true },
-  { id:"m5",  name:"موهيتو",         nameEn:"Mojito",           price:6000,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
-  { id:"m6",  name:"عصير ليمون",     nameEn:"Lemon Juice",      price:4000,  category:"cold_drinks", stock:50,  minStock:5,  totalSold:0, emoji:"🍋", active:true },
-  { id:"m7",  name:"ماء معدني",      nameEn:"Water",            price:1000,  category:"cold_drinks", stock:200, minStock:20, totalSold:0, emoji:"💧", active:true },
-  { id:"m17", name:"سموذي مانجو",    nameEn:"Mango Smoothie",   price:7000,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥭", active:true },
-  { id:"m18", name:"عصير برتقال",    nameEn:"Orange Juice",     price:5000,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍊", active:true },
-  { id:"m8",  name:"ساندويتش دجاج",  nameEn:"Chicken Sandwich", price:8000,  category:"food",        stock:30,  minStock:5,  totalSold:0, emoji:"🥪", active:true },
-  { id:"m9",  name:"بيتزا صغيرة",   nameEn:"Small Pizza",      price:15000, category:"food",        stock:20,  minStock:3,  totalSold:0, emoji:"🍕", active:true },
-  { id:"m10", name:"كيكة شوكولاتة", nameEn:"Chocolate Cake",   price:7000,  category:"food",        stock:15,  minStock:3,  totalSold:0, emoji:"🍰", active:true },
-  { id:"m19", name:"ساندويتش فلافل", nameEn:"Falafel Sandwich", price:5000,  category:"food",        stock:25,  minStock:5,  totalSold:0, emoji:"🥙", active:true },
-  { id:"m11", name:"معسل تفاح",      nameEn:"Apple Hookah",     price:12000, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
-  { id:"m12", name:"معسل عنب",       nameEn:"Grape Hookah",     price:12000, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
-  { id:"m13", name:"معسل نعناع",     nameEn:"Mint Hookah",      price:12000, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
-  { id:"m20", name:"معسل توت",       nameEn:"Berry Hookah",     price:13000, category:"hookah",      stock:40,  minStock:5,  totalSold:0, emoji:"💨", active:true },
-  { id:"m14", name:"فحم إضافي",      nameEn:"Extra Charcoal",   price:3000,  category:"hookah",      stock:100, minStock:10, totalSold:0, emoji:"🔥", active:true },
+  // ── مشروبات ساخنة ─────────────────────────────────────────
+  { id:"m1",  name:"ميلو",              nameEn:"Milo",                price:10,   category:"hot_drinks",  stock:100, minStock:10, totalSold:0, emoji:"☕", active:true },
+  { id:"m2",  name:"ميلو مع حليب",     nameEn:"Milo with Milk",      price:150,  category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"☕", active:true },
+  { id:"m3",  name:"نسكافيه",          nameEn:"Nescafe",              price:100,  category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"☕", active:true },
+  { id:"m4",  name:"كابتشينو",         nameEn:"Cappuccino",           price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
+  { id:"m5",  name:"3 ب 1",            nameEn:"3 in 1",               price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
+  { id:"m6",  name:"3 ب 1 نسله",       nameEn:"Nestle 3in1",          price:130,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
+  { id:"m7",  name:"2 ب 1",            nameEn:"2 in 1",               price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
+  { id:"m8",  name:"قهوة تركية",       nameEn:"Turkish Coffee",       price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"☕", active:true },
+  { id:"m9",  name:"شاي أخضر",         nameEn:"Green Tea",            price:100,  category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"🍵", active:true },
+  { id:"m10", name:"شاي أحمر",         nameEn:"Red Tea",              price:100,  category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"🍵", active:true },
+  { id:"m11", name:"شاي خمير",         nameEn:"Khamir Tea",           price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🍵", active:true },
+  { id:"m12", name:"زهورات",           nameEn:"Herbal Tea",           price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🌸", active:true },
+  { id:"m13", name:"متة",              nameEn:"Mate",                 price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🍵", active:true },
+  { id:"m14", name:"متة مع زهورات",    nameEn:"Mate & Herbal",        price:120,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🍵", active:true },
+  { id:"m15", name:"كمون وليمون",      nameEn:"Cumin & Lemon",        price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🍋", active:true },
+  { id:"m16", name:"هوت شوكليت",       nameEn:"Hot Chocolate",        price:100,  category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🍫", active:true },
+  { id:"m17", name:"هوت شوكليت مع حليب",nameEn:"Hot Choc with Milk",  price:150,  category:"hot_drinks",  stock:50,  minStock:8,  totalSold:0, emoji:"🍫", active:true },
+  { id:"m18", name:"نسكافيه مع حليب",  nameEn:"Nescafe with Milk",    price:150,  category:"hot_drinks",  stock:50,  minStock:8,  totalSold:0, emoji:"☕", active:true },
+  // ── مشروبات باردة ─────────────────────────────────────────
+  { id:"mc1", name:"كولا",             nameEn:"Cola",                 price:100,  category:"cold_drinks", stock:80,  minStock:10, totalSold:0, emoji:"🥤", active:true },
+  { id:"mc2", name:"سفن أب",           nameEn:"7Up",                  price:100,  category:"cold_drinks", stock:80,  minStock:10, totalSold:0, emoji:"🥤", active:true },
+  { id:"mc3", name:"ميرندا تفاح",      nameEn:"Mirinda Apple",        price:100,  category:"cold_drinks", stock:60,  minStock:8,  totalSold:0, emoji:"🥤", active:true },
+  { id:"mc4", name:"ميرندا برتقال",    nameEn:"Mirinda Orange",       price:100,  category:"cold_drinks", stock:60,  minStock:8,  totalSold:0, emoji:"🥤", active:true },
+  { id:"mc5", name:"مياه كبيرة",       nameEn:"Large Water",          price:80,   category:"cold_drinks", stock:100, minStock:20, totalSold:0, emoji:"💧", active:true },
+  { id:"mc6", name:"مياه صغيرة",       nameEn:"Small Water",          price:40,   category:"cold_drinks", stock:100, minStock:20, totalSold:0, emoji:"💧", active:true },
+  // ── الكوكتيلات ────────────────────────────────────────────
+  { id:"ck1", name:"كوكتيل فواكه",     nameEn:"Fruit Cocktail",       price:200,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  { id:"ck2", name:"كوكتيل ناردين",    nameEn:"Nardeen Cocktail",     price:200,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  { id:"ck3", name:"كوكتيل موز حليب فريز",nameEn:"Banana Milk Strawberry",price:200,category:"cold_drinks",stock:30,minStock:5,totalSold:0,emoji:"🍹",active:true},
+  { id:"ck4", name:"كوكتيل موز وحليب", nameEn:"Banana Milk",          price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  { id:"ck5", name:"كوكتيل موز حليب شوكولا",nameEn:"Banana Choc",    price:200,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  { id:"ck6", name:"كوكتيل موز حليب منغا",nameEn:"Banana Mango",     price:200,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  { id:"ck7", name:"كوكتيل موز برتقال", nameEn:"Banana Orange",       price:200,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  { id:"ck8", name:"كوكتيل موز فريز شوكولا",nameEn:"Banana Straw Choc",price:200,category:"cold_drinks",stock:30,minStock:5,totalSold:0,emoji:"🍹",active:true},
+  { id:"ck9", name:"كوكتيل حليب فريز", nameEn:"Milk Strawberry",      price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
+  // ── العصائر الطبيعية ──────────────────────────────────────
+  { id:"j1",  name:"عصير جزر وبرتقال", nameEn:"Carrot Orange Juice",  price:100,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🥤", active:true },
+  { id:"j2",  name:"عصير منغا",        nameEn:"Mango Juice",          price:100,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🥭", active:true },
+  { id:"j3",  name:"عصير برتقال",      nameEn:"Orange Juice",         price:100,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍊", active:true },
+  { id:"j4",  name:"عصير أناناس",      nameEn:"Pineapple Juice",      price:100,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍍", active:true },
+  { id:"j5",  name:"عصير أناناس فريش", nameEn:"Fresh Pineapple",      price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍍", active:true },
+  { id:"j6",  name:"عصير فريز",        nameEn:"Strawberry Juice",     price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍓", active:true },
+  { id:"j7",  name:"عصير توت",         nameEn:"Berry Juice",          price:160,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🫐", active:true },
+  { id:"j8",  name:"عصير ليمونادا",    nameEn:"Lemonade",             price:160,  category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍋", active:true },
+  { id:"j9",  name:"عصير بولو",        nameEn:"Polo Juice",           price:160,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥤", active:true },
+  { id:"j10", name:"عصير فريز وتوت",   nameEn:"Straw Berry Juice",    price:160,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍓", active:true },
+  { id:"j11", name:"عصير رمان",        nameEn:"Pomegranate Juice",    price:130,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍎", active:true },
+  // ── ميلك شيك ──────────────────────────────────────────────
+  { id:"ms1", name:"ميلك شيك فريز",    nameEn:"Strawberry Milkshake", price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms2", name:"ميلك شيك شوكولا",  nameEn:"Chocolate Milkshake",  price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms3", name:"ميلك شيك فانيل",   nameEn:"Vanilla Milkshake",    price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms4", name:"ميلك شيك أوريو",   nameEn:"Oreo Milkshake",       price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms5", name:"ميلك شيك تشيز كيك",nameEn:"Cheesecake Milkshake", price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms6", name:"ميلك شيك سيريلاك", nameEn:"Cerelac Milkshake",    price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms7", name:"ميلك شيك مارشميلو",nameEn:"Marshmallow Milkshake",price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  { id:"ms8", name:"ميلك شيك ناردين",  nameEn:"Nardeen Milkshake",    price:230,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
+  // ── أيسات ─────────────────────────────────────────────────
+  { id:"ic1", name:"أيس أوريو",        nameEn:"Oreo Ice",             price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  { id:"ic2", name:"أيس ميلو",         nameEn:"Milo Ice",             price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  { id:"ic3", name:"أيس 3 ب 1",        nameEn:"3in1 Ice",             price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  { id:"ic4", name:"أيس كابتشينو",     nameEn:"Cappuccino Ice",       price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  { id:"ic5", name:"أيس شوكليت",       nameEn:"Chocolate Ice",        price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  { id:"ic6", name:"أيس كافي",         nameEn:"Ice Coffee",           price:180,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  { id:"ic7", name:"أيس دراق فريش",    nameEn:"Fresh Peach Ice",      price:160,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍑", active:true },
+  { id:"ic8", name:"أيس ميلو موز",     nameEn:"Milo Banana Ice",      price:190,  category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
+  // ── الأراكيل ──────────────────────────────────────────────
+  { id:"hk1", name:"أركيلة تفاحتين",  nameEn:"Double Apple Hookah",  price:150,  category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
+  { id:"hk2", name:"أركيلة بولو",     nameEn:"Polo Hookah",          price:130,  category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
+  { id:"hk3", name:"أركيلة لوف",      nameEn:"Love Hookah",          price:130,  category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
+  { id:"hk4", name:"أركيلة علكة",     nameEn:"Gum Hookah",           price:130,  category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
+  { id:"hk5", name:"أركيلة عنب",      nameEn:"Grape Hookah",         price:130,  category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
+  { id:"hk6", name:"أركيلة خارجية",   nameEn:"External Hookah",      price:200,  category:"hookah",      stock:20,  minStock:3,  totalSold:0, emoji:"💨", active:true },
 ];
 
 // ══════════════════════════════════════════════════════════════
@@ -264,6 +331,9 @@ export const useStore = () => {
   const [expenses,      setExpensesRaw]      = useState(() => ls.get("nc_expenses", []));
   const [receipts,      setReceiptsRaw]      = useState(() => ls.get("nc_receipts", []));
   const [settings,      setSettingsRaw]      = useState(() => ls.get("nc_settings", DEFAULT_SETTINGS));
+  const [compLog,       setCompLogRaw]       = useState(() => ls.get("nc_complog",  []));
+  const [customers,     setCustomersRaw]     = useState(() => ls.get("nc_customers",[]));
+  const [permOverrides, setPermOverridesRaw] = useState(() => ls.get("nc_perms",   {}));
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
 
@@ -396,6 +466,30 @@ export const useStore = () => {
     });
   }, []);
 
+  const setCompLog = useCallback((v) => {
+    setCompLogRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      ls.set("nc_complog", next); broadcast("nc_complog", next);
+      return next;
+    });
+  }, []);
+
+  const setCustomers = useCallback((v) => {
+    setCustomersRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      ls.set("nc_customers", next); broadcast("nc_customers", next);
+      return next;
+    });
+  }, []);
+
+  const setPermOverrides = useCallback((v) => {
+    setPermOverridesRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      ls.set("nc_perms", next); broadcast("nc_perms", next);
+      return next;
+    });
+  }, []);
+
   // ── إضافة طاولات جديدة (طاولة طاولة) ─────────────────────
   const addTable = useCallback(() => {
     setTablesRaw(p => {
@@ -431,6 +525,9 @@ export const useStore = () => {
         case "nc_expenses": setExpensesRaw(data);      break;
         case "nc_receipts": setReceiptsRaw(data);      break;
         case "nc_settings": setSettingsRaw(data);      break;
+        case "nc_complog":  setCompLogRaw(data);       break;
+        case "nc_customers":setCustomersRaw(data);     break;
+        case "nc_perms":    setPermOverridesRaw(data); break;
       }
     };
     bc.addEventListener("message", handler);
@@ -454,6 +551,9 @@ export const useStore = () => {
           case "nc_expenses": setExpensesRaw(data);      break;
           case "nc_receipts": setReceiptsRaw(data);      break;
           case "nc_settings": setSettingsRaw(data);      break;
+          case "nc_complog":  setCompLogRaw(data);       break;
+          case "nc_customers":setCustomersRaw(data);     break;
+          case "nc_perms":    setPermOverridesRaw(data); break;
         }
       } catch {}
     };
@@ -570,6 +670,9 @@ export const useStore = () => {
     expenses, setExpenses,
     receipts, setReceipts,
     settings, setSettings,
+    compLog, setCompLog,
+    customers, setCustomers,
+    permOverrides, setPermOverrides,
     syncing, cloudReady,
   };
 };
