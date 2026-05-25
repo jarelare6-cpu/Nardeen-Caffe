@@ -4,7 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbFetch } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
 
 // ═══════════════════════════════════
@@ -81,6 +81,7 @@ const generateReceiptPDF = async (order, settings, tronAmount = 0) => {
   const CUR = settings?.currency || "ل.س";
   const cafeName = settings?.cafeName || "Nardeen Caffe";
   const signature = settings?.signature || "";
+  const staffName = order.paidByName || order.workerName || "";
   const now = new Date();
   const dateStr = now.toLocaleDateString("ar-SY");
   const timeStr = now.toLocaleTimeString("ar-SY", { hour: "2-digit", minute: "2-digit" });
@@ -88,7 +89,7 @@ const generateReceiptPDF = async (order, settings, tronAmount = 0) => {
     `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${it.emoji || ""} ${it.itemName}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">×${it.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:left;font-weight:700;color:#c62828">${(it.price * it.qty).toLocaleString()} ${CUR}</td></tr>`
   ).join("");
   const payLabel = order.paymentType === "cash" ? "💵 نقدي" : order.paymentType === "card" ? "💳 بطاقة" : order.paymentType === "tron" ? "💠 ترون" : order.paymentType === "debt" ? "📋 دين" : order.paymentType || "نقدي";
-  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>فاتورة #${order.orderNum||order.id}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;direction:rtl;color:#1a1a2e;background:#fff}.wrapper{max-width:380px;margin:0 auto;padding:24px 20px}.header{text-align:center;border-bottom:2px solid #c62828;padding-bottom:16px;margin-bottom:16px}.header h1{font-size:22px;color:#c62828;margin-bottom:4px}.header p{font-size:12px;color:#666}.meta{display:flex;justify-content:space-between;margin-bottom:12px;font-size:12px;color:#444}table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}.totals{background:#f9f9f9;border-radius:8px;padding:12px;margin-bottom:12px}.totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}.totals .grand{font-size:16px;font-weight:900;color:#c62828;border-top:2px solid #c62828;padding-top:8px;margin-top:4px}.tron{background:#e8f5e9;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#2e7d32;font-weight:700;text-align:center}.footer{text-align:center;border-top:1px dashed #ccc;padding-top:12px;font-size:11px;color:#888}@media print{body{background:white}}</style></head><body><div class="wrapper"><div class="header"><h1>☕ ${cafeName}</h1><p>${signature}</p></div><div class="meta"><span><strong>رقم الفاتورة:</strong> #${order.orderNum||order.id}</span><span>${dateStr} ${timeStr}</span></div>${order.table?`<div class="meta"><span><strong>الطاولة:</strong> ${order.table}</span><span><strong>الزبون:</strong> ${order.customerName||"زبون"}</span></div>`:""}<table><thead><tr style="background:#f0f0f0"><th style="padding:6px 8px;text-align:right">الصنف</th><th style="padding:6px 8px;text-align:center">الكمية</th><th style="padding:6px 8px;text-align:left">السعر</th></tr></thead><tbody>${itemsHTML}</tbody></table><div class="totals">${(order.discount||0)>0?`<div><span>قبل الخصم</span><span>${(order.originalTotal||order.total).toLocaleString()} ${CUR}</span></div><div style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${((order.originalTotal||0)-order.total).toLocaleString()} ${CUR}</span></div>`:""}<div class="grand"><span>الإجمالي</span><span>${(order.total||0).toLocaleString()} ${CUR}</span></div>${tronAmount>0?`<div style="color:#1565c0;margin-top:4px"><span>💠 الترون</span><span>${tronAmount.toLocaleString()} ${CUR}</span></div>`:""}<div style="margin-top:6px;font-size:12px"><span>طريقة الدفع</span><span>${payLabel}</span></div></div>${tronAmount>0?`<div class="tron">💠 مبلغ الترون: ${tronAmount.toLocaleString()} ${CUR}</div>`:""}</div>${order.notes?`<div style="background:#fff9e6;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#795548">📝 ${order.notes}</div>`:""}<div class="footer"><p>شكراً لزيارتكم ☕</p><p style="margin-top:6px">${cafeName} — ${signature}</p></div></div></div><script>window.addEventListener('load',()=>{window.print();});</script></body></html>`;
+  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>فاتورة #${order.orderNum||order.id}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;direction:rtl;color:#1a1a2e;background:#fff}.wrapper{max-width:380px;margin:0 auto;padding:24px 20px}.header{text-align:center;border-bottom:2px solid #c62828;padding-bottom:16px;margin-bottom:16px}.header h1{font-size:22px;color:#c62828;margin-bottom:4px}.header p{font-size:12px;color:#666}.meta{display:flex;justify-content:space-between;margin-bottom:12px;font-size:12px;color:#444}table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}.totals{background:#f9f9f9;border-radius:8px;padding:12px;margin-bottom:12px}.totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}.totals .grand{font-size:16px;font-weight:900;color:#c62828;border-top:2px solid #c62828;padding-top:8px;margin-top:4px}.tron{background:#e8f5e9;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#2e7d32;font-weight:700;text-align:center}.footer{text-align:center;border-top:1px dashed #ccc;padding-top:12px;font-size:11px;color:#888}@media print{body{background:white}}</style></head><body><div class="wrapper"><div class="header"><h1>☕ ${cafeName}</h1><p>${signature}</p></div><div class="meta"><span><strong>رقم الفاتورة:</strong> #${order.orderNum||order.id}</span><span>${dateStr} ${timeStr}</span></div>${order.table?`<div class="meta"><span><strong>الطاولة:</strong> ${order.table}</span><span><strong>الزبون:</strong> ${order.customerName||"زبون"}</span></div>`:""}<table><thead><tr style="background:#f0f0f0"><th style="padding:6px 8px;text-align:right">الصنف</th><th style="padding:6px 8px;text-align:center">الكمية</th><th style="padding:6px 8px;text-align:left">السعر</th></tr></thead><tbody>${itemsHTML}</tbody></table><div class="totals">${(order.discount||0)>0?`<div><span>قبل الخصم</span><span>${(order.originalTotal||order.total).toLocaleString()} ${CUR}</span></div><div style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${((order.originalTotal||0)-order.total).toLocaleString()} ${CUR}</span></div>`:""}<div class="grand"><span>الإجمالي</span><span>${(order.total||0).toLocaleString()} ${CUR}</span></div>${tronAmount>0?`<div style="color:#1565c0;margin-top:4px"><span>💠 الترون</span><span>${tronAmount.toLocaleString()} ${CUR}</span></div>`:""}<div style="margin-top:6px;font-size:12px"><span>طريقة الدفع</span><span>${payLabel}</span></div></div>${tronAmount>0?`<div class="tron">💠 مبلغ الترون: ${tronAmount.toLocaleString()} ${CUR}</div>`:""}</div>${order.notes?`<div style="background:#fff9e6;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#795548">📝 ${order.notes}</div>`:""}<div class="footer"><p>شكراً لزيارتكم ☕</p>${staffName?`<p style="margin-top:4px;font-weight:700">الموظف: ${staffName}</p>`:""}<p style="margin-top:6px">${cafeName} — ${signature}</p></div></div></div><script>window.addEventListener('load',()=>{window.print();});</script></body></html>`;
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const win = window.open(url, "_blank", "width=450,height=700");
@@ -1071,17 +1072,34 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
       </header>
 
       {/* Nav */}
-      <nav style={{background:"var(--card)",borderBottom:"2px solid var(--border)",
-        display:"flex",overflowX:"auto",padding:"0 8px"}} className="scroll-hide">
-        {navItems.map(([t,icon,label])=>(
-          <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
-            background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
-            fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
-            whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
-            <span>{icon}</span>
-            <span className="hide-mobile">{label}</span>
-          </button>
-        ))}
+      <nav style={{background:"var(--card)",borderBottom:"2px solid var(--border)",padding:"0 8px",position:"relative"}}>
+        {/* موبايل: قائمة منسدلة */}
+        <div className="show-mobile-only" style={{padding:"6px 0"}}>
+          <select
+            value={tab}
+            onChange={e=>setTab(e.target.value)}
+            style={{width:"100%",padding:"10px 14px",border:"1.5px solid var(--border)",
+              borderRadius:10,background:"var(--card)",color:"var(--text)",
+              fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",
+              appearance:"none",backgroundImage:"url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%23c62828' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E")",
+              backgroundRepeat:"no-repeat",backgroundPosition:"left 12px center",paddingLeft:32}}>
+            {navItems.map(([t,icon,label])=>(
+              <option key={t} value={t}>{icon} {label}</option>
+            ))}
+          </select>
+        </div>
+        {/* ديسكتوب: تبويبات أفقية */}
+        <div className="hide-mobile" style={{display:"flex",overflowX:"auto"}} >
+          {navItems.map(([t,icon,label])=>(
+            <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
+              background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
+              fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
+              whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
+              <span>{icon}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
       </nav>
 
       {/* Content */}
@@ -1506,12 +1524,32 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         if(!ci) return m;
         return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
       }));
-      // إضافة الزبون لملف الزبائن
+      // إضافة الزبون لملف الزبائن — store.setCustomers يتولى المزامنة مع Supabase تلقائياً
       if(customerName.trim()){
         store.setCustomers(p=>{
           const ex=p.find(c=>c.name===customerName.trim());
-          if(ex) return p.map(c=>c.name===customerName.trim()?{...c,visits:c.visits+1,lastVisit:new Date().toISOString(),orders:[newOrder.id,...(c.orders||[])]}:c);
-          return [{id:"cust_"+Date.now(),name:customerName.trim(),visits:1,lastVisit:new Date().toISOString(),createdAt:new Date().toISOString(),orders:[newOrder.id]},...p];
+          if(ex){
+            const updated={
+              ...ex,
+              visits:(ex.visits||0)+1,
+              totalOrders:(ex.totalOrders||0)+1,
+              totalSpent:(ex.totalSpent||0)+newOrder.total,
+              lastVisit:new Date().toISOString(),
+              orders:[newOrder.id,...(ex.orders||[])],
+            };
+            return p.map(c=>c.name===customerName.trim()?updated:c);
+          }
+          return [{
+            id:"cust_"+Date.now(),
+            name:customerName.trim(),
+            visits:1,
+            totalOrders:1,
+            totalSpent:newOrder.total,
+            lastVisit:new Date().toISOString(),
+            createdAt:new Date().toISOString(),
+            orders:[newOrder.id],
+            phone:"",email:"",notes:"",
+          },...p];
         });
       }
 
@@ -3300,19 +3338,38 @@ function CompLogTab({ store, showToast, dm, settings }) {
 }
 
 // ═══════════════════════════════════
-// CUSTOMER FILE TAB — ملف الزبائن
+// CUSTOMER FILE TAB — ملف الزبائن (مربوط مع Supabase)
 // ═══════════════════════════════════
 function CustomerFileTab({ store, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // 🔵 تحميل الزبائن من Supabase عند فتح التبويب
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    setLoading(true);
+    sbFetch("customers", "last_visit")
+      .then(rows => {
+        if (rows && rows.length > 0) {
+          store.setCustomers(rows.map(r => ({
+            id: r.id, name: r.name, visits: r.visits || 1,
+            lastVisit: r.last_visit, createdAt: r.created_at,
+            orders: r.orders || [],
+          })));
+        }
+      })
+      .catch(e => console.error("sbFetch customers:", e))
+      .finally(() => setLoading(false));
+  }, []);
 
   const customers = (store.customers || []).filter(c =>
     !search || c.name.includes(search)
   ).sort((a, b) => new Date(b.lastVisit) - new Date(a.lastVisit));
 
   const custOrders = selected
-    ? store.orders.filter(o => (o.customerName === selected.name || selected.orders?.includes(o.id)))
+    ? store.orders.filter(o => (o.customerName === selected.name || (selected.orders||[]).includes(o.id)))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     : [];
   const custTotal = custOrders.filter(o => o.status === "paid").reduce((s, o) => s + o.total, 0);
@@ -3327,6 +3384,12 @@ function CustomerFileTab({ store, showToast, dm, settings }) {
         <div className="card" style={{ marginBottom: 16, borderTop: "4px solid #1565c0" }}>
           <div style={{ fontSize: 36, textAlign: "center", marginBottom: 8 }}>👤</div>
           <div style={{ fontWeight: 900, fontSize: 18, textAlign: "center", marginBottom: 4 }}>{selected.name}</div>
+          {SUPABASE_READY && (
+            <div style={{ textAlign: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 11, background: "rgba(46,125,50,.15)", color: "#2e7d32",
+                borderRadius: 8, padding: "3px 10px", fontWeight: 700 }}>☁ مزامن مع السحابة</span>
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
             <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
               <div style={{ fontSize: 11, color: "var(--sub)" }}>الزيارات</div>
@@ -3367,10 +3430,23 @@ function CustomerFileTab({ store, showToast, dm, settings }) {
 
   return (
     <div className="fade-in">
-      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>👥 ملف الزبائن</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 900 }}>👥 ملف الزبائن</h2>
+        {SUPABASE_READY && (
+          <span style={{ fontSize: 11, background: loading ? "rgba(249,168,37,.15)" : "rgba(46,125,50,.15)",
+            color: loading ? "#f9a825" : "#2e7d32", borderRadius: 8, padding: "4px 10px", fontWeight: 700 }}>
+            {loading ? "🔄 جارٍ التحميل..." : `☁ متصل • ${customers.length} زبون`}
+          </span>
+        )}
+      </div>
       <input className="input" placeholder="🔍 ابحث عن زبون..." value={search}
         onChange={e => setSearch(e.target.value)} style={{ marginBottom: 14 }} />
-      {!customers.length ? (
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🔄</div>
+          <div>جارٍ تحميل بيانات الزبائن...</div>
+        </div>
+      ) : !customers.length ? (
         <div style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
           <div style={{ fontSize: 48 }}>👥</div>
           <div style={{ marginTop: 10 }}>لا يوجد زبائن مسجلون بعد</div>
