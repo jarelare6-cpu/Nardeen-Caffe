@@ -253,11 +253,13 @@ const sbWrite = {
   customer: (c) => sbUpsert("customers", {
     id: c.id, name: c.name || "",
     phone: c.phone || "", email: c.email || "",
+    visits: c.visits || 0,
     total_orders: c.totalOrders || 0,
     total_spent: c.totalSpent || 0,
     notes: c.notes || "",
     created_at: c.createdAt || new Date().toISOString(),
     last_visit: c.lastVisit || null,
+    orders: c.orders || [],
   }),
   deleteCustomer: (id) => sbDelete("customers", id),
 };
@@ -346,10 +348,12 @@ const mapCompLog = c => ({
 });
 const mapCustomer = c => ({
   ...c,
+  visits:      c.visits       ?? 0,
   totalOrders: c.total_orders ?? c.totalOrders ?? 0,
   totalSpent:  c.total_spent  ?? c.totalSpent  ?? 0,
   createdAt:   c.created_at   ?? c.createdAt   ?? new Date().toISOString(),
   lastVisit:   c.last_visit   ?? c.lastVisit   ?? null,
+  orders:      c.orders       ?? [],
 });
 
 // ══════════════════════════════════════════════════════════════
