@@ -60,6 +60,8 @@ const PERMISSIONS = {
   expenses:     ["admin","cashier"],
   settings:     ["admin"],
   receipts:     ["admin","cashier"],
+  complog:      ["admin","cashier"],
+  customers:    ["admin","cashier"],
   customer_home:["customer"],
   myorders:     ["customer"],
 };
@@ -122,6 +124,8 @@ const THEMES = {
   purple:  { primary:"#6a1b9a", secondary:"#4a148c", accent:"#ce93d8" },
   blue:    { primary:"#1565c0", secondary:"#0d47a1", accent:"#42a5f5" },
   gold:    { primary:"#f57f17", secondary:"#e65100", accent:"#ffd54f" },
+  teal:    { primary:"#00897b", secondary:"#00695c", accent:"#80cbc4" },
+  dark:    { primary:"#c62828", secondary:"#1565c0", accent:"#f9a825" },
 };
 
 const GlobalStyle = ({dm,theme="default"}) => {
@@ -142,6 +146,7 @@ const GlobalStyle = ({dm,theme="default"}) => {
       --radius:14px;
     }
     body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);color:var(--text);overflow-x:hidden}
+    ${theme==="dark"?":root{--bg:#080810;--card:#0e0e1a;--card2:#141420;--border:#1e1e2e;--text:#e8eaf6;--sub:#7070a0;--shadow:0 4px 24px rgba(0,0,0,.7);}":""}
     button{cursor:pointer;font-family:inherit;direction:rtl}
     input,select,textarea{font-family:inherit;direction:rtl;background:var(--card);color:var(--text)}
     .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
@@ -294,6 +299,27 @@ export default function NardeenCaffe(){
       id:Date.now().toString(),msg,targetRoles,orderId,
       createdAt:new Date().toISOString(),read:[]
     },...p.slice(0,49)]);
+    // صوت الإشعار
+    if(store.settings?.soundEnabled){
+      try{
+        const tone=store.settings?.soundTone||"bell";
+        const ctx=new(window.AudioContext||window.webkitAudioContext)();
+        const osc=ctx.createOscillator();
+        const gain=ctx.createGain();
+        osc.connect(gain);gain.connect(ctx.destination);
+        if(tone==="bell"){osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.setValueAtTime(660,ctx.currentTime+0.1);}
+        else if(tone==="chime"){osc.frequency.setValueAtTime(1046,ctx.currentTime);osc.frequency.setValueAtTime(784,ctx.currentTime+0.15);}
+        else if(tone==="ping"){osc.frequency.setValueAtTime(1200,ctx.currentTime);}
+        else{osc.frequency.setValueAtTime(440,ctx.currentTime);}
+        gain.gain.setValueAtTime(0.3,ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4);
+        osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.4);
+      }catch{}
+    }
+    // إشعار المتصفح
+    if(store.settings?.notifyBrowser&&Notification?.permission==="granted"){
+      new Notification("☕ ناردين كافيه",{body:msg,icon:"/favicon.ico"}).catch(()=>{});
+    }
   },[store]);
 
   const unreadCount=store.notifications.filter(n=>
@@ -955,13 +981,15 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
     ["order","➕","طلب جديد"],
     ["orders","📋","الطلبات"],
     ["cashier","💰","الكاشير"],
+    ["customers","👥","الزبائن"],
+    ["complog","🎁","الضيافة"],
     ["debts","💳","الديون"],
     ["expenses","📒","المصاريف"],
     ["bar","🥤","البار"],
     ["hookah","💨","الأراكيل"],
     ["menu","🍽","المنيو"],
     ["tables","🪑","الطاولات"],
-    ["staff","👥","الموظفون"],
+    ["staff","👨‍💼","الموظفون"],
     ["reports","📈","التقارير"],
     ["receipts","🧾","الفواتير"],
     ["settings","⚙","الإعدادات"],
@@ -1073,6 +1101,8 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
         {tab==="receipts"   &&canAccess(user.role,"receipts")  &&<ReceiptsTab    store={store} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="complog"    &&canAccess(user.role,"complog")   &&<CompLogTab     store={store} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="customers"  &&canAccess(user.role,"customers") &&<CustomerFileTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")  &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
         </ErrorBoundary>
       </main>
@@ -1209,24 +1239,33 @@ function InventoryTab({store,settings}){
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
   const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
 
-  // مصاريف عادية (تدخل الجرد)
-  const primaryExp=(store.expenses||[]).filter(e=>!e.isSecondary&&new Date(e.date)>=today);
+  // الترون اليوم
+  const tronToday=(store.receipts||[]).filter(r=>r.tronAmount>0&&new Date(r.createdAt)>=today).reduce((s,r)=>s+r.tronAmount,0);
+
+  // مصاريف عادية (تدخل الجرد) — الضيافة لا تدخل المصاريف بعد الآن
+  const primaryExp=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=today);
   const primaryTotal=primaryExp.reduce((s,e)=>s+e.amount,0);
 
   // مصاريف ثانوية (لا تدخل الجرد)
   const secondaryExp=(store.expenses||[]).filter(e=>e.isSecondary&&new Date(e.date)>=today);
   const secondaryTotal=secondaryExp.reduce((s,e)=>s+e.amount,0);
 
-  const net=todayRevenue-primaryTotal;
+  // الجرد = الإجمالي - المصروف اليومي + الترون
+  const net=todayRevenue-primaryTotal+tronToday;
+
+  // سجل الضيافة اليوم
+  const todayComp=(store.compLog||[]).filter(c=>new Date(c.date)>=today);
+  const compTotal=todayComp.reduce((s,c)=>s+c.amount,0);
 
   const [showSec,setShowSec]=useState(false);
+  const [showComp,setShowComp]=useState(false);
 
   return(
     <div className="fade-in">
       <h2 style={{fontSize:18,fontWeight:900,marginBottom:16}}>📊 الجرد اليومي</h2>
 
       {/* بطاقات الملخص */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:18}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:18}}>
         <div className="card" style={{borderTop:"4px solid #2e7d32",textAlign:"center"}}>
           <div style={{fontSize:22,marginBottom:4}}>💵</div>
           <div style={{fontSize:11,color:"var(--sub)"}}>الإيرادات</div>
@@ -1238,6 +1277,11 @@ function InventoryTab({store,settings}){
           <div style={{fontSize:11,color:"var(--sub)"}}>المصاريف</div>
           <div style={{fontSize:18,fontWeight:900,color:"#c62828"}}>{primaryTotal.toLocaleString()} {CUR}</div>
           <div style={{fontSize:11,color:"var(--sub)"}}>{primaryExp.length} بند</div>
+        </div>
+        <div className="card" style={{borderTop:"4px solid #6a1b9a",textAlign:"center"}}>
+          <div style={{fontSize:22,marginBottom:4}}>💠</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>الترون</div>
+          <div style={{fontSize:18,fontWeight:900,color:"#6a1b9a"}}>{tronToday.toLocaleString()} {CUR}</div>
         </div>
         <div className="card" style={{borderTop:`4px solid ${net>=0?"#1565c0":"#e65100"}`,textAlign:"center"}}>
           <div style={{fontSize:22,marginBottom:4}}>{net>=0?"📈":"📉"}</div>
@@ -1291,8 +1335,35 @@ function InventoryTab({store,settings}){
           </span>
         </div>
         <div style={{fontSize:12,color:"var(--sub)",marginTop:4}}>
-          {todayRevenue.toLocaleString()} إيرادات — {primaryTotal.toLocaleString()} مصاريف
+          {todayRevenue.toLocaleString()} إيرادات − {primaryTotal.toLocaleString()} مصاريف + {tronToday.toLocaleString()} ترون
         </div>
+      </div>
+
+      {/* سجل الضيافة اليوم */}
+      <div className="card" style={{borderTop:"4px solid #00897b",marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:showComp?12:0}}>
+          <h3 style={{fontSize:14,fontWeight:800,color:"#00897b"}}>🎁 الضيافة اليوم ({todayComp.length}) — {compTotal.toLocaleString()} {CUR}</h3>
+          <button onClick={()=>setShowComp(s=>!s)}
+            style={{padding:"4px 12px",borderRadius:8,border:"none",
+              background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+            {showComp?"إخفاء":"عرض"}
+          </button>
+        </div>
+        {showComp&&(
+          <>
+            {todayComp.length===0?<p style={{color:"var(--sub)",fontSize:13}}>لا توجد ضيافة اليوم</p>:
+              todayComp.map(c=>(
+                <div key={c.id} style={{padding:"8px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontWeight:700}}>👤 {c.customerName} {c.tableNum?`• طاولة ${c.tableNum}`:""}</span>
+                    <span style={{fontWeight:900,color:"#00897b"}}>{c.amount.toLocaleString()} {CUR}</span>
+                  </div>
+                  <div style={{fontSize:11,color:"var(--sub)"}}>🎁 {c.items.join("، ")} • بواسطة {c.createdBy}</div>
+                </div>
+              ))
+            }
+          </>
+        )}
       </div>
 
       {/* المصاريف الثانوية */}
@@ -1352,9 +1423,15 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [customerName,setCustomerName]=useState("");
   const [discount,setDiscount]=useState(0);
   const [submitting,setSubmitting]=useState(false);
+  const [orderMode,setOrderMode]=useState("new"); // "new" | "addto"
+  const [targetOrderId,setTargetOrderId]=useState(""); // للإضافة لطلب موجود
+  const [tableError,setTableError]=useState("");
   const CUR=settings?.currency||"ل.س";
   const maxDiscount=settings?.maxDiscount??50;
   const isAdmin=user.role===ROLES.ADMIN;
+
+  // الطلبات النشطة الصالحة للإضافة
+  const activeOrders=store.orders.filter(o=>!["paid","cancelled","complimentary"].includes(o.status));
 
   const filtered=store.menu.filter(m=>{
     const ms=m.name.toLowerCase().includes(search.toLowerCase())||(m.nameEn||"").toLowerCase().includes(search.toLowerCase());
@@ -1379,7 +1456,37 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const finalTotal=cartTotal-discountAmt;
 
   const placeOrder=()=>{
+    setTableError("");
     if(!cart.length){showToast("السلة فارغة","error");return}
+    if(!tableNum.trim()){setTableError("⚠ رقم الطاولة مطلوب");return}
+
+    if(orderMode==="addto"){
+      // إضافة لطلب موجود
+      if(!targetOrderId){showToast("⚠ اختر الطلب المراد الإضافة إليه","error");return}
+      const target=store.orders.find(o=>o.id===targetOrderId);
+      if(!target){showToast("الطلب غير موجود","error");return}
+      const mergedItems=[...target.items];
+      cart.forEach(ci=>{
+        const ex=mergedItems.find(i=>i.itemId===ci.itemId);
+        if(ex) ex.qty+=ci.qty;
+        else mergedItems.push({...ci});
+      });
+      const newTotal=mergedItems.reduce((s,i)=>s+i.price*i.qty,0);
+      store.setOrders(p=>p.map(o=>o.id===targetOrderId?{...o,items:mergedItems,total:newTotal,status:"pending"}:o));
+      store.setMenu(p=>p.map(m=>{
+        const ci=cart.find(c=>c.itemId===m.id);
+        if(!ci) return m;
+        return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
+      }));
+      const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
+      const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
+      if(hasDrinks) addNotification(`🍹 إضافة للطلب #${target.orderNum} — البار`,[ROLES.BAR],targetOrderId);
+      if(hasHookah) addNotification(`💨 إضافة للطلب #${target.orderNum} — أراكيل`,[ROLES.HOOKAH],targetOrderId);
+      addNotification(`📋 تم إضافة أصناف للطلب #${target.orderNum}`,[ROLES.CASHIER,ROLES.ADMIN],targetOrderId);
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);setTargetOrderId("");
+      showToast(`✓ تم الإضافة للطلب #${target.orderNum}`);
+      return;
+    }
 
     setSubmitting(true);
     setTimeout(()=>{
@@ -1387,7 +1494,7 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       const newOrder={
         id:Date.now().toString(),orderNum,
         customerId:user.id,customerName:customerName||user.name,
-        workerName:user.name,table:tableNum,notes,items:cart,
+        workerName:user.name,table:tableNum.trim(),notes,items:cart,
         total:finalTotal,originalTotal:cartTotal,discount,
         paymentType:"cash",
         status:ORDER_STATUS.PENDING,
@@ -1399,12 +1506,22 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         if(!ci) return m;
         return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
       }));
+      // إضافة الزبون لملف الزبائن
+      if(customerName.trim()){
+        store.setCustomers(p=>{
+          const ex=p.find(c=>c.name===customerName.trim());
+          if(ex) return p.map(c=>c.name===customerName.trim()?{...c,visits:c.visits+1,lastVisit:new Date().toISOString(),orders:[newOrder.id,...(c.orders||[])]}:c);
+          return [{id:"cust_"+Date.now(),name:customerName.trim(),visits:1,lastVisit:new Date().toISOString(),createdAt:new Date().toISOString(),orders:[newOrder.id]},...p];
+        });
+      }
 
       const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
       const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
       if(hasDrinks) addNotification(`🍹 طلب #${orderNum} للبار${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.BAR],newOrder.id);
       if(hasHookah) addNotification(`💨 طلب نرجيلة #${orderNum}${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.HOOKAH],newOrder.id);
       addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
+      // تحديث حالة الطاولة
+      store.setTables(p=>p.map(t=>String(t.number)===String(tableNum.trim())?{...t,status:"occupied",openedAt:t.openedAt||new Date().toISOString()}:t));
       setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
       setSubmitting(false);
       saveReceiptRecord(newOrder, settings, store, 0);
@@ -1467,8 +1584,33 @@ function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
             🛒 السلة {cartCount>0&&<span style={{background:"rgba(255,255,255,.3)",borderRadius:20,padding:"2px 8px",fontSize:12}}>{cartCount}</span>}
           </div>
         </div>
+        {/* وضع الطلب */}
+        <div style={{padding:"10px 12px",borderBottom:"1px solid var(--border)",display:"flex",gap:6}}>
+          <button onClick={()=>setOrderMode("new")}
+            style={{flex:1,padding:"8px 4px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",
+              background:orderMode==="new"?"#c62828":"var(--card2)",color:orderMode==="new"?"#fff":"var(--sub)"}}>
+            ➕ طلب جديد
+          </button>
+          <button onClick={()=>setOrderMode("addto")}
+            style={{flex:1,padding:"8px 4px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",
+              background:orderMode==="addto"?"#1565c0":"var(--card2)",color:orderMode==="addto"?"#fff":"var(--sub)"}}>
+            📋 إضافة لطلب
+          </button>
+        </div>
         <div style={{padding:"10px 12px",borderBottom:"1px solid var(--border)",display:"flex",flexDirection:"column",gap:8}}>
-          <input className="input" placeholder="🪑 رقم الطاولة" value={tableNum} onChange={e=>setTableNum(e.target.value)} style={{fontSize:13}}/>
+          {orderMode==="addto"&&(
+            <select className="input" value={targetOrderId} onChange={e=>setTargetOrderId(e.target.value)} style={{fontSize:13}}>
+              <option value="">— اختر الطلب —</option>
+              {activeOrders.map(o=>(
+                <option key={o.id} value={o.id}>#{o.orderNum} — {o.customerName} • ط{o.table}</option>
+              ))}
+            </select>
+          )}
+          <div>
+            <input className="input" placeholder="🪑 رقم الطاولة *" value={tableNum} onChange={e=>{setTableNum(e.target.value);setTableError("");}}
+              style={{fontSize:13,border:tableError?"2px solid #c62828":undefined}}/>
+            {tableError&&<div style={{color:"#c62828",fontSize:11,marginTop:3,fontWeight:700}}>{tableError}</div>}
+          </div>
           <input className="input" placeholder="👤 اسم الزبون (اختياري)" value={customerName} onChange={e=>setCustomerName(e.target.value)} style={{fontSize:13}}/>
           <textarea className="input" placeholder="📝 ملاحظات..." value={notes} onChange={e=>setNotes(e.target.value)} style={{resize:"none",height:50,fontSize:13}}/>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
@@ -1723,21 +1865,31 @@ function CashierTab({ store, user, showToast, dm, settings }) {
     , [store.orders, today]);
   const readyOrders = useMemo(() => store.orders.filter(o => o.status === "ready"), [store.orders]);
   const todayExpenses = useMemo(() =>
-    (store.expenses || []).filter(e => !e.isSecondary && new Date(e.date) >= today).reduce((s, e) => s + e.amount, 0)
+    (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && new Date(e.date) >= today).reduce((s, e) => s + e.amount, 0)
     , [store.expenses, today]);
   const tronToday = useMemo(() =>
     (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today).reduce((s, r) => s + r.tronAmount, 0)
     , [store.receipts, today]);
+  // الجرد = إيرادات − مصاريف + ترون
+  const dailyInventory = todayRevenue - todayExpenses + tronToday;
 
+  const [customerFilter, setCustomerFilter] = useState(""); // فلتر الزبون
   const [discounts, setDiscounts] = useState({});
-  const [tronAmounts, setTronAmounts] = useState({}); // orderId → tronAmount
+  const [tronAmounts, setTronAmounts] = useState({});
   const [debtModal, setDebtModal] = useState(null);
   const [debtNameInput, setDebtNameInput] = useState("");
   const [debtNameError, setDebtNameError] = useState("");
   const [compModal, setCompModal] = useState(null);
   const [compItems, setCompItems] = useState([]);
-  const [tronModal, setTronModal] = useState(null); // order for tron payment
+  const [tronModal, setTronModal] = useState(null);
   const [tronInput, setTronInput] = useState("");
+  const [partialModal, setPartialModal] = useState(null); // دفع جزئي
+  const [partialInput, setPartialInput] = useState("");
+
+  // تطبيق فلتر الزبون
+  const filteredReady = readyOrders.filter(o =>
+    !customerFilter || (o.customerName || "").includes(customerFilter)
+  );
 
   const autoFreeTable = (tableNum, updatedOrders) => {
     if (!tableNum) return;
@@ -1814,6 +1966,8 @@ function CashierTab({ store, user, showToast, dm, settings }) {
 
   const confirmComp = (fullComp) => {
     const order = compModal;
+    // منع الضيافة المكررة — تحقق من عناصر الطلب التي أُعطيت ضيافة مسبقاً
+    const alreadyComp = (order.items || []).filter(it => it.complimentary || it.compQty > 0);
     let compAmt = 0;
     let updatedItems = [...order.items];
     if (fullComp) {
@@ -1823,25 +1977,30 @@ function CashierTab({ store, user, showToast, dm, settings }) {
       updatedItems = order.items.map((it, i) => {
         const ci = compItems[i];
         if (!ci?.selected || !ci.qty) return it;
-        compAmt += it.price * (ci.qty || it.qty);
-        return { ...it, compQty: ci.qty, complimentary: ci.qty >= it.qty };
+        // منع ضيافة نفس الصنف مرتين
+        if (it.complimentary || it.compQty >= it.qty) return it;
+        compAmt += it.price * Math.min(ci.qty, it.qty - (it.compQty || 0));
+        return { ...it, compQty: Math.min((it.compQty || 0) + ci.qty, it.qty), complimentary: (it.compQty || 0) + ci.qty >= it.qty };
       });
     }
+    if (compAmt <= 0) { showToast("⚠ لا توجد أصناف جديدة للضيافة", "warn"); setCompModal(null); return; }
     const remaining = order.total - compAmt;
     const updated = store.orders.map(o => o.id === order.id ? {
       ...o, status: remaining <= 0 ? "complimentary" : "ready",
-      items: updatedItems, compAmount: compAmt,
-      total: Math.max(0, remaining), originalTotal: order.total,
+      items: updatedItems, compAmount: (o.compAmount||0) + compAmt,
+      total: Math.max(0, remaining), originalTotal: o.originalTotal || order.total,
       isComplimentary: remaining <= 0,
       paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
     } : o);
     store.setOrders(() => updated);
-    store.setExpenses(p => [{
+    // تسجيل في سجل الضيافة فقط (لا في المصاريف)
+    store.setCompLog(p => [{
       id: "comp" + Date.now(),
-      description: `ضيافة — ${order.customerName || "زبون"} طاولة ${order.table || ""}`,
-      label: "ضيافة", amount: compAmt, category: "complimentary",
-      date: new Date().toISOString(), createdBy: user.name, by: user.name,
-      orderId: order.id, orderNum: order.orderNum, isComplimentary: true,
+      customerName: order.customerName || "زبون",
+      tableNum: order.table || "",
+      items: updatedItems.filter(it => it.complimentary || it.compQty > 0).map(it => it.itemName),
+      amount: compAmt, date: new Date().toISOString(),
+      createdBy: user.name, orderId: order.id, orderNum: order.orderNum,
     }, ...p]);
     if (remaining <= 0) autoFreeTable(order.table, updated);
     showToast(`🎁 تم تسجيل الضيافة — ${compAmt.toLocaleString()} ${CUR}`, "warn");
@@ -1860,7 +2019,7 @@ function CashierTab({ store, user, showToast, dm, settings }) {
         {[
           ["💰", "إيرادات اليوم", todayRevenue, "#2e7d32"],
           ["📋", "طلبات جاهزة", readyOrders.length, "#1565c0"],
-          ["📒", "مصاريف اليوم", todayExpenses, "#e65100"],
+          ["🧾", "الجرد اليومي", dailyInventory, dailyInventory>=0?"#6a1b9a":"#e65100"],
           ["💠", "الترون اليوم", tronToday, "#6a1b9a"],
         ].map(([em, lbl, val, col]) => (
           <div key={lbl} className="card" style={{ borderTop: `4px solid ${col}`, textAlign: "center" }}>
@@ -1873,16 +2032,28 @@ function CashierTab({ store, user, showToast, dm, settings }) {
         ))}
       </div>
 
+      <div style={{ marginBottom: 14, display: "flex", gap: 8, alignItems: "center" }}>
+        <input className="input" placeholder="🔍 فلترة بالزبون..." value={customerFilter}
+          onChange={e => setCustomerFilter(e.target.value)}
+          style={{ maxWidth: 240, fontSize: 13 }} />
+        {customerFilter && (
+          <button onClick={() => setCustomerFilter("")}
+            style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "var(--card2)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            ✕ إلغاء
+          </button>
+        )}
+      </div>
+
       <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 12, color: "#c62828" }}>
-        ⏳ طلبات جاهزة للدفع ({readyOrders.length})
+        ⏳ طلبات جاهزة للدفع ({filteredReady.length})
       </h3>
 
-      {!readyOrders.length ? (
+      {!filteredReady.length ? (
         <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
           <div>لا توجد طلبات جاهزة في الوقت الحالي</div>
         </div>
-      ) : readyOrders.map(order => {
+      ) : filteredReady.map(order => {
         const disc = discounts[order.id] || 0;
         const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
         const finalTotal = order.total - discAmt;
@@ -1956,6 +2127,10 @@ function CashierTab({ store, user, showToast, dm, settings }) {
                   💠 ترون
                 </button>
               )}
+              <button onClick={() => { setPartialInput(""); setPartialModal(order); }}
+                style={{ flex: 1, minWidth: 70, background: "rgba(230,81,0,.15)", color: "#e65100", border: "1.5px solid rgba(230,81,0,.3)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                💰 جزئي
+              </button>
               <button onClick={() => openComp(order)}
                 style={{ flex: 1, minWidth: 60, background: "rgba(0,137,123,.15)", color: "#00897b", border: "1.5px solid rgba(0,137,123,.25)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 🎁 ضيافة
@@ -1968,6 +2143,56 @@ function CashierTab({ store, user, showToast, dm, settings }) {
           </div>
         );
       })}
+
+      {/* Partial Payment Modal */}
+      {partialModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", fontSize: 44, marginBottom: 10 }}>💰</div>
+            <h3 style={{ textAlign: "center", fontWeight: 900, marginBottom: 4 }}>دفع جزئي</h3>
+            <p style={{ textAlign: "center", fontSize: 13, color: "var(--sub)", marginBottom: 14 }}>
+              إجمالي الطلب: <strong>{partialModal.total.toLocaleString()} {CUR}</strong>
+            </p>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>المبلغ المدفوع الآن ({CUR})</label>
+            <input className="input" type="number" min="0" max={partialModal.total} value={partialInput}
+              autoFocus onChange={e => setPartialInput(e.target.value)}
+              style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 8 }} />
+            {partialInput && +partialInput < partialModal.total && (
+              <div style={{ background: "rgba(230,81,0,.1)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 13, color: "#e65100", fontWeight: 700 }}>
+                المتبقي: {(partialModal.total - +partialInput).toLocaleString()} {CUR} — سيُحوَّل لدين
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => {
+                const paid = Math.min(Math.max(0, +partialInput || 0), partialModal.total);
+                if (paid <= 0) { showToast("أدخل مبلغاً صحيحاً", "error"); return; }
+                if (paid >= partialModal.total) { markPaid(partialModal, "cash"); setPartialModal(null); return; }
+                const remaining = partialModal.total - paid;
+                // دفع جزئي: الباقي يصبح دين
+                const updated = store.orders.map(o => o.id === partialModal.id ? {
+                  ...o, status: "paid", paymentStatus: "partial",
+                  paymentType: "cash", paidAt: new Date().toISOString(),
+                  paidBy: user.id, paidByName: user.name,
+                  partialPaid: paid, total: paid,
+                } : o);
+                store.setOrders(() => updated);
+                store.setCashLog(p => [{ id: Date.now().toString(), orderId: partialModal.id, orderNum: partialModal.orderNum, amount: paid, at: new Date().toISOString(), by: user.name, type: "partial" }, ...p]);
+                store.setDebts(p => [{ id: "d" + Date.now(), orderId: partialModal.id, orderNum: partialModal.orderNum, customerName: partialModal.customerName || "زبون", amount: remaining, remaining, date: new Date().toISOString(), settled: false, settledAt: null, createdBy: user.name, notes: `دفع جزئي — دفع ${paid.toLocaleString()} ${CUR}` }, ...p]);
+                saveReceiptRecord({ ...partialModal, total: paid, paymentType: "cash" }, settings, store, 0);
+                autoFreeTable(partialModal.table, updated);
+                showToast(`✓ دفع جزئي ${paid.toLocaleString()} ${CUR} — باقي ${remaining.toLocaleString()} ${CUR} دين`);
+                setPartialModal(null);
+              }} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#e65100", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                ✓ تأكيد الدفع الجزئي
+              </button>
+              <button onClick={() => setPartialModal(null)}
+                style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tron Modal */}
       {tronModal && (
@@ -2667,6 +2892,8 @@ function TablesTab({ store, user, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const canManage = user && ["admin", "cashier"].includes(user.role);
   const isAdmin = user?.role === "admin";
+  const alertMinutes = settings?.tableAlertMinutes || 60;
+  const tableTimerAlert = settings?.tableTimerAlert || false;
 
   const toggleStatus = (id) => store.setTables(p => p.map(t =>
     t.id === id ? {
@@ -2733,8 +2960,14 @@ function TablesTab({ store, user, showToast, dm, settings }) {
       const t = setInterval(() => setElapsed(e => e + 1), 1000);
       return () => clearInterval(t);
     }, []);
-    const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60);
-    return <span style={{ fontSize: 11, color: "#f9a825", fontWeight: 700 }}>⏱ {h > 0 ? `${h}س ` : ""}{m}د</span>;
+    const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
+    const overLimit = tableTimerAlert && m + h * 60 >= alertMinutes;
+    return (
+      <span style={{ fontSize: 11, color: overLimit ? "#c62828" : "#f9a825", fontWeight: 700,
+        background: overLimit ? "rgba(198,40,40,.12)" : "transparent", borderRadius: 6, padding: overLimit ? "2px 6px" : "0" }}>
+        {overLimit ? "⚠ تجاوز الحد! " : "⏱ "}{h > 0 ? `${h}س ` : ""}{m}د
+      </span>
+    );
   };
 
   const activeOrders = (num) => store.orders.filter(o =>
@@ -2840,10 +3073,33 @@ function TablesTab({ store, user, showToast, dm, settings }) {
                   </div>
                 )}
                 {canManage && t.status === "occupied" && (
-                  <button onClick={e => { e.stopPropagation(); setClearModal(t); }}
-                    style={{ width: "100%", marginTop: 6, background: "rgba(198,40,40,.1)", border: "1.5px solid rgba(198,40,40,.25)", borderRadius: 8, padding: "6px", fontSize: 11, color: "#c62828", fontWeight: 700, cursor: "pointer" }}>
-                    🗑 تفريغ الطاولة
-                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button onClick={e => { e.stopPropagation();
+                        // دفع كامل الطاولة
+                        const tOrders = orders.filter(o => o.status === "ready");
+                        if (!tOrders.length) { showToast("لا توجد طلبات جاهزة للدفع", "warn"); return; }
+                        if (window.confirm(`دفع كامل طاولة ${t.number}؟ (${total.toLocaleString()} ${CUR})`)) {
+                          const now = new Date().toISOString();
+                          const updated = store.orders.map(o =>
+                            tOrders.find(x => x.id === o.id)
+                              ? { ...o, status: "paid", paymentType: "cash", paidAt: now }
+                              : o
+                          );
+                          store.setOrders(() => updated);
+                          store.setTables(p => p.map(tb => tb.id === t.id ? { ...tb, status: "free", openedAt: null } : tb));
+                          showToast(`✓ تم دفع طاولة ${t.number} — ${total.toLocaleString()} ${CUR}`);
+                        }
+                      }}
+                        style={{ flex: 1, background: "rgba(46,125,50,.15)", border: "1.5px solid rgba(46,125,50,.3)", borderRadius: 7, padding: "5px 4px", fontSize: 10, color: "#2e7d32", fontWeight: 700, cursor: "pointer" }}>
+                        💵 دفع كامل
+                      </button>
+                      <button onClick={e => { e.stopPropagation(); setClearModal(t); }}
+                        style={{ flex: 1, background: "rgba(198,40,40,.1)", border: "1.5px solid rgba(198,40,40,.25)", borderRadius: 7, padding: "5px 4px", fontSize: 10, color: "#c62828", fontWeight: 700, cursor: "pointer" }}>
+                        🗑 تفريغ
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             );
@@ -2854,6 +3110,170 @@ function TablesTab({ store, user, showToast, dm, settings }) {
 }
 
 
+
+// ═══════════════════════════════════
+// COMP LOG TAB — سجل الضيافة
+// ═══════════════════════════════════
+function CompLogTab({ store, showToast, dm, settings }) {
+  const CUR = settings?.currency || "ل.س";
+  const [period, setPeriod] = useState("today");
+  const [search, setSearch] = useState("");
+
+  const getStart = () => {
+    const d = new Date();
+    if (period === "today") { d.setHours(0, 0, 0, 0); return d; }
+    if (period === "week") { d.setDate(d.getDate() - 7); return d; }
+    if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
+    return new Date(0);
+  };
+
+  const logs = (store.compLog || [])
+    .filter(c => new Date(c.date) >= getStart())
+    .filter(c => !search || c.customerName.includes(search))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const total = logs.reduce((s, c) => s + c.amount, 0);
+
+  return (
+    <div className="fade-in">
+      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>🎁 سجل الضيافة</h2>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l]) => (
+          <button key={v} onClick={() => setPeriod(v)}
+            style={{ padding: "7px 14px", borderRadius: 20, border: "none", cursor: "pointer",
+              background: period === v ? "#00897b" : "var(--card2)", color: period === v ? "#fff" : "var(--sub)",
+              fontWeight: 700, fontSize: 12 }}>
+            {l}
+          </button>
+        ))}
+      </div>
+      <input className="input" placeholder="🔍 ابحث باسم الزبون..." value={search}
+        onChange={e => setSearch(e.target.value)} style={{ marginBottom: 12 }} />
+      <div className="card" style={{ marginBottom: 14, borderTop: "4px solid #00897b", textAlign: "center" }}>
+        <div style={{ fontSize: 13, color: "var(--sub)" }}>إجمالي الضيافة</div>
+        <div style={{ fontSize: 22, fontWeight: 900, color: "#00897b" }}>{total.toLocaleString()} {CUR}</div>
+        <div style={{ fontSize: 11, color: "var(--sub)" }}>{logs.length} سجل</div>
+      </div>
+      {!logs.length ? (
+        <div style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
+          <div style={{ fontSize: 48 }}>🎁</div>
+          <div style={{ marginTop: 10 }}>لا توجد سجلات ضيافة</div>
+        </div>
+      ) : logs.map(c => (
+        <div key={c.id} className="card" style={{ marginBottom: 10, borderRight: "4px solid #00897b" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>👤 {c.customerName}</div>
+              <div style={{ fontSize: 11, color: "var(--sub)" }}>
+                {c.tableNum ? `طاولة ${c.tableNum} • ` : ""}طلب #{c.orderNum} • {c.createdBy}
+              </div>
+            </div>
+            <span style={{ fontWeight: 900, color: "#00897b", fontSize: 15 }}>{c.amount.toLocaleString()} {CUR}</span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--sub)" }}>
+            🍽 {(c.items || []).join("، ")}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>
+            {new Date(c.date).toLocaleString("ar-SY")}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════
+// CUSTOMER FILE TAB — ملف الزبائن
+// ═══════════════════════════════════
+function CustomerFileTab({ store, showToast, dm, settings }) {
+  const CUR = settings?.currency || "ل.س";
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(null);
+
+  const customers = (store.customers || []).filter(c =>
+    !search || c.name.includes(search)
+  ).sort((a, b) => new Date(b.lastVisit) - new Date(a.lastVisit));
+
+  const custOrders = selected
+    ? store.orders.filter(o => (o.customerName === selected.name || selected.orders?.includes(o.id)))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    : [];
+  const custTotal = custOrders.filter(o => o.status === "paid").reduce((s, o) => s + o.total, 0);
+
+  if (selected) {
+    return (
+      <div className="fade-in">
+        <button onClick={() => setSelected(null)}
+          style={{ background: "var(--card2)", border: "none", borderRadius: 10, padding: "8px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 16 }}>
+          ← رجوع
+        </button>
+        <div className="card" style={{ marginBottom: 16, borderTop: "4px solid #1565c0" }}>
+          <div style={{ fontSize: 36, textAlign: "center", marginBottom: 8 }}>👤</div>
+          <div style={{ fontWeight: 900, fontSize: 18, textAlign: "center", marginBottom: 4 }}>{selected.name}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 12 }}>
+            <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--sub)" }}>الزيارات</div>
+              <div style={{ fontWeight: 900, fontSize: 20, color: "#1565c0" }}>{selected.visits}</div>
+            </div>
+            <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--sub)" }}>إجمالي المبلغ</div>
+              <div style={{ fontWeight: 900, fontSize: 14, color: "#2e7d32" }}>{custTotal.toLocaleString()} {CUR}</div>
+            </div>
+            <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--sub)" }}>آخر زيارة</div>
+              <div style={{ fontWeight: 700, fontSize: 11, color: "var(--sub)" }}>{new Date(selected.lastVisit).toLocaleDateString("ar-SY")}</div>
+            </div>
+          </div>
+        </div>
+        <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>📋 فواتيره ({custOrders.length})</h3>
+        {custOrders.map(o => (
+          <div key={o.id} className="card" style={{ marginBottom: 10, borderRight: `4px solid ${o.status === "paid" ? "#2e7d32" : "#ff9800"}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontWeight: 900 }}>#{o.orderNum}</span>
+              <span style={{ fontSize: 12, color: "var(--sub)" }}>{new Date(o.createdAt).toLocaleDateString("ar-SY")}</span>
+            </div>
+            {(o.items || []).map((it, i) => (
+              <div key={i} style={{ fontSize: 12, color: "var(--sub)", display: "flex", justifyContent: "space-between" }}>
+                <span>{it.emoji} {it.itemName} ×{it.qty}</span>
+                <span>{(it.price * it.qty).toLocaleString()} {CUR}</span>
+              </div>
+            ))}
+            <div style={{ borderTop: "1px solid var(--border)", marginTop: 6, paddingTop: 6, display: "flex", justifyContent: "space-between", fontWeight: 900 }}>
+              <span style={{ fontSize: 13 }}>الإجمالي</span>
+              <span style={{ color: "#c62828" }}>{(o.total || 0).toLocaleString()} {CUR}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fade-in">
+      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>👥 ملف الزبائن</h2>
+      <input className="input" placeholder="🔍 ابحث عن زبون..." value={search}
+        onChange={e => setSearch(e.target.value)} style={{ marginBottom: 14 }} />
+      {!customers.length ? (
+        <div style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
+          <div style={{ fontSize: 48 }}>👥</div>
+          <div style={{ marginTop: 10 }}>لا يوجد زبائن مسجلون بعد</div>
+        </div>
+      ) : customers.map(c => (
+        <div key={c.id} className="card" style={{ marginBottom: 10, cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
+          onClick={() => setSelected(c)}>
+          <div style={{ fontSize: 32 }}>👤</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>{c.name}</div>
+            <div style={{ fontSize: 11, color: "var(--sub)" }}>
+              {c.visits} زيارة • آخر زيارة: {new Date(c.lastVisit).toLocaleDateString("ar-SY")}
+            </div>
+          </div>
+          <div style={{ fontSize: 13, color: "#1565c0", fontWeight: 700 }}>←</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ReceiptsTab({ store, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
@@ -3193,15 +3613,34 @@ function ReportsTab({store,dm,settings}){
 }
 
 // ═══════════════════════════════════
-// SETTINGS TAB (Admin) — زر الإعدادات
+// SETTINGS TAB (Admin) — محدّث
 // ═══════════════════════════════════
 function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const [form,setForm]=useState({...store.settings});
+  const [permTab,setPermTab]=useState(false);
+  // صلاحيات الأقسام القابلة للتعديل
+  const [dynPerms,setDynPerms]=useState(()=>{
+    const base={};
+    Object.entries(PERMISSIONS).forEach(([k,roles])=>{ base[k]=[...roles]; });
+    // دمج أي overrides محفوظة
+    const saved=store.permOverrides||{};
+    Object.entries(saved).forEach(([k,roles])=>{ base[k]=roles; });
+    return base;
+  });
 
   const save=()=>{
     store.setSettings(form);
+    store.setPermOverrides(dynPerms);
     showToast("تم حفظ الإعدادات ✓");
+  };
+
+  const togglePerm=(section,role)=>{
+    setDynPerms(p=>{
+      const cur=p[section]||[];
+      const next=cur.includes(role)?cur.filter(r=>r!==role):[...cur,role];
+      return {...p,[section]:next};
+    });
   };
 
   const S=({label,children})=>(
@@ -3210,6 +3649,15 @@ function SettingsTab({store,showToast,dm,user}){
       {children}
     </div>
   );
+
+  const sectionLabels={
+    dashboard:"لوحة التحكم",order:"طلب جديد",orders:"الطلبات",
+    cashier:"الكاشير",customers:"الزبائن",complog:"الضيافة",
+    debts:"الديون",expenses:"المصاريف",bar:"البار",
+    hookah:"الأراكيل",menu:"المنيو",tables:"الطاولات",
+    staff:"الموظفون",reports:"التقارير",receipts:"الفواتير",
+    settings:"الإعدادات",
+  };
 
   return(
     <div className="fade-in">
@@ -3233,7 +3681,7 @@ function SettingsTab({store,showToast,dm,user}){
           </S>
           <S label="🎨 ثيم التطبيق">
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {[["default","🔴 أحمر"],["green","🟢 أخضر"],["purple","🟣 بنفسجي"],["blue","🔵 أزرق"],["gold","🟡 ذهبي"]].map(([v,l])=>(
+              {[["default","🔴 أحمر"],["green","🟢 أخضر"],["purple","🟣 بنفسجي"],["blue","🔵 أزرق"],["gold","🟡 ذهبي"],["teal","🩵 تيل"],["dark","🖤 داكن بالكامل"]].map(([v,l])=>(
                 <button key={v} onClick={()=>setForm(f=>({...f,appTheme:v}))}
                   style={{padding:"8px 14px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,
                     cursor:"pointer",background:(form.appTheme||"default")===v?"var(--red)":"var(--card2)",
@@ -3244,22 +3692,18 @@ function SettingsTab({store,showToast,dm,user}){
             </div>
           </S>
           <S label="🔑 رمز الكاشير للزبون">
-            <input className="input" placeholder="narden" value={form.cashierCode||""} 
+            <input className="input" placeholder="narden" value={form.cashierCode||""}
               onChange={e=>setForm(f=>({...f,cashierCode:e.target.value}))}
               style={{fontFamily:"monospace",letterSpacing:2}}/>
-            <div style={{fontSize:11,color:"var(--sub)",marginTop:4}}>
-              الرمز الذي يدخله الزبون عند إرسال الطلب — اتركه فارغاً لاستخدام narden
-            </div>
           </S>
-          <S label="لغة واجهة الزبون / Customer Language">
+          <S label="لغة الواجهة">
             <div style={{display:"flex",gap:10}}>
               {[["ar","🇸🇦 عربي"],["en","🇬🇧 English"]].map(([v,l])=>(
                 <button key={v} onClick={()=>setForm(f=>({...f,appLang:v}))}
                   style={{flex:1,padding:"10px 0",borderRadius:12,border:"none",
                     fontWeight:700,fontSize:14,cursor:"pointer",
                     background:(form.appLang||"ar")===v?"#c62828":"var(--card2)",
-                    color:(form.appLang||"ar")===v?"#fff":"var(--sub)",
-                    transition:"all .2s"}}>
+                    color:(form.appLang||"ar")===v?"#fff":"var(--sub)",transition:"all .2s"}}>
                   {l}
                 </button>
               ))}
@@ -3267,85 +3711,171 @@ function SettingsTab({store,showToast,dm,user}){
           </S>
         </div>
 
-        {/* Permissions */}
+        {/* Sound & Notifications */}
         <div className="card">
-          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#1565c0"}}>🔐 الصلاحيات</h3>
-          <S label="الحد الأقصى للخصم (كاشير / عامل) %">
-            <input className="input" type="number" min="0" max="100" value={form.maxDiscount??50} onChange={e=>setForm(f=>({...f,maxDiscount:+e.target.value}))}/>
-          </S>
+          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#00897b"}}>🔔 الإشعارات والصوت</h3>
           {[
-            ["workerCanDecreaseStock","يمكن للموظفين تخفيض المخزون يدوياً"],
-            ["cashierCanSeeReports","يمكن للكاشير مشاهدة التقارير"],
-            ["allowCustomerOrders","السماح بطلبات الزبائن (واجهة الزبون)"],
+            ["soundEnabled","🔊 تفعيل الصوت عند ورود طلب جديد"],
+            ["soundOnReady","🎵 صوت عند تجهيز الطلب"],
+            ["soundOnDebt","🔔 صوت عند تسجيل دين"],
+            ["notifyBrowser","🖥 إشعارات المتصفح للطلبات الجديدة"],
           ].map(([key,label])=>(
-            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,padding:"10px 14px",background:"var(--card2)",borderRadius:10}}>
+            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              marginBottom:12,padding:"10px 14px",background:"var(--card2)",borderRadius:10}}>
               <span style={{fontSize:13,fontWeight:600}}>{label}</span>
               <button onClick={()=>setForm(f=>({...f,[key]:!f[key]}))}
                 style={{width:48,height:26,borderRadius:13,border:"none",position:"relative",
-                  background:form[key]?"#c62828":"var(--border)",transition:"background .3s",cursor:"pointer"}}>
+                  background:form[key]?"#00897b":"var(--border)",transition:"background .3s",cursor:"pointer"}}>
                 <div style={{position:"absolute",top:3,left:form[key]?3:23,width:20,height:20,
                   borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 2px 4px rgba(0,0,0,.2)"}}/>
               </button>
             </div>
           ))}
+          <S label="نغمة الإشعارات">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[["bell","🔔 جرس"],["chime","🎵 نغمة"],["ping","📳 بينج"],["beep","📢 بيب"]].map(([v,l])=>(
+                <button key={v} onClick={()=>setForm(f=>({...f,soundTone:v}))}
+                  style={{padding:"7px 12px",borderRadius:10,border:"none",fontSize:12,fontWeight:700,
+                    cursor:"pointer",background:(form.soundTone||"bell")===v?"#00897b":"var(--card2)",
+                    color:(form.soundTone||"bell")===v?"#fff":"var(--sub)"}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </S>
         </div>
 
-        {/* Role Permissions Table */}
+        {/* Table System */}
+        <div className="card">
+          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#1565c0"}}>🪑 نظام الطاولات</h3>
+          {[
+            ["openTableSystem","تفعيل نظام الطاولة المفتوحة"],
+            ["autoFreeTable","تحرير الطاولة تلقائياً عند الدفع"],
+            ["tableTimerAlert","تنبيه عند تجاوز الطاولة مدة محددة"],
+            ["mergeTableOrders","دمج طلبات نفس الطاولة تلقائياً"],
+          ].map(([key,label])=>(
+            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              marginBottom:12,padding:"10px 14px",background:"var(--card2)",borderRadius:10}}>
+              <span style={{fontSize:13,fontWeight:600}}>{label}</span>
+              <button onClick={()=>setForm(f=>({...f,[key]:!f[key]}))}
+                style={{width:48,height:26,borderRadius:13,border:"none",position:"relative",
+                  background:form[key]?"#1565c0":"var(--border)",transition:"background .3s",cursor:"pointer"}}>
+                <div style={{position:"absolute",top:3,left:form[key]?3:23,width:20,height:20,
+                  borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 2px 4px rgba(0,0,0,.2)"}}/>
+              </button>
+            </div>
+          ))}
+          {form.tableTimerAlert&&(
+            <S label="⏱ وقت التنبيه (بالدقائق)">
+              <input className="input" type="number" min="10" max="240" value={form.tableAlertMinutes||60}
+                onChange={e=>setForm(f=>({...f,tableAlertMinutes:+e.target.value}))}/>
+            </S>
+          )}
+          <S label="عدد الطاولات الافتراضي">
+            <input className="input" type="number" min="1" max="100" value={form.defaultTableCount||20}
+              onChange={e=>setForm(f=>({...f,defaultTableCount:+e.target.value}))}/>
+          </S>
+        </div>
+
+        {/* Order Settings */}
+        <div className="card">
+          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#f9a825"}}>📋 إعدادات الطلبات</h3>
+          {[
+            ["workerCanDecreaseStock","الموظفون يمكنهم تخفيض المخزون يدوياً"],
+            ["cashierCanSeeReports","الكاشير يمكنه مشاهدة التقارير"],
+            ["allowCustomerOrders","السماح بطلبات الزبائن (واجهة الزبون)"],
+            ["requireTableOnOrder","إلزام رقم الطاولة عند الطلب"],
+            ["printOnNewOrder","طباعة تلقائية عند تسجيل طلب جديد"],
+          ].map(([key,label])=>(
+            <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              marginBottom:12,padding:"10px 14px",background:"var(--card2)",borderRadius:10}}>
+              <span style={{fontSize:13,fontWeight:600}}>{label}</span>
+              <button onClick={()=>setForm(f=>({...f,[key]:!f[key]}))}
+                style={{width:48,height:26,borderRadius:13,border:"none",position:"relative",
+                  background:form[key]?"#f9a825":"var(--border)",transition:"background .3s",cursor:"pointer"}}>
+                <div style={{position:"absolute",top:3,left:form[key]?3:23,width:20,height:20,
+                  borderRadius:"50%",background:"#fff",transition:"left .3s",boxShadow:"0 2px 4px rgba(0,0,0,.2)"}}/>
+              </button>
+            </div>
+          ))}
+          <S label="الحد الأقصى للخصم (كاشير/عامل) %">
+            <input className="input" type="number" min="0" max="100" value={form.maxDiscount??50}
+              onChange={e=>setForm(f=>({...f,maxDiscount:+e.target.value}))}/>
+          </S>
+        </div>
+
+        {/* Role Permissions — قابلة للتعديل */}
         <div className="card" style={{gridColumn:"1/-1"}}>
-          <h3 style={{fontSize:15,fontWeight:800,marginBottom:16,color:"#6a1b9a"}}>👥 صلاحيات الأقسام</h3>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead>
-                <tr style={{background:"var(--card2)"}}>
-                  <th style={{padding:"10px 14px",textAlign:"right",fontWeight:700}}>القسم</th>
-                  {Object.entries(ROLE_LABELS).filter(([v])=>v!==ROLES.CUSTOMER).map(([r,l])=>(
-                    <th key={r} style={{padding:"10px 12px",fontWeight:700,color:ROLE_COLORS[r],whiteSpace:"nowrap"}}>{l}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(PERMISSIONS).filter(([s])=>!["customer_home","myorders"].includes(s)).map(([section,roles])=>(
-                  <tr key={section} style={{borderBottom:"1px solid var(--border)"}}>
-                    <td style={{padding:"8px 14px",fontWeight:600}}>
-                      {["dashboard","order","orders","cashier","debts","expenses","bar","hookah","menu","tables","staff","reports","settings"][
-                        ["dashboard","order","orders","cashier","debts","expenses","bar","hookah","menu","tables","staff","reports","settings"].indexOf(section)
-                      ]||section}
-                    </td>
-                    {Object.keys(ROLE_LABELS).filter(r=>r!==ROLES.CUSTOMER).map(r=>(
-                      <td key={r} style={{padding:"8px 12px",textAlign:"center"}}>
-                        {roles.includes(r)
-                          ?<span style={{color:"#2e7d32",fontSize:16}}>✓</span>
-                          :<span style={{color:"var(--border)",fontSize:14}}>—</span>
-                        }
-                      </td>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:permTab?16:0}}>
+            <h3 style={{fontSize:15,fontWeight:800,color:"#6a1b9a"}}>🔐 إدارة صلاحيات الأقسام</h3>
+            <button onClick={()=>setPermTab(s=>!s)}
+              style={{padding:"8px 16px",borderRadius:10,border:"none",background:permTab?"#6a1b9a":"var(--card2)",
+                color:permTab?"#fff":"var(--text)",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+              {permTab?"إخفاء ▲":"تعديل الصلاحيات ▼"}
+            </button>
+          </div>
+          {permTab&&(
+            <div style={{overflowX:"auto"}}>
+              <div style={{fontSize:12,color:"var(--sub)",marginBottom:10}}>
+                ✏ انقر على أي صلاحية لتفعيلها أو إلغائها — الأدمن دائماً لديه صلاحية كاملة
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{background:"var(--card2)"}}>
+                    <th style={{padding:"10px 14px",textAlign:"right",fontWeight:700}}>القسم</th>
+                    {Object.entries(ROLE_LABELS).filter(([v])=>v!==ROLES.CUSTOMER&&v!==ROLES.ADMIN).map(([r,l])=>(
+                      <th key={r} style={{padding:"10px 12px",fontWeight:700,color:ROLE_COLORS[r],whiteSpace:"nowrap"}}>{l}</th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p style={{fontSize:11,color:"var(--sub)",marginTop:10}}>* لتخصيص الصلاحيات بشكل أعمق، تواصل مع مطور التطبيق.</p>
+                </thead>
+                <tbody>
+                  {Object.keys(sectionLabels).filter(s=>!["customer_home","myorders"].includes(s)).map(section=>(
+                    <tr key={section} style={{borderBottom:"1px solid var(--border)"}}>
+                      <td style={{padding:"8px 14px",fontWeight:600}}>{sectionLabels[section]||section}</td>
+                      {Object.keys(ROLE_LABELS).filter(r=>r!==ROLES.CUSTOMER&&r!==ROLES.ADMIN).map(role=>{
+                        const hasPerm=(dynPerms[section]||[]).includes(role);
+                        return(
+                          <td key={role} style={{padding:"8px 12px",textAlign:"center"}}>
+                            <button onClick={()=>togglePerm(section,role)}
+                              style={{background:"none",border:"none",cursor:"pointer",fontSize:18,
+                                color:hasPerm?"#2e7d32":"var(--border)",transition:"color .2s"}}>
+                              {hasPerm?"✅":"⬜"}
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
-      {isAdmin&&(
-        <div className="card" style={{borderTop:"4px solid #c62828",marginTop:16}}>
-          <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
-          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-            <button onClick={()=>{if(window.confirm("تصفير جميع الطلبات والمبيعات؟ لا يمكن التراجع!")){store.setOrders([]);store.setCashLog([]);showToast("تم تصفير المبيعات","warn");}}}
-              style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
-              🗑️ تصفير المبيعات
-            </button>
-            <button onClick={()=>{if(window.confirm("تصفير جميع الديون؟")){store.setDebts([]);showToast("تم تصفير الديون","warn");}}}
-              style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
-              🗑️ تصفير الديون
-            </button>
-            <button onClick={()=>{if(window.confirm("تصفير المصاريف؟")){store.setExpenses([]);showToast("تم تصفير المصاريف","warn");}}}
-              style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
-              🗑️ تصفير المصاريف
-            </button>
+        {/* Danger Zone */}
+        {isAdmin&&(
+          <div className="card" style={{gridColumn:"1/-1",borderTop:"4px solid #c62828"}}>
+            <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <button onClick={()=>{if(window.confirm("تصفير جميع الطلبات؟ لا يمكن التراجع!")){store.setOrders([]);store.setCashLog([]);showToast("تم تصفير المبيعات","warn");}}}
+                style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🗑️ تصفير المبيعات
+              </button>
+              <button onClick={()=>{if(window.confirm("تصفير الديون؟")){store.setDebts([]);showToast("تم","warn");}}}
+                style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🗑️ تصفير الديون
+              </button>
+              <button onClick={()=>{if(window.confirm("تصفير المصاريف؟")){store.setExpenses([]);showToast("تم","warn");}}}
+                style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🗑️ تصفير المصاريف
+              </button>
+              <button onClick={()=>{if(window.confirm("تصفير سجل الضيافة؟")){store.setCompLog([]);showToast("تم","warn");}}}
+                style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#00897b",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🗑️ تصفير الضيافة
+              </button>
+            </div>
           </div>
-        </div>
-      )}
-        </div>
+        )}
       </div>
 
       <div style={{marginTop:24,display:"flex",justifyContent:"flex-end"}}>
