@@ -140,3 +140,24 @@ export const subscribeReceipts = (onInsert) => {
     .subscribe();
   return () => supabase.removeChannel(ch);
 };
+
+// ── Real-time: سجل الضيافة ─────────────────────────────────────
+export const subscribeCompLog = (onInsert) => {
+  if (!supabase) return () => {};
+  const ch = supabase
+    .channel("complog-rt-v4")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "comp_log" }, p => onInsert(p.new))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+// ── Real-time: الزبائن ─────────────────────────────────────────
+export const subscribeCustomers = (onInsert, onUpdate) => {
+  if (!supabase) return () => {};
+  const ch = supabase
+    .channel("customers-rt-v4")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "customers" }, p => onInsert(p.new))
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "customers" }, p => onUpdate(p.new))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
