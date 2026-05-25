@@ -4,6 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore } from "./lib/store.js";
+import OutdoorScreen from "./OutdoorScreen.jsx";
 import { SUPABASE_READY, sbDeleteAll, sbFetch } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
 
@@ -12,11 +13,11 @@ import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint
 // ═══════════════════════════════════
 const ROLES = {
   ADMIN:"admin", CASHIER:"cashier", BAR:"bar",
-  HOOKAH:"hookah", WORKER:"worker", CUSTOMER:"customer"
+  HOOKAH:"hookah", WORKER:"worker", CUSTOMER:"customer", OUTDOOR:"outdoor"
 };
 const ROLE_LABELS = {
   admin:"مدير", cashier:"كاشير", bar:"بار",
-  hookah:"أراكيل", worker:"عامل طلبات", customer:"زبون"
+  hookah:"أراكيل", worker:"عامل طلبات", customer:"زبون", outdoor:"عامل حديقة"
 };
 const ROLE_COLORS = {
   admin:"#c62828", cashier:"#1565c0", bar:"#6a1b9a",
@@ -339,6 +340,8 @@ export default function NardeenCaffe(){
       {screen==="home"&&user&&(
         user.role===ROLES.CUSTOMER
           ? <CustomerPortal user={user} store={store} onLogout={logout} showToast={showToast} addNotification={addNotification} dm={dm}/>
+          : user.role===ROLES.OUTDOOR
+          ? <OutdoorScreen user={user} store={store} onLogout={logout} showToast={showToast}/>
           : <HomeScreen user={user} store={store} onLogout={logout} showToast={showToast}
               addNotification={addNotification} unreadCount={unreadCount} dm={dm}
               toggleDark={()=>setDm(d=>{localStorage.setItem("nc_dark",d?"0":"1");return!d})}
