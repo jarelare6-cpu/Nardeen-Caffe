@@ -8,6 +8,9 @@ import {
   sbUpsert, sbDelete,
   subscribeOrders, subscribeTables,
   subscribeDebts, subscribeExpenses, subscribeMenu,
+  subscribeCompLog, subscribeCustomers,
+  subscribeSettings, subscribePermOverrides,
+  sbSaveSettings, sbSavePermOverrides, sbDeleteAll,
 } from "./supabase";
 
 // ── localStorage helpers ──────────────────────────────────────
@@ -237,6 +240,26 @@ const sbWrite = {
     cafe_name: r.cafeName || "Nardeen Caffe",
     tron_amount: r.tronAmount || 0,
   }),
+
+  compLog: (c) => sbUpsert("comp_log", {
+    id: c.id, order_id: c.orderId || null,
+    order_num: c.orderNum || "", customer_name: c.customerName || "",
+    table_num: String(c.tableNum || c.table || ""),
+    items: c.items || [], amount: c.amount || 0,
+    reason: c.reason || "", created_by: c.createdBy || c.by || "",
+    created_at: c.createdAt || c.at || new Date().toISOString(),
+  }),
+
+  customer: (c) => sbUpsert("customers", {
+    id: c.id, name: c.name || "",
+    phone: c.phone || "", email: c.email || "",
+    total_orders: c.totalOrders || 0,
+    total_spent: c.totalSpent || 0,
+    notes: c.notes || "",
+    created_at: c.createdAt || new Date().toISOString(),
+    last_visit: c.lastVisit || null,
+  }),
+  deleteCustomer: (id) => sbDelete("customers", id),
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -311,6 +334,22 @@ const mapReceipt = r => ({
   createdAt:    r.created_at    ?? r.createdAt    ?? new Date().toISOString(),
   cafeName:     r.cafe_name     ?? r.cafeName     ?? "Nardeen Caffe",
   tronAmount:   r.tron_amount   ?? r.tronAmount   ?? 0,
+});
+const mapCompLog = c => ({
+  ...c,
+  orderId:      c.order_id      ?? c.orderId      ?? null,
+  orderNum:     c.order_num     ?? c.orderNum     ?? "",
+  customerName: c.customer_name ?? c.customerName ?? "",
+  tableNum:     c.table_num     ?? c.tableNum     ?? "",
+  createdBy:    c.created_by    ?? c.createdBy    ?? c.by ?? "",
+  createdAt:    c.created_at    ?? c.createdAt    ?? c.at ?? new Date().toISOString(),
+});
+const mapCustomer = c => ({
+  ...c,
+  totalOrders: c.total_orders ?? c.totalOrders ?? 0,
+  totalSpent:  c.total_spent  ?? c.totalSpent  ?? 0,
+  createdAt:   c.created_at   ?? c.createdAt   ?? new Date().toISOString(),
+  lastVisit:   c.last_visit   ?? c.lastVisit   ?? null,
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -462,7 +501,9 @@ export const useStore = () => {
   const setSettings = useCallback((v) => {
     setSettingsRaw(p => {
       const d = typeof v === "function" ? v(p) : v;
-      ls.set("nc_settings", d); broadcast("nc_settings", d); return d;
+      ls.set("nc_settings", d); broadcast("nc_settings", d);
+      if (SUPABASE_READY) sbSaveSettings(d);
+      return d;
     });
   }, []);
 
@@ -470,6 +511,13 @@ export const useStore = () => {
     setCompLogRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
       ls.set("nc_complog", next); broadcast("nc_complog", next);
+      if (SUPABASE_READY) {
+        const prevIds = new Set(p.map(c => c.id));
+        next.filter(c => !prevIds.has(c.id)).forEach(c => sbWrite.compLog(c));
+        // حذف العناصر المُزالة
+        const nextIds = new Set(next.map(c => c.id));
+        p.filter(c => !nextIds.has(c.id)).forEach(c => sbDelete("comp_log", c.id));
+      }
       return next;
     });
   }, []);
@@ -478,6 +526,13 @@ export const useStore = () => {
     setCustomersRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
       ls.set("nc_customers", next); broadcast("nc_customers", next);
+      if (SUPABASE_READY) {
+        next.forEach(c => {
+          const old = p.find(x => x.id === c.id);
+          if (!old || JSON.stringify(old) !== JSON.stringify(c)) sbWrite.customer(c);
+        });
+        p.forEach(c => { if (!next.find(x => x.id === c.id)) sbWrite.deleteCustomer(c.id); });
+      }
       return next;
     });
   }, []);
@@ -486,6 +541,7 @@ export const useStore = () => {
     setPermOverridesRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
       ls.set("nc_perms", next); broadcast("nc_perms", next);
+      if (SUPABASE_READY) sbSavePermOverrides(next);
       return next;
     });
   }, []);
@@ -576,18 +632,26 @@ export const useStore = () => {
       supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(200),
       supabase.from("tables").select("*").order("number"),
       supabase.from("receipts").select("*").order("created_at", { ascending: false }).limit(200),
-    ]).then(([ord, men, prof, dbt, exp, cash, tbl, rct]) => {
-      if (ord.data?.length)  { const d = ord.data.map(mapOrder);   setOrdersRaw(d);   ls.set("nc_orders",   d); }
-      if (men.data?.length)  { const d = men.data.map(mapMenu);    setMenuRaw(d);     ls.set("nc_menu",     d); }
-      if (prof.data?.length) { setUsersRaw(prof.data);              ls.set("nc_users", prof.data); }
-      if (dbt.data?.length)  { const d = dbt.data.map(mapDebt);    setDebtsRaw(d);    ls.set("nc_debts",    d); }
-      if (exp.data?.length)  { const d = exp.data.map(mapExpense);  setExpensesRaw(d); ls.set("nc_expenses", d); }
-      if (cash.data?.length) { const d = cash.data.map(mapCash);   setCashLogRaw(d);  ls.set("nc_cash",     d); }
-      if (rct.data?.length)  { const d = rct.data.map(mapReceipt); setReceiptsRaw(d); ls.set("nc_receipts", d); }
+      supabase.from("comp_log").select("*").order("created_at", { ascending: false }).limit(200),
+      supabase.from("customers").select("*").order("created_at", { ascending: false }),
+      supabase.from("app_settings").select("*").eq("id", "main").single(),
+      supabase.from("perm_overrides").select("*").eq("id", "main").single(),
+    ]).then(([ord, men, prof, dbt, exp, cash, tbl, rct, cmp, cust, sett, perms]) => {
+      if (ord.data?.length)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
+      if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
+      if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
+      if (dbt.data?.length)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    ls.set("nc_debts",    d); }
+      if (exp.data?.length)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); ls.set("nc_expenses", d); }
+      if (cash.data?.length) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  ls.set("nc_cash",     d); }
+      if (rct.data?.length)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); ls.set("nc_receipts", d); }
       if (tbl.data?.length) {
         const d = tbl.data.map(mapTable);
         setTablesRaw(d); ls.set("nc_tables", d);
       }
+      if (cmp.data?.length)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
+      if (cust.data?.length) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
+      if (sett.data?.data)   { setSettingsRaw(s => ({ ...s, ...sett.data.data })); ls.set("nc_settings", { ...DEFAULT_SETTINGS, ...sett.data.data }); }
+      if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
       setCloudReady(true);
     }).catch(err => {
       console.error("Supabase load error:", err);
@@ -657,6 +721,40 @@ export const useStore = () => {
       (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = p.map(x => x.id === e.id ? e : x);   ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
       (r) => setExpensesRaw(p => { const n = p.filter(x => x.id !== r.id);                                  ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
     );
+  }, []);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeCompLog(
+      (r) => setCompLogRaw(p => { const c = mapCompLog(r); const n = [c, ...p.filter(x => x.id !== c.id)]; ls.set("nc_complog", n); broadcast("nc_complog", n); return n; }),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeCustomers(
+      (r) => setCustomersRaw(p => { const c = mapCustomer(r); const n = [c, ...p.filter(x => x.id !== c.id)]; ls.set("nc_customers", n); broadcast("nc_customers", n); return n; }),
+      (r) => setCustomersRaw(p => { const c = mapCustomer(r); const n = p.map(x => x.id === c.id ? c : x);   ls.set("nc_customers", n); broadcast("nc_customers", n); return n; }),
+      (r) => setCustomersRaw(p => { const n = p.filter(x => x.id !== r.id);                                   ls.set("nc_customers", n); broadcast("nc_customers", n); return n; }),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeSettings((row) => {
+      if (row?.data) {
+        setSettingsRaw(s => { const n = { ...s, ...row.data }; ls.set("nc_settings", n); broadcast("nc_settings", n); return n; });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribePermOverrides((row) => {
+      if (row?.data) {
+        setPermOverridesRaw(() => { ls.set("nc_perms", row.data); broadcast("nc_perms", row.data); return row.data; });
+      }
+    });
   }, []);
 
   return {
