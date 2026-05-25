@@ -214,3 +214,14 @@ export const sbSavePermOverrides = async (perms) => {
   );
   if (error) console.warn("sbSavePermOverrides:", error.message);
 };
+
+// ── Helper: جلب كل صفوف جدول ──────────────────────────────────
+export const sbFetch = async (table, orderCol = "created_at") => {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from(table)
+    .select("*")
+    .order(orderCol, { ascending: false });
+  if (error) { console.warn(`sbFetch(${table}):`, error.message); return []; }
+  return data || [];
+};
