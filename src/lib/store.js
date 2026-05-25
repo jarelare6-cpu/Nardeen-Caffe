@@ -1,6 +1,6 @@
-// src/lib/store.js — Nardeen Caffe v4.0
+// src/lib/store.js — Nardeen Caffe v4.1
 // ══════════════════════════════════════════════════════════════
-// إصلاح الربط + 20 طاولة افتراضية + إعادة المخزون عند الحذف
+// إضافة فرع الحديقة الخارجية (outdoor) مع كاش وطاولات منفصلة
 // ══════════════════════════════════════════════════════════════
 import { useState, useCallback, useEffect } from "react";
 import {
@@ -37,6 +37,21 @@ export const buildDefaultTables = (count = 20) =>
     note:     "",
     orderId:  null,
     openedAt: null,
+    branch:   "main",
+  }));
+
+export const buildOutdoorTables = (count = 10) =>
+  Array.from({ length: count }, (_, i) => ({
+    id:       `out_${i + 1}`,
+    number:   i + 1,
+    num:      String(i + 1),
+    label:    `حديقة ${i + 1}`,
+    seats:    4,
+    status:   "free",
+    note:     "",
+    orderId:  null,
+    openedAt: null,
+    branch:   "outdoor",
   }));
 
 // ══════════════════════════════════════════════════════════════
@@ -81,6 +96,7 @@ export const DEFAULT_USERS = [
   { id:"u7", username:"hookah2",    password:"Hook@PM24", role:"hookah",  name:"أراكيل المساء", email:"hookah2@nardeen.cafe",    active:true, shift:"مسائي" },
   { id:"u8", username:"worker1",    password:"Work@AM24", role:"worker",  name:"عامل الصباح",   email:"worker1@nardeen.cafe",    active:true, shift:"صباحي" },
   { id:"u9", username:"worker2",    password:"Work@PM24", role:"worker",  name:"عامل المساء",   email:"worker2@nardeen.cafe",    active:true, shift:"مسائي" },
+  { id:"u_outdoor1", username:"outdoor1", password:"Out@2024", role:"outdoor", name:"عامل الحديقة", email:"outdoor@nardeen.cafe",    active:true, shift:null },
 ];
 
 export const DEFAULT_MENU = [
@@ -176,6 +192,7 @@ const sbWrite = {
     stock: m.stock, min_stock: m.minStock || 5,
     total_sold: m.totalSold || 0, emoji: m.emoji || "",
     active: m.active !== false,
+    outdoor_price: m.outdoorPrice ?? null,
   }),
   deleteMenuItem: (id) => sbDelete("menu_items", id),
 
@@ -194,6 +211,7 @@ const sbWrite = {
     is_complimentary: o.isComplimentary || false,
     worker_name: o.workerName || "",
     tron_amount: o.tronAmount || 0,
+    branch: o.branch || "main",
   }),
   deleteOrder: (id) => sbDelete("orders", id),
 
@@ -203,6 +221,7 @@ const sbWrite = {
     seats: t.seats || 4, status: t.status || "free",
     note: t.note || "", order_id: t.orderId || null,
     opened_at: t.openedAt || null,
+    branch: t.branch || "main",
   }),
 
   debt: (d) => sbUpsert("debts", {
@@ -229,6 +248,7 @@ const sbWrite = {
     id: e.id, order_id: e.orderId || null,
     order_num: e.orderNum || "", amount: e.amount,
     at: e.at, by: e.by || "", type: e.type || "sale",
+    branch: e.branch || "main",
   }),
 
   receipt: (r) => sbUpsert("receipts", {
@@ -240,6 +260,7 @@ const sbWrite = {
     created_by: r.createdBy || "", created_at: r.createdAt || new Date().toISOString(),
     cafe_name: r.cafeName || "Nardeen Caffe",
     tron_amount: r.tronAmount || 0,
+    branch: r.branch || "main",
   }),
 
   compLog: (c) => sbUpsert("comp_log", {
@@ -285,12 +306,14 @@ const mapOrder = o => ({
   isComplimentary: o.is_complimentary ?? o.isComplimentary ?? false,
   workerName:   o.worker_name   ?? o.workerName   ?? "",
   tronAmount:   o.tron_amount   ?? o.tronAmount   ?? 0,
+  branch:       o.branch        ?? "main",
 });
 const mapMenu = m => ({
   ...m,
-  nameEn:    m.name_en   ?? m.nameEn    ?? "",
-  minStock:  m.min_stock ?? m.minStock  ?? 5,
-  totalSold: m.total_sold ?? m.totalSold ?? 0,
+  nameEn:       m.name_en      ?? m.nameEn      ?? "",
+  minStock:     m.min_stock    ?? m.minStock     ?? 5,
+  totalSold:    m.total_sold   ?? m.totalSold    ?? 0,
+  outdoorPrice: m.outdoor_price ?? m.outdoorPrice ?? null,
 });
 const mapDebt = d => ({
   ...d,
@@ -321,11 +344,13 @@ const mapTable = t => ({
   note:     t.note || "",
   orderId:  t.order_id || null,
   openedAt: t.opened_at || null,
+  branch:   t.branch || "main",
 });
 const mapCash = e => ({
   ...e,
   orderId:  e.order_id  ?? e.orderId  ?? null,
   orderNum: e.order_num ?? e.orderNum ?? "",
+  branch:   e.branch    ?? "main",
 });
 const mapReceipt = r => ({
   ...r,
@@ -338,6 +363,7 @@ const mapReceipt = r => ({
   createdAt:    r.created_at    ?? r.createdAt    ?? new Date().toISOString(),
   cafeName:     r.cafe_name     ?? r.cafeName     ?? "Nardeen Caffe",
   tronAmount:   r.tron_amount   ?? r.tronAmount   ?? 0,
+  branch:       r.branch        ?? "main",
 });
 const mapCompLog = c => ({
   ...c,
@@ -371,6 +397,10 @@ export const useStore = () => {
     const saved = ls.get("nc_tables", null);
     // إذا لم تكن الطاولات محفوظة، أنشئ 20 طاولة افتراضية
     return saved && saved.length > 0 ? saved : buildDefaultTables(20);
+  });
+  const [outdoorTables, setOutdoorTablesRaw] = useState(() => {
+    const saved = ls.get("nc_outdoor_tables", null);
+    return saved && saved.length > 0 ? saved : buildOutdoorTables(10);
   });
   const [debts,         setDebtsRaw]         = useState(() => ls.get("nc_debts",    []));
   const [expenses,      setExpensesRaw]      = useState(() => ls.get("nc_expenses", []));
@@ -563,10 +593,43 @@ export const useStore = () => {
         number: newNum, num: String(newNum),
         label: `طاولة ${newNum}`,
         seats: 4, status: "free",
-        note: "", orderId: null, openedAt: null,
+        note: "", orderId: null, openedAt: null, branch: "main",
       };
       const next = [...p, newTable];
       ls.set("nc_tables", next); broadcast("nc_tables", next);
+      if (SUPABASE_READY) sbWrite.table(newTable);
+      return next;
+    });
+  }, []);
+
+  const setOutdoorTables = useCallback((v) => {
+    setOutdoorTablesRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      ls.set("nc_outdoor_tables", next); broadcast("nc_outdoor_tables", next);
+      if (SUPABASE_READY) {
+        next.forEach(t => {
+          const old = p.find(x => x.id === t.id);
+          if (!old || old.status !== t.status || old.orderId !== t.orderId || old.note !== t.note)
+            sbWrite.table(t);
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const addOutdoorTable = useCallback(() => {
+    setOutdoorTablesRaw(p => {
+      const maxNum = p.length > 0 ? Math.max(...p.map(t => t.number)) : 0;
+      const newNum = maxNum + 1;
+      const newTable = {
+        id: `out_${newNum}_${Date.now()}`,
+        number: newNum, num: String(newNum),
+        label: `حديقة ${newNum}`,
+        seats: 4, status: "free",
+        note: "", orderId: null, openedAt: null, branch: "outdoor",
+      };
+      const next = [...p, newTable];
+      ls.set("nc_outdoor_tables", next); broadcast("nc_outdoor_tables", next);
       if (SUPABASE_READY) sbWrite.table(newTable);
       return next;
     });
@@ -584,6 +647,7 @@ export const useStore = () => {
         case "nc_notifs":   setNotificationsRaw(data); break;
         case "nc_cash":     setCashLogRaw(data);       break;
         case "nc_tables":   setTablesRaw(data);        break;
+        case "nc_outdoor_tables": setOutdoorTablesRaw(data); break;
         case "nc_debts":    setDebtsRaw(data);         break;
         case "nc_expenses": setExpensesRaw(data);      break;
         case "nc_receipts": setReceiptsRaw(data);      break;
@@ -610,6 +674,7 @@ export const useStore = () => {
           case "nc_notifs":   setNotificationsRaw(data); break;
           case "nc_cash":     setCashLogRaw(data);       break;
           case "nc_tables":   setTablesRaw(data);        break;
+          case "nc_outdoor_tables": setOutdoorTablesRaw(data); break;
           case "nc_debts":    setDebtsRaw(data);         break;
           case "nc_expenses": setExpensesRaw(data);      break;
           case "nc_receipts": setReceiptsRaw(data);      break;
@@ -637,13 +702,14 @@ export const useStore = () => {
       supabase.from("debts").select("*").order("date", { ascending: false }),
       supabase.from("expenses").select("*").order("date", { ascending: false }),
       supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(200),
-      supabase.from("tables").select("*").order("number"),
+      supabase.from("tables").select("*").eq("branch","main").order("number"),
+      supabase.from("tables").select("*").eq("branch","outdoor").order("number"),
       supabase.from("receipts").select("*").order("created_at", { ascending: false }).limit(200),
       supabase.from("comp_log").select("*").order("created_at", { ascending: false }).limit(200),
       supabase.from("customers").select("*").order("created_at", { ascending: false }),
       supabase.from("app_settings").select("*").eq("id", "main").single(),
       supabase.from("perm_overrides").select("*").eq("id", "main").single(),
-    ]).then(([ord, men, prof, dbt, exp, cash, tbl, rct, cmp, cust, sett, perms]) => {
+    ]).then(([ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms]) => {
       if (ord.data?.length)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
       if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
       if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
@@ -654,6 +720,10 @@ export const useStore = () => {
       if (tbl.data?.length) {
         const d = tbl.data.map(mapTable);
         setTablesRaw(d); ls.set("nc_tables", d);
+      }
+      if (outdoorTbl.data?.length) {
+        const d = outdoorTbl.data.map(mapTable);
+        setOutdoorTablesRaw(d); ls.set("nc_outdoor_tables", d);
       }
       if (cmp.data?.length)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
       if (cust.data?.length) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
@@ -681,10 +751,16 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribeTables((newRow, deletedId) => {
       if (deletedId) {
+        // try both branches
         setTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); ls.set("nc_tables", n); broadcast("nc_tables", n); return n; });
+        setOutdoorTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); ls.set("nc_outdoor_tables", n); broadcast("nc_outdoor_tables", n); return n; });
       } else if (newRow) {
         const t = mapTable(newRow);
-        setTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)]; ls.set("nc_tables", n); broadcast("nc_tables", n); return n; });
+        if (t.branch === "outdoor") {
+          setOutdoorTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); ls.set("nc_outdoor_tables", n); broadcast("nc_outdoor_tables", n); return n; });
+        } else {
+          setTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); ls.set("nc_tables", n); broadcast("nc_tables", n); return n; });
+        }
       }
     });
   }, []);
@@ -771,6 +847,7 @@ export const useStore = () => {
     notifications, setNotifications,
     cashLog, setCashLog,
     tables, setTables, addTable,
+    outdoorTables, setOutdoorTables, addOutdoorTable,
     debts, setDebts,
     expenses, setExpenses,
     receipts, setReceipts,
