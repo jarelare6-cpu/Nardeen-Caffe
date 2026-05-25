@@ -1081,9 +1081,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
             style={{width:"100%",padding:"10px 14px",border:"1.5px solid var(--border)",
               borderRadius:10,background:"var(--card)",color:"var(--text)",
               fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",
-              appearance:"none",backgroundImage:"url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%23c62828' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E")",
-              backgroundRepeat:"no-repeat",backgroundPosition:"left 12px center",paddingLeft:32}}>
-            {navItems.map(([t,icon,label])=>(
+              appearance:"none",paddingLeft:32}}>
               <option key={t} value={t}>{icon} {label}</option>
             ))}
           </select>
