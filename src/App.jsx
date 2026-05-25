@@ -4,7 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore } from "./lib/store.js";
-import { SUPABASE_READY } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
 
 // ═══════════════════════════════════
@@ -3857,21 +3857,25 @@ function SettingsTab({store,showToast,dm,user}){
           <div className="card" style={{gridColumn:"1/-1",borderTop:"4px solid #c62828"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>{if(window.confirm("تصفير جميع الطلبات؟ لا يمكن التراجع!")){store.setOrders([]);store.setCashLog([]);showToast("تم تصفير المبيعات","warn");}}}
+              <button onClick={async()=>{if(window.confirm("تصفير جميع الطلبات؟ لا يمكن التراجع!")){store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}showToast("تم تصفير المبيعات","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المبيعات
               </button>
-              <button onClick={()=>{if(window.confirm("تصفير الديون؟")){store.setDebts([]);showToast("تم","warn");}}}
+              <button onClick={async()=>{if(window.confirm("تصفير الديون؟")){store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الديون
               </button>
-              <button onClick={()=>{if(window.confirm("تصفير المصاريف؟")){store.setExpenses([]);showToast("تم","warn");}}}
+              <button onClick={async()=>{if(window.confirm("تصفير المصاريف؟")){store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المصاريف
               </button>
-              <button onClick={()=>{if(window.confirm("تصفير سجل الضيافة؟")){store.setCompLog([]);showToast("تم","warn");}}}
+              <button onClick={async()=>{if(window.confirm("تصفير سجل الضيافة؟")){store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#00897b",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الضيافة
+              </button>
+              <button onClick={async()=>{if(window.confirm("تصفير بيانات الزبائن؟")){store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}showToast("تم","warn");}}}
+                style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#1565c0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🗑️ تصفير الزبائن
               </button>
             </div>
           </div>
