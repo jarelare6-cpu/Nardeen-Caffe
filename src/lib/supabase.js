@@ -152,12 +152,65 @@ export const subscribeCompLog = (onInsert) => {
 };
 
 // ── Real-time: الزبائن ─────────────────────────────────────────
-export const subscribeCustomers = (onInsert, onUpdate) => {
+export const subscribeCustomers = (onInsert, onUpdate, onDelete) => {
   if (!supabase) return () => {};
   const ch = supabase
     .channel("customers-rt-v4")
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "customers" }, p => onInsert(p.new))
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "customers" }, p => onUpdate(p.new))
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "customers" }, p => onDelete && onDelete(p.old))
     .subscribe();
   return () => supabase.removeChannel(ch);
+};
+
+// ── Real-time: الإعدادات ───────────────────────────────────────
+export const subscribeSettings = (onUpsert) => {
+  if (!supabase) return () => {};
+  const ch = supabase
+    .channel("settings-rt-v4")
+    .on("postgres_changes", { event: "*", schema: "public", table: "app_settings" }, p => {
+      if (p.new) onUpsert(p.new);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+// ── Real-time: صلاحيات الأقسام ────────────────────────────────
+export const subscribePermOverrides = (onUpsert) => {
+  if (!supabase) return () => {};
+  const ch = supabase
+    .channel("perms-rt-v4")
+    .on("postgres_changes", { event: "*", schema: "public", table: "perm_overrides" }, p => {
+      if (p.new) onUpsert(p.new);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+// ── Helper: حذف كامل جدول (للتصفير) ──────────────────────────
+export const sbDeleteAll = async (table) => {
+  if (!supabase) return;
+  // نستخدم neq على id وهمي لحذف كل الصفوف (supabase يمنع delete بدون filter)
+  const { error } = await supabase.from(table).delete().neq("id", "__never__");
+  if (error) console.warn(`sbDeleteAll(${table}):`, error.message);
+};
+
+// ── Helper: حفظ/تحديث الإعدادات (صف واحد ثابت id="main") ─────
+export const sbSaveSettings = async (settings) => {
+  if (!supabase) return;
+  const { error } = await supabase.from("app_settings").upsert(
+    { id: "main", data: settings, updated_at: new Date().toISOString() },
+    { onConflict: "id" }
+  );
+  if (error) console.warn("sbSaveSettings:", error.message);
+};
+
+// ── Helper: حفظ permOverrides (صف واحد ثابت id="main") ────────
+export const sbSavePermOverrides = async (perms) => {
+  if (!supabase) return;
+  const { error } = await supabase.from("perm_overrides").upsert(
+    { id: "main", data: perms, updated_at: new Date().toISOString() },
+    { onConflict: "id" }
+  );
+  if (error) console.warn("sbSavePermOverrides:", error.message);
 };
