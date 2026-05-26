@@ -4153,7 +4153,9 @@ function OutdoorAdminTab({ store, showToast, dm, settings }) {
 
   const resetOutdoorCash = async () => {
     if (!window.confirm("تصفير كاش الحديقة؟")) return;
+    const cashIds = outdoorCash.map(e => e.id);
     store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
+    if (SUPABASE_READY) { for (const id of cashIds) { try { await sbDelete("cash_log", id); } catch {} } }
     showToast("تم تصفير كاش الحديقة", "warn");
   };
 
@@ -4165,10 +4167,18 @@ function OutdoorAdminTab({ store, showToast, dm, settings }) {
 
   const resetAllOutdoor = async () => {
     if (!window.confirm("⚠️ تصفير كل بيانات الحديقة (طلبات + كاش + فواتير)؟")) return;
+    const oIds = outdoorOrders.map(o => o.id);
+    const rIds = outdoorReceipts.map(r => r.id);
+    const cIds = outdoorCash.map(e => e.id);
     store.setOrders(p => p.filter(o => o.branch !== "outdoor"));
     store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
     store.setReceipts(p => p.filter(r => r.branch !== "outdoor"));
     store.setOutdoorTables(p => p.map(t => ({ ...t, status: "free", orderId: null, openedAt: null })));
+    if (SUPABASE_READY) {
+      for (const id of oIds) { try { await sbDelete("orders", id); } catch {} }
+      for (const id of rIds) { try { await sbDelete("receipts", id); } catch {} }
+      for (const id of cIds) { try { await sbDelete("cash_log", id); } catch {} }
+    }
     showToast("تم التصفير الشامل للحديقة", "warn");
   };
 
