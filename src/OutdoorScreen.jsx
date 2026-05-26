@@ -3,8 +3,7 @@
 // واجهة عامل الحديقة الخارجية — كاش منفصل + طاولات منفصلة
 // ══════════════════════════════════════════════════════════════
 import React, { useState, useCallback, useMemo } from "react";
-import { sbDelete } from "./lib/supabase.js";
-import { SUPABASE_READY } from "./lib/supabase.js";
+import { sbDelete, sbUpsert, SUPABASE_READY } from "./lib/supabase.js";
 
 // ── الفئات المسموح بها في الحديقة (بدون أراكيل) ─────────────
 const OUTDOOR_CATS = {
@@ -120,16 +119,28 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
 
     store.setOrders(p => [newOrder, ...p]);
 
-    // خصم المخزون من بار الكفتريا الرئيسي
-    store.setMenu(p => p.map(m => {
-      const ci = cart.find(c => c.itemId === m.id);
-      if (!ci) return m;
-      return {
-        ...m,
-        stock: Math.max(0, (m.stock || 0) - ci.qty),
-        totalSold: (m.totalSold || 0) + ci.qty,
-      };
-    }));
+    // خصم المخزون من بار الكفتريا الرئيسي + مزامنة فورية مع Supabase
+    store.setMenu(p => {
+      const updated = p.map(m => {
+        const ci = cart.find(c => c.itemId === m.id);
+        if (!ci) return m;
+        const newItem = {
+          ...m,
+          stock: Math.max(0, (m.stock || 0) - ci.qty),
+          totalSold: (m.totalSold || 0) + ci.qty,
+        };
+        // مزامنة فورية مع Supabase بشكل مستقل عن store
+        if (SUPABASE_READY) {
+          sbUpsert("menu_items", {
+            id: newItem.id,
+            stock: newItem.stock,
+            total_sold: newItem.totalSold,
+          }, "id").catch(() => {});
+        }
+        return newItem;
+      });
+      return updated;
+    });
 
     // تحديث الطاولة → مشغولة
     store.setOutdoorTables(p => p.map(t =>
