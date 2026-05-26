@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore } from "./lib/store.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbFetch } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
 
 // ═══════════════════════════════════
@@ -4360,12 +4360,22 @@ function OutdoorAdminTab({ store, showToast, dm, settings }) {
                       </div>
                     )}
                     {isBusy && (
-                      <button onClick={() => {
-                        if (!window.confirm(`تحرير ${t.label} بدون دفع؟`)) return;
+                      <button onClick={async () => {
+                        if (!window.confirm(`تحرير ${t.label} بدون دفع؟ سيتم إرجاع المخزون للبار`)) return;
+                        if (tOrder && tOrder.status === "pending") {
+                          store.setMenu(p => p.map(m => {
+                            const ci = tOrder.items?.find(c => c.itemId === m.id);
+                            if (!ci) return m;
+                            const newItem = { ...m, stock: (m.stock||0)+ci.qty, totalSold: Math.max(0,(m.totalSold||0)-ci.qty) };
+                            if (SUPABASE_READY) sbUpsert("menu_items",{id:newItem.id,stock:newItem.stock,total_sold:newItem.totalSold},"id").catch(()=>{});
+                            return newItem;
+                          }));
+                          store.setOrders(p => p.map(o => o.id === tOrder.id ? {...o, status:"cancelled"} : o));
+                        }
                         store.setOutdoorTables(p => p.map(x =>
                           x.id === t.id ? { ...x, status: "free", orderId: null, openedAt: null } : x
                         ));
-                        showToast(`تم تحرير ${t.label}`, "warn");
+                        showToast(`تم تحرير ${t.label} وإرجاع المخزون`, "warn");
                       }} style={{ width: "100%", padding: "7px 0", borderRadius: 8, border: "none",
                         background: "#e65100", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                         تحرير
