@@ -120,6 +120,17 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
 
     store.setOrders(p => [newOrder, ...p]);
 
+    // خصم المخزون من بار الكفتريا الرئيسي
+    store.setMenu(p => p.map(m => {
+      const ci = cart.find(c => c.itemId === m.id);
+      if (!ci) return m;
+      return {
+        ...m,
+        stock: Math.max(0, (m.stock || 0) - ci.qty),
+        totalSold: (m.totalSold || 0) + ci.qty,
+      };
+    }));
+
     // تحديث الطاولة → مشغولة
     store.setOutdoorTables(p => p.map(t =>
       t.id === selTable.id
