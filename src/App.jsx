@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore } from "./lib/store.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { SUPABASE_READY, sbDeleteAll, sbFetch } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbFetch } from "./lib/supabase.js";
 import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
 
 // ═══════════════════════════════════
@@ -60,6 +60,7 @@ const PERMISSIONS = {
   debts:        ["admin","cashier"],
   expenses:     ["admin","cashier"],
   settings:     ["admin"],
+  outdoor_admin:["admin"],
   receipts:     ["admin","cashier"],
   complog:      ["admin","cashier"],
   customers:    ["admin","cashier"],
@@ -997,6 +998,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
     ["reports","📈","التقارير"],
     ["receipts","🧾","الفواتير"],
     ["settings","⚙","الإعدادات"],
+    ["outdoor_admin","🌿","الحديقة — أدمن"],
   ];
   const navItems=navDef.filter(([t])=>canAccess(user.role,t));
 
@@ -1138,7 +1140,8 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="receipts"   &&canAccess(user.role,"receipts")  &&<ReceiptsTab    store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="complog"    &&canAccess(user.role,"complog")   &&<CompLogTab     store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="customers"  &&canAccess(user.role,"customers") &&<CustomerFileTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
-        {tab==="settings"   &&canAccess(user.role,"settings")  &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
+        {tab==="settings"   &&canAccess(user.role,"settings")      &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
+        {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         </ErrorBoundary>
       </main>
       <div style={{height:"env(safe-area-inset-bottom,0px)"}}/>
@@ -4101,6 +4104,318 @@ function SettingsTab({store,showToast,dm,user}){
           💾 حفظ الإعدادات
         </button>
       </div>
+    </div>
+  );
+}
+// ═══════════════════════════════════════════════════════════════
+// OUTDOOR ADMIN TAB — لوحة إدارة الحديقة للأدمن
+// ═══════════════════════════════════════════════════════════════
+function OutdoorAdminTab({ store, showToast, dm, settings }) {
+  const CUR = settings?.currency || "ل.س";
+  const [adminTab, setAdminTab] = React.useState("overview"); // overview | orders | receipts | tables | reset
+
+  const outdoorOrders   = (store.orders   || []).filter(o => o.branch === "outdoor");
+  const outdoorReceipts = (store.receipts || []).filter(r => r.branch === "outdoor");
+  const outdoorCash     = (store.cashLog  || []).filter(e => e.branch === "outdoor");
+  const outdoorTables   = store.outdoorTables || [];
+
+  const totalRevenue  = outdoorCash.filter(e => e.type === "sale").reduce((s, e) => s + (e.amount || 0), 0);
+  const partnerShare  = Math.round(totalRevenue / 3);
+  const cafeShare     = totalRevenue - partnerShare;
+  const pendingCount  = outdoorOrders.filter(o => o.status === "pending").length;
+  const paidCount     = outdoorOrders.filter(o => o.status === "paid").length;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayRevenue = outdoorCash
+    .filter(e => e.type === "sale" && new Date(e.at) >= today)
+    .reduce((s, e) => s + (e.amount || 0), 0);
+
+  // ── تصفير الحديقة ──────────────────────────────────────────
+  const resetOutdoorOrders = async () => {
+    if (!window.confirm("تصفير جميع طلبات الحديقة؟ لا يمكن التراجع!")) return;
+    store.setOrders(p => p.filter(o => o.branch !== "outdoor"));
+    store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
+    if (SUPABASE_READY) {
+      // حذف الطلبات والكاش الخاصة بالحديقة فقط
+      const ids = outdoorOrders.map(o => o.id);
+      for (const id of ids) { try { await sbDelete("orders", id); } catch {} }
+    }
+    showToast("تم تصفير مبيعات الحديقة", "warn");
+  };
+
+  const resetOutdoorReceipts = async () => {
+    if (!window.confirm("تصفير فواتير الحديقة؟")) return;
+    store.setReceipts(p => p.filter(r => r.branch !== "outdoor"));
+    const ids = outdoorReceipts.map(r => r.id);
+    if (SUPABASE_READY) { for (const id of ids) { try { await sbDelete("receipts", id); } catch {} } }
+    showToast("تم تصفير فواتير الحديقة", "warn");
+  };
+
+  const resetOutdoorCash = async () => {
+    if (!window.confirm("تصفير كاش الحديقة؟")) return;
+    store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
+    showToast("تم تصفير كاش الحديقة", "warn");
+  };
+
+  const resetOutdoorTables = () => {
+    if (!window.confirm("تحرير جميع طاولات الحديقة؟")) return;
+    store.setOutdoorTables(p => p.map(t => ({ ...t, status: "free", orderId: null, openedAt: null })));
+    showToast("تم تحرير جميع طاولات الحديقة", "warn");
+  };
+
+  const resetAllOutdoor = async () => {
+    if (!window.confirm("⚠️ تصفير كل بيانات الحديقة (طلبات + كاش + فواتير)؟")) return;
+    store.setOrders(p => p.filter(o => o.branch !== "outdoor"));
+    store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
+    store.setReceipts(p => p.filter(r => r.branch !== "outdoor"));
+    store.setOutdoorTables(p => p.map(t => ({ ...t, status: "free", orderId: null, openedAt: null })));
+    showToast("تم التصفير الشامل للحديقة", "warn");
+  };
+
+  const Card = ({ icon, label, val, sub, color }) => (
+    <div className="card" style={{ borderTop: `4px solid ${color}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ color: "var(--sub)", fontSize: 12, marginBottom: 5 }}>{label}</div>
+          <div style={{ fontSize: 20, fontWeight: 900, color }}>{val}</div>
+          {sub && <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 3 }}>{sub}</div>}
+        </div>
+        <span style={{ fontSize: 28 }}>{icon}</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="fade-in">
+      {/* عنوان */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <span style={{ fontSize: 28 }}>🌿</span>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 900 }}>إدارة الحديقة الخارجية</h2>
+          <div style={{ fontSize: 12, color: "var(--sub)" }}>صلاحيات أدمن كاملة</div>
+        </div>
+      </div>
+
+      {/* تبويبات داخلية */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 20 }}>
+        {[
+          ["overview", "📊", "نظرة عامة"],
+          ["orders",   "📋", "الطلبات"],
+          ["receipts", "🧾", "الفواتير"],
+          ["tables",   "🪑", "الطاولات"],
+          ["reset",    "⚠️", "التصفير"],
+        ].map(([t, icon, label]) => (
+          <button key={t} onClick={() => setAdminTab(t)}
+            style={{
+              padding: "8px 16px", borderRadius: 10, border: "none", fontFamily: "inherit",
+              fontWeight: 700, fontSize: 13, cursor: "pointer", transition: "all .2s",
+              background: adminTab === t ? (t === "reset" ? "#c62828" : "#2e7d32") : "var(--card2)",
+              color: adminTab === t ? "#fff" : "var(--text)",
+            }}>
+            {icon} {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══ نظرة عامة ══ */}
+      {adminTab === "overview" && (
+        <div className="fade-in">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 20 }}>
+            <Card icon="💰" label="إجمالي الحديقة"    val={`${totalRevenue.toLocaleString()} ${CUR}`}  color="#2e7d32" sub="كل الوقت"/>
+            <Card icon="📅" label="مبيعات اليوم"      val={`${todayRevenue.toLocaleString()} ${CUR}`}  color="#1565c0" sub="منذ منتصف الليل"/>
+            <Card icon="🤝" label="حصة الشريك (⅓)"   val={`${partnerShare.toLocaleString()} ${CUR}`}  color="#6a1b9a"/>
+            <Card icon="☕" label="حصة الكافيه (⅔)"   val={`${cafeShare.toLocaleString()} ${CUR}`}     color="#c62828"/>
+            <Card icon="⏳" label="طلبات معلقة"       val={pendingCount}                               color="#f9a825"/>
+            <Card icon="✅" label="طلبات مدفوعة"      val={paidCount}                                  color="#2e7d32"/>
+            <Card icon="🪑" label="طاولات مشغولة"    val={outdoorTables.filter(t=>t.status==="busy").length} color="#e65100" sub={`من ${outdoorTables.length} طاولة`}/>
+            <Card icon="🧾" label="عدد الفواتير"      val={outdoorReceipts.length}                     color="#00897b"/>
+          </div>
+
+          {/* آخر 5 طلبات */}
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 800, marginBottom: 12, color: "var(--sub)" }}>آخر الطلبات</h3>
+            {outdoorOrders.slice(0, 5).length === 0
+              ? <div style={{ color: "var(--sub)", fontSize: 13 }}>لا توجد طلبات</div>
+              : outdoorOrders.slice(0, 5).map(o => (
+                <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>#{o.orderNum}</span>
+                    <span style={{ fontSize: 12, color: "var(--sub)", marginRight: 8 }}>{o.table}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#2e7d32" }}>{o.total.toLocaleString()} {CUR}</span>
+                    <span className={`badge s-${o.status}`}>{STATUS_LABELS[o.status] || o.status}</span>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+
+      {/* ══ الطلبات ══ */}
+      {adminTab === "orders" && (
+        <div className="fade-in">
+          <div className="card">
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>📋 جميع طلبات الحديقة ({outdoorOrders.length})</h3>
+            {outdoorOrders.length === 0
+              ? <div style={{ color: "var(--sub)", textAlign: "center", padding: 24 }}>لا توجد طلبات</div>
+              : outdoorOrders.map(o => (
+                <div key={o.id} style={{ padding: "12px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontWeight: 800, color: "var(--red)" }}>#{o.orderNum}</span>
+                      <span style={{ fontSize: 12, color: "var(--sub)" }}>{o.table}</span>
+                      <span style={{ fontSize: 12, color: "var(--sub)" }}>{o.workerName}</span>
+                    </div>
+                    <span className={`badge s-${o.status}`}>{STATUS_LABELS[o.status] || o.status}</span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                    {(o.items || []).map((it, i) => (
+                      <span key={i} style={{ fontSize: 11, background: "var(--card2)", borderRadius: 6, padding: "2px 8px" }}>
+                        {it.emoji} {it.itemName} ×{it.qty}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                    <span style={{ color: "var(--sub)" }}>
+                      {new Date(o.createdAt).toLocaleString("ar-SY", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                    <span style={{ fontWeight: 700, color: "#2e7d32" }}>{o.total.toLocaleString()} {CUR}</span>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+
+      {/* ══ الفواتير ══ */}
+      {adminTab === "receipts" && (
+        <div className="fade-in">
+          <div className="card">
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>🧾 فواتير الحديقة ({outdoorReceipts.length})</h3>
+            {outdoorReceipts.length === 0
+              ? <div style={{ color: "var(--sub)", textAlign: "center", padding: 24 }}>لا توجد فواتير</div>
+              : outdoorReceipts.map(r => (
+                <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>#{r.orderNum}</div>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>
+                      {r.tableNum} —{" "}
+                      {new Date(r.createdAt).toLocaleString("ar-SY", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>{r.createdBy}</div>
+                  </div>
+                  <div style={{ textAlign: "left" }}>
+                    <div style={{ fontWeight: 900, color: "#2e7d32", fontSize: 15 }}>{(r.total || 0).toLocaleString()} {CUR}</div>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>
+                      {r.paymentType === "cash" ? "💵 نقدي" : r.paymentType === "card" ? "💳 بطاقة" : r.paymentType}
+                    </div>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+
+      {/* ══ الطاولات ══ */}
+      {adminTab === "tables" && (
+        <div className="fade-in">
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>🪑 حالة طاولات الحديقة</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
+              {outdoorTables.map(t => {
+                const isBusy = t.status === "busy";
+                const tOrder = outdoorOrders.find(o => o.id === t.orderId);
+                return (
+                  <div key={t.id} className="card" style={{
+                    border: `2px solid ${isBusy ? "#e65100" : "#2e7d32"}`,
+                    background: isBusy ? (dm ? "#1a1000" : "#fff8e1") : "var(--card2)",
+                  }}>
+                    <div style={{ textAlign: "center", marginBottom: 8 }}>
+                      <div style={{ fontSize: 28 }}>🪑</div>
+                      <div style={{ fontWeight: 900, fontSize: 14, color: isBusy ? "#e65100" : "#2e7d32" }}>{t.label}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: isBusy ? "#e65100" : "#2e7d32" }}>
+                        {isBusy ? "● مشغولة" : "○ فارغة"}
+                      </div>
+                    </div>
+                    {isBusy && tOrder && (
+                      <div style={{ fontSize: 11, color: "var(--sub)", textAlign: "center", marginBottom: 8 }}>
+                        {tOrder.orderNum}<br/>
+                        {tOrder.total.toLocaleString()} {CUR}
+                      </div>
+                    )}
+                    {isBusy && (
+                      <button onClick={() => {
+                        if (!window.confirm(`تحرير ${t.label} بدون دفع؟`)) return;
+                        store.setOutdoorTables(p => p.map(x =>
+                          x.id === t.id ? { ...x, status: "free", orderId: null, openedAt: null } : x
+                        ));
+                        showToast(`تم تحرير ${t.label}`, "warn");
+                      }} style={{ width: "100%", padding: "7px 0", borderRadius: 8, border: "none",
+                        background: "#e65100", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                        تحرير
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              {outdoorTables.length === 0 && (
+                <div style={{ color: "var(--sub)", fontSize: 13 }}>لا توجد طاولات بعد</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ التصفير ══ */}
+      {adminTab === "reset" && (
+        <div className="fade-in">
+          <div className="card" style={{ borderTop: "4px solid #c62828" }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 4, color: "#c62828" }}>⚠️ منطقة التصفير — الحديقة فقط</h3>
+            <p style={{ fontSize: 12, color: "var(--sub)", marginBottom: 20 }}>
+              هذه الأوامر تؤثر على بيانات الحديقة فقط ولا تمس بيانات الكفتريا الرئيسية
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
+              <button onClick={resetOutdoorOrders}
+                style={{ padding: 14, borderRadius: 12, border: "none", background: "#c62828", color: "#fff",
+                  fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                🗑️ تصفير طلبات الحديقة
+              </button>
+
+              <button onClick={resetOutdoorReceipts}
+                style={{ padding: 14, borderRadius: 12, border: "none", background: "#6a1b9a", color: "#fff",
+                  fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                🗑️ تصفير فواتير الحديقة
+              </button>
+
+              <button onClick={resetOutdoorCash}
+                style={{ padding: 14, borderRadius: 12, border: "none", background: "#e65100", color: "#fff",
+                  fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                🗑️ تصفير كاش الحديقة
+              </button>
+
+              <button onClick={resetOutdoorTables}
+                style={{ padding: 14, borderRadius: 12, border: "none", background: "#1565c0", color: "#fff",
+                  fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+                🪑 تحرير جميع الطاولات
+              </button>
+
+              <button onClick={resetAllOutdoor}
+                style={{ padding: 14, borderRadius: 12, border: "2px solid #c62828", background: "transparent",
+                  color: "#c62828", fontWeight: 900, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+                  gridColumn: "1/-1" }}>
+                ⚠️ تصفير شامل للحديقة (كل شيء)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
