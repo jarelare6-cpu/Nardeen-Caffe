@@ -343,11 +343,38 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                       )}
                       {isBusy && (
                         <button className="obtn" onClick={() => {
-                          if (!window.confirm("تحرير الطاولة بدون دفع؟")) return;
+                          if (!window.confirm("تحرير الطاولة بدون دفع؟ سيتم إرجاع المخزون للبار")) return;
+                          // إرجاع المخزون للبار إذا كان الطلب معلقاً
+                          if (tableOrder && tableOrder.status === "pending") {
+                            store.setMenu(p => {
+                              const updated = p.map(m => {
+                                const ci = tableOrder.items?.find(c => c.itemId === m.id);
+                                if (!ci) return m;
+                                const newItem = {
+                                  ...m,
+                                  stock: (m.stock || 0) + ci.qty,
+                                  totalSold: Math.max(0, (m.totalSold || 0) - ci.qty),
+                                };
+                                if (SUPABASE_READY) {
+                                  sbUpsert("menu_items", {
+                                    id: newItem.id,
+                                    stock: newItem.stock,
+                                    total_sold: newItem.totalSold,
+                                  }, "id").catch(() => {});
+                                }
+                                return newItem;
+                              });
+                              return updated;
+                            });
+                            // إلغاء الطلب
+                            store.setOrders(p => p.map(o =>
+                              o.id === tableOrder.id ? { ...o, status: "cancelled" } : o
+                            ));
+                          }
                           store.setOutdoorTables(p => p.map(x =>
                             x.id === t.id ? { ...x, status: "free", orderId: null, openedAt: null } : x
                           ));
-                          showToast("تم تحرير الطاولة", "warn");
+                          showToast("تم تحرير الطاولة وإرجاع المخزون", "warn");
                         }} style={{ background: "#37474f", color: "#fff", width: "100%", fontSize: 11, padding: "6px 0" }}>
                           تحرير
                         </button>
