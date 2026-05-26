@@ -668,7 +668,7 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#8ab4d4", marginBottom: 8 }}>طريقة الدفع</div>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              {[["cash", "💵 نقدي"], ["card", "💳 بطاقة"]].map(([v, label]) => (
+              {[["cash", "💵 نقدي"], ["card", "💳 بطاقة"], ["tron", "💠 ترون"]].map(([v, label]) => (
                 <button key={v} className="obtn" onClick={() => setPayType(v)}
                   style={{
                     flex: 1, background: payType === v ? "#4fc3f7" : "#1a3a5c",
