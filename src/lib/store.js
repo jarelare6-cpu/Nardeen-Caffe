@@ -1,14 +1,21 @@
-// src/lib/store.js — Nardeen Caffe v4.1
+// src/lib/store.js — Nardeen Caffe v6.0
 // ══════════════════════════════════════════════════════════════
-// إضافة فرع الحديقة الخارجية (outdoor) مع كاش وطاولات منفصلة
+// تحسينات v6:
+//  1. تشفير كلمات المرور (hashPassword)
+//  2. setReceipts يرفع لـ Supabase (مُصلح)
+//  3. setCashLog يرفع لـ Supabase (مُصلح)
+//  4. session timeout (30 دقيقة)
+//  5. تنبيه نفاد المخزون عند الوصول لـ minStock
+//  6. subscribeReceipts مربوط بـ store
 // ══════════════════════════════════════════════════════════════
 import { useState, useCallback, useEffect } from "react";
 import {
   supabase, SUPABASE_READY,
   sbUpsert, sbDelete,
+  hashPassword,
   subscribeOrders, subscribeTables,
   subscribeDebts, subscribeExpenses, subscribeMenu,
-  subscribeCompLog, subscribeCustomers,
+  subscribeReceipts, subscribeCompLog, subscribeCustomers,
   subscribeSettings, subscribePermOverrides,
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll,
 } from "./supabase";
@@ -19,88 +26,116 @@ const ls = {
   set: (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 
-// ── BroadcastChannel — مزامنة بين تبويبات نفس الجهاز ─────────
-const bc = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nardeen_v4") : null;
+// ── BroadcastChannel ──────────────────────────────────────────
+const bc = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nardeen_v6") : null;
 const broadcast = (key, data) => { if (bc) bc.postMessage({ key, data, ts: Date.now() }); };
 
 // ══════════════════════════════════════════════════════════════
-// الطاولات الافتراضية — 20 طاولة
+// SESSION TIMEOUT — 30 دقيقة خمول
+// ══════════════════════════════════════════════════════════════
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
+
+export const checkSessionExpiry = () => {
+  try {
+    const raw = sessionStorage.getItem("nc_session");
+    if (!raw) return null;
+    const session = JSON.parse(raw);
+    const lastActive = session._lastActive || session.lastLogin;
+    if (lastActive && Date.now() - new Date(lastActive).getTime() > SESSION_TIMEOUT_MS) {
+      sessionStorage.removeItem("nc_session");
+      return null;
+    }
+    return session;
+  } catch {
+    return null;
+  }
+};
+
+export const touchSession = (user) => {
+  try {
+    const updated = { ...user, _lastActive: new Date().toISOString() };
+    sessionStorage.setItem("nc_session", JSON.stringify(updated));
+    return updated;
+  } catch { return user; }
+};
+
+// ══════════════════════════════════════════════════════════════
+// الطاولات الافتراضية
 // ══════════════════════════════════════════════════════════════
 export const buildDefaultTables = (count = 20) =>
   Array.from({ length: count }, (_, i) => ({
-    id:       `tbl_${i + 1}`,
-    number:   i + 1,
-    num:      String(i + 1),
-    label:    `طاولة ${i + 1}`,
-    seats:    4,
-    status:   "free",
-    note:     "",
-    orderId:  null,
-    openedAt: null,
-    branch:   "main",
+    id: `tbl_${i + 1}`, number: i + 1, num: String(i + 1),
+    label: `طاولة ${i + 1}`, seats: 4, status: "free",
+    note: "", orderId: null, openedAt: null, branch: "main",
   }));
 
 export const buildOutdoorTables = (count = 10) =>
   Array.from({ length: count }, (_, i) => ({
-    id:       `out_${i + 1}`,
-    number:   i + 1,
-    num:      String(i + 1),
-    label:    `حديقة ${i + 1}`,
-    seats:    4,
-    status:   "free",
-    note:     "",
-    orderId:  null,
-    openedAt: null,
-    branch:   "outdoor",
+    id: `out_${i + 1}`, number: i + 1, num: String(i + 1),
+    label: `حديقة ${i + 1}`, seats: 4, status: "free",
+    note: "", orderId: null, openedAt: null, branch: "outdoor",
   }));
 
 // ══════════════════════════════════════════════════════════════
 // الإعدادات الافتراضية
 // ══════════════════════════════════════════════════════════════
 export const DEFAULT_SETTINGS = {
-  cafeName:               "Nardeen Caffe",
-  signature:              "بإدارة يحيى داؤود",
-  currency:               "ل.س",
-  maxDiscount:            50,
+  cafeName: "Nardeen Caffe",
+  signature: "بإدارة يحيى داؤود",
+  currency: "ل.س",
+  maxDiscount: 50,
   workerCanDecreaseStock: false,
-  cashierCanSeeReports:   true,
-  allowCustomerOrders:    true,
-  taxPercent:             0,
-  appLang:                "ar",
-  cashierCode:            "narden",
-  appTheme:               "default",
-  defaultTableCount:      20,
-  // إشعارات وصوت
-  soundEnabled:           false,
-  soundOnReady:           false,
-  soundOnDebt:            false,
-  soundTone:              "bell",
-  notifyBrowser:          false,
-  // طاولات
-  openTableSystem:        true,
-  autoFreeTable:          true,
-  tableTimerAlert:        false,
-  tableAlertMinutes:      60,
-  mergeTableOrders:       false,
-  requireTableOnOrder:    true,
-  printOnNewOrder:        false,
+  cashierCanSeeReports: true,
+  allowCustomerOrders: true,
+  taxPercent: 0,
+  appLang: "ar",
+  cashierCode: "narden",
+  appTheme: "default",
+  defaultTableCount: 20,
+  soundEnabled: false,
+  soundOnReady: false,
+  soundOnDebt: false,
+  soundTone: "bell",
+  notifyBrowser: false,
+  openTableSystem: true,
+  autoFreeTable: true,
+  tableTimerAlert: false,
+  tableAlertMinutes: 60,
+  mergeTableOrders: false,
+  requireTableOnOrder: true,
+  printOnNewOrder: false,
+  // نظام الولاء
+  loyaltyEnabled: true,
+  loyaltyVisitsForReward: 10,  // عدد الزيارات للحصول على مكافأة
+  loyaltyDiscountPercent: 10,  // نسبة الخصم عند تحقق المكافأة
 };
 
-export const DEFAULT_USERS = [
-  { id:"u1", username:"admin",      password:"admin1",    role:"admin",   name:"يحيى داؤود",    email:"admin@nardeen.cafe",      active:true, shift:null },
-  { id:"u2", username:"cashier_am", password:"Cash@AM24", role:"cashier", name:"كاشير الصباح",  email:"cashier.am@nardeen.cafe", active:true, shift:"صباحي" },
-  { id:"u3", username:"cashier_pm", password:"Cash@PM24", role:"cashier", name:"كاشير المساء",  email:"cashier.pm@nardeen.cafe", active:true, shift:"مسائي" },
-  { id:"u4", username:"bar1",       password:"Bar@AM24",  role:"bar",     name:"بار الصباح",    email:"bar1@nardeen.cafe",       active:true, shift:"صباحي" },
-  { id:"u5", username:"bar2",       password:"Bar@PM24",  role:"bar",     name:"بار المساء",    email:"bar2@nardeen.cafe",       active:true, shift:"مسائي" },
-  { id:"u6", username:"hookah1",    password:"Hook@AM24", role:"hookah",  name:"أراكيل الصباح", email:"hookah1@nardeen.cafe",    active:true, shift:"صباحي" },
-  { id:"u7", username:"hookah2",    password:"Hook@PM24", role:"hookah",  name:"أراكيل المساء", email:"hookah2@nardeen.cafe",    active:true, shift:"مسائي" },
-  { id:"u8", username:"worker1",    password:"Work@AM24", role:"worker",  name:"عامل الصباح",   email:"worker1@nardeen.cafe",    active:true, shift:"صباحي" },
-  { id:"u9", username:"worker2",    password:"Work@PM24", role:"worker",  name:"عامل المساء",   email:"worker2@nardeen.cafe",    active:true, shift:"مسائي" },
-  { id:"u_outdoor1", username:"outdoor1", password:"Out@2024", role:"outdoor", name:"عامل الحديقة", email:"outdoor@nardeen.cafe",    active:true, shift:null },
+// ══════════════════════════════════════════════════════════════
+// المستخدمون الافتراضيون — كلمات المرور ستُشفَّر عند أول تشغيل
+// ══════════════════════════════════════════════════════════════
+export const DEFAULT_USERS_PLAIN = [
+  { id:"u1",         username:"admin",      password:"admin1",    role:"admin",   name:"يحيى داؤود",    email:"admin@nardeen.cafe",      active:true, shift:null },
+  { id:"u2",         username:"cashier_am", password:"Cash@AM24", role:"cashier", name:"كاشير الصباح",  email:"cashier.am@nardeen.cafe", active:true, shift:"صباحي" },
+  { id:"u3",         username:"cashier_pm", password:"Cash@PM24", role:"cashier", name:"كاشير المساء",  email:"cashier.pm@nardeen.cafe", active:true, shift:"مسائي" },
+  { id:"u4",         username:"bar1",       password:"Bar@AM24",  role:"bar",     name:"بار الصباح",    email:"bar1@nardeen.cafe",       active:true, shift:"صباحي" },
+  { id:"u5",         username:"bar2",       password:"Bar@PM24",  role:"bar",     name:"بار المساء",    email:"bar2@nardeen.cafe",       active:true, shift:"مسائي" },
+  { id:"u6",         username:"hookah1",    password:"Hook@AM24", role:"hookah",  name:"أراكيل الصباح", email:"hookah1@nardeen.cafe",    active:true, shift:"صباحي" },
+  { id:"u7",         username:"hookah2",    password:"Hook@PM24", role:"hookah",  name:"أراكيل المساء", email:"hookah2@nardeen.cafe",    active:true, shift:"مسائي" },
+  { id:"u8",         username:"worker1",    password:"Work@AM24", role:"worker",  name:"عامل الصباح",   email:"worker1@nardeen.cafe",    active:true, shift:"صباحي" },
+  { id:"u9",         username:"worker2",    password:"Work@PM24", role:"worker",  name:"عامل المساء",   email:"worker2@nardeen.cafe",    active:true, shift:"مسائي" },
+  { id:"u_outdoor1", username:"outdoor1",   password:"Out@2024",  role:"outdoor", name:"عامل الحديقة",  email:"outdoor@nardeen.cafe",    active:true, shift:null },
 ];
 
+// تشفير المستخدمين الافتراضيين عند أول استخدام
+export const getHashedDefaultUsers = async () => {
+  const users = [];
+  for (const u of DEFAULT_USERS_PLAIN) {
+    users.push({ ...u, password: await hashPassword(u.password) });
+  }
+  return users;
+};
+
 export const DEFAULT_MENU = [
-  // ── الكوكتيلات ────────────────────────────────────────────
   { id:"ck1",  name:'كوكتيل فواكه',            nameEn:"Fruit Cocktail",           price:200, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
   { id:"ck2",  name:'كوكتيل "ناردين"',          nameEn:"Nardeen Cocktail",         price:200, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
   { id:"ck3",  name:"كوكتيل موز حليب وفريز",    nameEn:"Banana Milk Strawberry",   price:200, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
@@ -110,7 +145,6 @@ export const DEFAULT_MENU = [
   { id:"ck7",  name:"كوكتيل موز برتقال",        nameEn:"Banana Orange",            price:200, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
   { id:"ck8",  name:"كوكتيل موز فريز شوكولا",   nameEn:"Banana Straw Choc",        price:200, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
   { id:"ck9",  name:"كوكتيل حليب فريز",         nameEn:"Milk Strawberry",          price:180, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
-  // ── العصائر الطبيعية ──────────────────────────────────────
   { id:"j1",   name:"عصير جزر وبرتقال",         nameEn:"Carrot Orange Juice",      price:100, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🥤", active:true },
   { id:"j2",   name:"عصير منغا",                nameEn:"Mango Juice",              price:100, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🥭", active:true },
   { id:"j3",   name:"عصير برتقال",              nameEn:"Orange Juice",             price:100, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍊", active:true },
@@ -122,7 +156,6 @@ export const DEFAULT_MENU = [
   { id:"j9",   name:"عصير بولو",                nameEn:"Polo Juice",               price:160, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥤", active:true },
   { id:"j10",  name:"عصير فريز وتوت",           nameEn:"Strawberry Berry Juice",   price:160, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍓", active:true },
   { id:"j11",  name:"عصير رمان",                nameEn:"Pomegranate Juice",        price:130, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍎", active:true },
-  // ── ميلك شيك ──────────────────────────────────────────────
   { id:"ms1",  name:"ميلك شيك فريز",            nameEn:"Strawberry Milkshake",     price:230, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
   { id:"ms2",  name:"ميلك شيك شوكولا",          nameEn:"Chocolate Milkshake",      price:230, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
   { id:"ms3",  name:"ميلك شيك فانيل",           nameEn:"Vanilla Milkshake",        price:230, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
@@ -131,7 +164,6 @@ export const DEFAULT_MENU = [
   { id:"ms6",  name:"ميلك شيك سيريلاك",         nameEn:"Cerelac Milkshake",        price:230, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
   { id:"ms7",  name:"ميلك شيك مارشميلو",        nameEn:"Marshmallow Milkshake",    price:230, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
   { id:"ms8",  name:'ميلك شيك "ناردين"',         nameEn:"Nardeen Milkshake",        price:230, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🥛", active:true },
-  // ── أيسات ─────────────────────────────────────────────────
   { id:"ic1",  name:"أيس أوريو",                nameEn:"Oreo Ice",                 price:180, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
   { id:"ic2",  name:"أيس ميلو",                 nameEn:"Milo Ice",                 price:180, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
   { id:"ic3",  name:"أيس 3 ب 1",               nameEn:"3in1 Ice",                 price:180, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
@@ -140,7 +172,6 @@ export const DEFAULT_MENU = [
   { id:"ic6",  name:"أيس كافي",                 nameEn:"Ice Coffee",               price:180, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
   { id:"ic7",  name:"أيس دراق فريش",            nameEn:"Fresh Peach Ice",          price:160, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍑", active:true },
   { id:"ic8",  name:"أيس ميلو موز",             nameEn:"Milo Banana Ice",          price:190, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🧊", active:true },
-  // ── المشروبات الساخنة ─────────────────────────────────────
   { id:"m1",   name:"ميلو",                     nameEn:"Milo",                     price:10,  category:"hot_drinks",  stock:100, minStock:10, totalSold:0, emoji:"☕", active:true },
   { id:"m2",   name:"ميلو مع حليب",             nameEn:"Milo with Milk",           price:150, category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"☕", active:true },
   { id:"m3",   name:"نسكافيه",                  nameEn:"Nescafe",                  price:100, category:"hot_drinks",  stock:80,  minStock:10, totalSold:0, emoji:"☕", active:true },
@@ -159,14 +190,12 @@ export const DEFAULT_MENU = [
   { id:"m16",  name:"هوت شوكليت",               nameEn:"Hot Chocolate",            price:100, category:"hot_drinks",  stock:60,  minStock:8,  totalSold:0, emoji:"🍫", active:true },
   { id:"m17",  name:"هوت شوكليت مع حليب",       nameEn:"Hot Choc with Milk",       price:150, category:"hot_drinks",  stock:50,  minStock:8,  totalSold:0, emoji:"🍫", active:true },
   { id:"m18",  name:"نسكافيه مع حليب",          nameEn:"Nescafe with Milk",        price:150, category:"hot_drinks",  stock:50,  minStock:8,  totalSold:0, emoji:"☕", active:true },
-  // ── المشروبات الباردة ─────────────────────────────────────
   { id:"mc1",  name:"كولا",                     nameEn:"Cola",                     price:100, category:"cold_drinks", stock:80,  minStock:10, totalSold:0, emoji:"🥤", active:true },
   { id:"mc2",  name:"سفن أب",                   nameEn:"7Up",                      price:100, category:"cold_drinks", stock:80,  minStock:10, totalSold:0, emoji:"🥤", active:true },
   { id:"mc3",  name:"ميرندا تفاح",              nameEn:"Mirinda Apple",            price:100, category:"cold_drinks", stock:60,  minStock:8,  totalSold:0, emoji:"🥤", active:true },
   { id:"mc4",  name:"ميرندا برتقال",            nameEn:"Mirinda Orange",           price:100, category:"cold_drinks", stock:60,  minStock:8,  totalSold:0, emoji:"🥤", active:true },
   { id:"mc5",  name:"مياه كبيرة",               nameEn:"Large Water",              price:80,  category:"cold_drinks", stock:100, minStock:20, totalSold:0, emoji:"💧", active:true },
   { id:"mc6",  name:"مياه صغيرة",               nameEn:"Small Water",              price:40,  category:"cold_drinks", stock:100, minStock:20, totalSold:0, emoji:"💧", active:true },
-  // ── الأراكيل ──────────────────────────────────────────────
   { id:"hk1",  name:"أركيلة تفاحتين",           nameEn:"Double Apple Hookah",      price:150, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
   { id:"hk2",  name:"أركيلة بولو",              nameEn:"Polo Hookah",              price:130, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
   { id:"hk3",  name:"أركيلة لوف",               nameEn:"Love Hookah",              price:130, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
@@ -179,11 +208,14 @@ export const DEFAULT_MENU = [
 // كتابة إلى Supabase
 // ══════════════════════════════════════════════════════════════
 const sbWrite = {
-  user: (u) => sbUpsert("profiles", {
-    id: u.id, username: u.username, password: u.password,
-    role: u.role, name: u.name, email: u.email || "",
-    active: u.active, shift: u.shift || null,
-  }),
+  user: async (u) => {
+    const pw = await hashPassword(u.password);
+    return sbUpsert("profiles", {
+      id: u.id, username: u.username, password: pw,
+      role: u.role, name: u.name, email: u.email || "",
+      active: u.active, shift: u.shift || null,
+    });
+  },
   deleteUser: (id) => sbDelete("profiles", id),
 
   menuItem: (m) => sbUpsert("menu_items", {
@@ -202,6 +234,8 @@ const sbWrite = {
     table_num: o.table || "", items: o.items,
     total: o.total, discount: o.discount || 0,
     status: o.status, payment_type: o.paymentType || "cash",
+    payment_status: o.paymentStatus || "pending",
+    partial_paid: o.partialPaid || 0,
     notes: o.notes || "", created_at: o.createdAt,
     paid_at: o.paidAt || null, paid_by: o.paidBy || null,
     paid_by_name: o.paidByName || "",
@@ -244,6 +278,7 @@ const sbWrite = {
     is_complimentary: e.isComplimentary || false,
   }),
 
+  // ✅ cash_log يُكتب لـ Supabase
   cashLog: (e) => sbUpsert("cash_log", {
     id: e.id, order_id: e.orderId || null,
     order_num: e.orderNum || "", amount: e.amount,
@@ -251,6 +286,7 @@ const sbWrite = {
     branch: e.branch || "main",
   }),
 
+  // ✅ receipts تُكتب لـ Supabase
   receipt: (r) => sbUpsert("receipts", {
     id: r.id, order_id: r.orderId || null,
     order_num: r.orderNum || "", customer_name: r.customerName || "",
@@ -279,6 +315,7 @@ const sbWrite = {
     total_orders: c.totalOrders || 0,
     total_spent: c.totalSpent || 0,
     notes: c.notes || "",
+    loyalty_points: c.loyaltyPoints || 0,
     created_at: c.createdAt || new Date().toISOString(),
     last_visit: c.lastVisit || null,
     orders: c.orders || [],
@@ -296,6 +333,8 @@ const mapOrder = o => ({
   customerId:   o.customer_id   ?? o.customerId   ?? null,
   table:        o.table_num     ?? o.table        ?? "",
   paymentType:  o.payment_type  ?? o.paymentType  ?? "cash",
+  paymentStatus:o.payment_status?? o.paymentStatus?? "pending",
+  partialPaid:  o.partial_paid  ?? o.partialPaid  ?? 0,
   createdAt:    o.created_at    ?? o.createdAt    ?? new Date().toISOString(),
   paidAt:       o.paid_at       ?? o.paidAt       ?? null,
   paidBy:       o.paid_by       ?? o.paidBy       ?? null,
@@ -376,26 +415,26 @@ const mapCompLog = c => ({
 });
 const mapCustomer = c => ({
   ...c,
-  visits:      c.visits       ?? 0,
-  totalOrders: c.total_orders ?? c.totalOrders ?? 0,
-  totalSpent:  c.total_spent  ?? c.totalSpent  ?? 0,
-  createdAt:   c.created_at   ?? c.createdAt   ?? new Date().toISOString(),
-  lastVisit:   c.last_visit   ?? c.lastVisit   ?? null,
-  orders:      c.orders       ?? [],
+  visits:       c.visits       ?? 0,
+  totalOrders:  c.total_orders ?? c.totalOrders ?? 0,
+  totalSpent:   c.total_spent  ?? c.totalSpent  ?? 0,
+  loyaltyPoints:c.loyalty_points ?? c.loyaltyPoints ?? 0,
+  createdAt:    c.created_at   ?? c.createdAt   ?? new Date().toISOString(),
+  lastVisit:    c.last_visit   ?? c.lastVisit   ?? null,
+  orders:       c.orders       ?? [],
 });
 
 // ══════════════════════════════════════════════════════════════
 // MAIN STORE HOOK
 // ══════════════════════════════════════════════════════════════
 export const useStore = () => {
-  const [users,         setUsersRaw]        = useState(() => ls.get("nc_users",    DEFAULT_USERS));
+  const [users,         setUsersRaw]        = useState(() => ls.get("nc_users",    DEFAULT_USERS_PLAIN));
   const [menu,          setMenuRaw]          = useState(() => ls.get("nc_menu",     DEFAULT_MENU));
   const [orders,        setOrdersRaw]        = useState(() => ls.get("nc_orders",   []));
   const [notifications, setNotificationsRaw] = useState(() => ls.get("nc_notifs",   []));
   const [cashLog,       setCashLogRaw]       = useState(() => ls.get("nc_cash",     []));
   const [tables,        setTablesRaw]        = useState(() => {
     const saved = ls.get("nc_tables", null);
-    // إذا لم تكن الطاولات محفوظة، أنشئ 20 طاولة افتراضية
     return saved && saved.length > 0 ? saved : buildDefaultTables(20);
   });
   const [outdoorTables, setOutdoorTablesRaw] = useState(() => {
@@ -405,14 +444,34 @@ export const useStore = () => {
   const [debts,         setDebtsRaw]         = useState(() => ls.get("nc_debts",    []));
   const [expenses,      setExpensesRaw]      = useState(() => ls.get("nc_expenses", []));
   const [receipts,      setReceiptsRaw]      = useState(() => ls.get("nc_receipts", []));
-  const [settings,      setSettingsRaw]      = useState(() => ls.get("nc_settings", DEFAULT_SETTINGS));
+  const [settings,      setSettingsRaw]      = useState(() => ({ ...DEFAULT_SETTINGS, ...ls.get("nc_settings", {}) }));
   const [compLog,       setCompLogRaw]       = useState(() => ls.get("nc_complog",  []));
   const [customers,     setCustomersRaw]     = useState(() => ls.get("nc_customers",[]));
   const [permOverrides, setPermOverridesRaw] = useState(() => ls.get("nc_perms",   {}));
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
 
-  // ── Setters مع sync إلى Supabase ──────────────────────────
+  // ── تشفير كلمات المرور الافتراضية عند أول تشغيل ──────────
+  useEffect(() => {
+    const alreadyHashed = ls.get("nc_pw_hashed", false);
+    if (alreadyHashed) return;
+    getHashedDefaultUsers().then(hashed => {
+      setUsersRaw(prev => {
+        // طبّق التشفير على المستخدمين الافتراضيين فقط
+        const updated = prev.map(u => {
+          const h = hashed.find(x => x.id === u.id);
+          if (h && !/^[a-f0-9]{64}$/i.test(u.password)) return { ...u, password: h.password };
+          return u;
+        });
+        ls.set("nc_users", updated);
+        ls.set("nc_pw_hashed", true);
+        if (SUPABASE_READY) updated.forEach(u => sbWrite.user(u));
+        return updated;
+      });
+    });
+  }, []);
+
+  // ── Setters ───────────────────────────────────────────────
 
   const setUsers = useCallback((v) => {
     setUsersRaw(p => {
@@ -470,6 +529,7 @@ export const useStore = () => {
     });
   }, []);
 
+  // ✅ cash_log يُرفع لـ Supabase
   const setCashLog = useCallback((v) => {
     setCashLogRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
@@ -523,6 +583,7 @@ export const useStore = () => {
     });
   }, []);
 
+  // ✅ receipts تُرفع لـ Supabase
   const setReceipts = useCallback((v) => {
     setReceiptsRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
@@ -551,7 +612,6 @@ export const useStore = () => {
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(c => c.id));
         next.filter(c => !prevIds.has(c.id)).forEach(c => sbWrite.compLog(c));
-        // حذف العناصر المُزالة
         const nextIds = new Set(next.map(c => c.id));
         p.filter(c => !nextIds.has(c.id)).forEach(c => sbDelete("comp_log", c.id));
       }
@@ -583,7 +643,6 @@ export const useStore = () => {
     });
   }, []);
 
-  // ── إضافة طاولات جديدة (طاولة طاولة) ─────────────────────
   const addTable = useCallback(() => {
     setTablesRaw(p => {
       const maxNum = p.length > 0 ? Math.max(...p.map(t => t.number)) : 0;
@@ -641,20 +700,20 @@ export const useStore = () => {
     const handler = (e) => {
       const { key, data } = e.data;
       switch (key) {
-        case "nc_users":    setUsersRaw(data);        break;
-        case "nc_menu":     setMenuRaw(data);          break;
-        case "nc_orders":   setOrdersRaw(data);        break;
-        case "nc_notifs":   setNotificationsRaw(data); break;
-        case "nc_cash":     setCashLogRaw(data);       break;
-        case "nc_tables":   setTablesRaw(data);        break;
+        case "nc_users":          setUsersRaw(data);        break;
+        case "nc_menu":           setMenuRaw(data);          break;
+        case "nc_orders":         setOrdersRaw(data);        break;
+        case "nc_notifs":         setNotificationsRaw(data); break;
+        case "nc_cash":           setCashLogRaw(data);       break;
+        case "nc_tables":         setTablesRaw(data);        break;
         case "nc_outdoor_tables": setOutdoorTablesRaw(data); break;
-        case "nc_debts":    setDebtsRaw(data);         break;
-        case "nc_expenses": setExpensesRaw(data);      break;
-        case "nc_receipts": setReceiptsRaw(data);      break;
-        case "nc_settings": setSettingsRaw(data);      break;
-        case "nc_complog":  setCompLogRaw(data);       break;
-        case "nc_customers":setCustomersRaw(data);     break;
-        case "nc_perms":    setPermOverridesRaw(data); break;
+        case "nc_debts":          setDebtsRaw(data);         break;
+        case "nc_expenses":       setExpensesRaw(data);      break;
+        case "nc_receipts":       setReceiptsRaw(data);      break;
+        case "nc_settings":       setSettingsRaw(data);      break;
+        case "nc_complog":        setCompLogRaw(data);       break;
+        case "nc_customers":      setCustomersRaw(data);     break;
+        case "nc_perms":          setPermOverridesRaw(data); break;
       }
     };
     bc.addEventListener("message", handler);
@@ -668,20 +727,20 @@ export const useStore = () => {
       try {
         const data = JSON.parse(e.newValue);
         switch (e.key) {
-          case "nc_users":    setUsersRaw(data);        break;
-          case "nc_menu":     setMenuRaw(data);          break;
-          case "nc_orders":   setOrdersRaw(data);        break;
-          case "nc_notifs":   setNotificationsRaw(data); break;
-          case "nc_cash":     setCashLogRaw(data);       break;
-          case "nc_tables":   setTablesRaw(data);        break;
+          case "nc_users":          setUsersRaw(data);        break;
+          case "nc_menu":           setMenuRaw(data);          break;
+          case "nc_orders":         setOrdersRaw(data);        break;
+          case "nc_notifs":         setNotificationsRaw(data); break;
+          case "nc_cash":           setCashLogRaw(data);       break;
+          case "nc_tables":         setTablesRaw(data);        break;
           case "nc_outdoor_tables": setOutdoorTablesRaw(data); break;
-          case "nc_debts":    setDebtsRaw(data);         break;
-          case "nc_expenses": setExpensesRaw(data);      break;
-          case "nc_receipts": setReceiptsRaw(data);      break;
-          case "nc_settings": setSettingsRaw(data);      break;
-          case "nc_complog":  setCompLogRaw(data);       break;
-          case "nc_customers":setCustomersRaw(data);     break;
-          case "nc_perms":    setPermOverridesRaw(data); break;
+          case "nc_debts":          setDebtsRaw(data);         break;
+          case "nc_expenses":       setExpensesRaw(data);      break;
+          case "nc_receipts":       setReceiptsRaw(data);      break;
+          case "nc_settings":       setSettingsRaw(data);      break;
+          case "nc_complog":        setCompLogRaw(data);       break;
+          case "nc_customers":      setCustomersRaw(data);     break;
+          case "nc_perms":          setPermOverridesRaw(data); break;
         }
       } catch {}
     };
@@ -717,17 +776,14 @@ export const useStore = () => {
       if (exp.data?.length)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); ls.set("nc_expenses", d); }
       if (cash.data?.length) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  ls.set("nc_cash",     d); }
       if (rct.data?.length)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); ls.set("nc_receipts", d); }
-      if (tbl.data?.length) {
-        const d = tbl.data.map(mapTable);
-        setTablesRaw(d); ls.set("nc_tables", d);
-      }
+      if (tbl.data?.length)  { const d = tbl.data.map(mapTable);    setTablesRaw(d);   ls.set("nc_tables",   d); }
       if (outdoorTbl.data?.length) {
         const d = outdoorTbl.data.map(mapTable);
         setOutdoorTablesRaw(d); ls.set("nc_outdoor_tables", d);
       }
       if (cmp.data?.length)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
       if (cust.data?.length) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
-      if (sett.data?.data)   { setSettingsRaw(s => ({ ...s, ...sett.data.data })); ls.set("nc_settings", { ...DEFAULT_SETTINGS, ...sett.data.data }); }
+      if (sett.data?.data)   { setSettingsRaw(s => { const n = { ...s, ...sett.data.data }; ls.set("nc_settings", n); return n; }); }
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
       setCloudReady(true);
     }).catch(err => {
@@ -751,7 +807,6 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribeTables((newRow, deletedId) => {
       if (deletedId) {
-        // try both branches
         setTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); ls.set("nc_tables", n); broadcast("nc_tables", n); return n; });
         setOutdoorTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); ls.set("nc_outdoor_tables", n); broadcast("nc_outdoor_tables", n); return n; });
       } else if (newRow) {
@@ -776,7 +831,7 @@ export const useStore = () => {
 
   useEffect(() => {
     if (!SUPABASE_READY || !supabase) return;
-    const ch = supabase.channel("profiles-rt-v4")
+    const ch = supabase.channel("profiles-rt-v6")
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (p) => {
         if (p.eventType === "INSERT" || p.eventType === "UPDATE") {
           setUsersRaw(prev => { const n = [p.new, ...prev.filter(u => u.id !== p.new.id)]; ls.set("nc_users", n); broadcast("nc_users", n); return n; });
@@ -803,6 +858,15 @@ export const useStore = () => {
       (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = [e, ...p.filter(x => x.id !== e.id)]; ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
       (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = p.map(x => x.id === e.id ? e : x);   ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
       (r) => setExpensesRaw(p => { const n = p.filter(x => x.id !== r.id);                                  ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
+    );
+  }, []);
+
+  // ✅ subscribeReceipts مربوط بـ store
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeReceipts(
+      (r) => setReceiptsRaw(p => { const m = mapReceipt(r); const n = [m, ...p.filter(x => x.id !== m.id)]; ls.set("nc_receipts", n); broadcast("nc_receipts", n); return n; }),
+      (r) => setReceiptsRaw(p => { const m = mapReceipt(r); const n = p.map(x => x.id === m.id ? m : x);   ls.set("nc_receipts", n); broadcast("nc_receipts", n); return n; }),
     );
   }, []);
 
