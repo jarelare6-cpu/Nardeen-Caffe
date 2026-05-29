@@ -6,7 +6,15 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore } from "./lib/store.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
-import { playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint } from "./lib/utils.js";
+import {
+  playOrderAlert, exportToExcel, generateTableQR, printOrder as utilPrint,
+  checkStockAlerts, notifyLowStock,
+  sendReceiptWhatsApp, printKitchenTicket,
+  getLoyaltyStatus, calcLoyaltyDiscount,
+  getPartialPaymentStatus,
+  getStaffReport, getPeakHoursData, getSalesComparison,
+} from "./lib/utils.js";
+import { checkSessionExpiry, touchSession } from "./lib/store.js";
 
 // ═══════════════════════════════════
 // CONSTANTS
@@ -268,10 +276,10 @@ export default function NardeenCaffe(){
   const store = useStore();
   // ── FIX 1: حفظ المستخدم في sessionStorage لمنع تسجيل الخروج عند التحديث ──
   const [user,setUser]=useState(()=>{
-    try{const s=sessionStorage.getItem("nc_session");return s?JSON.parse(s):null;}catch{return null;}
+    try{return checkSessionExpiry();}catch{return null;}
   });
   const [screen,setScreen]=useState(()=>{
-    try{const s=sessionStorage.getItem("nc_session");return s?"home":"login";}catch{return "login";}
+    try{const s=checkSessionExpiry();return s?"home":"login";}catch{return "login";}
   });
   const [toast,setToast]=useState(null);
   const [dm,setDm]=useState(()=>localStorage.getItem("nc_dark")==="1");
@@ -288,14 +296,24 @@ export default function NardeenCaffe(){
   },[]);
 
   const login=(u)=>{
-    const u2={...u,lastLogin:new Date().toISOString()};
+    const u2=touchSession({...u,lastLogin:new Date().toISOString()});
     setUser(u2);setScreen("home");
-    try{sessionStorage.setItem("nc_session",JSON.stringify(u2));}catch{}
   };
   const logout=()=>{
     setUser(null);setScreen("login");
     try{sessionStorage.removeItem("nc_session");}catch{}
   };
+
+  // ── session timeout: تحقق كل دقيقة ──
+  useEffect(()=>{
+    if(!user) return;
+    const iv=setInterval(()=>{
+      const s=checkSessionExpiry();
+      if(!s){logout();showToast("انتهت جلستك، يرجى تسجيل الدخول مجدداً","warn");}
+      else touchSession(user);
+    },60_000);
+    return()=>clearInterval(iv);
+  },[user]);
 
   const addNotification=useCallback((msg,targetRoles,orderId)=>{
     store.setNotifications(p=>[{
@@ -363,9 +381,16 @@ function LoginScreen({store,onLogin,showToast,dm}){
   const [error,setError]=useState("");
   const [shake,setShake]=useState(false);
 
-  const doLogin=()=>{
+  const doLogin=async()=>{
     setError("");
-    const u=store.users.find(x=>x.username===username&&x.password===password&&x.active);
+    // دعم كلمات المرور المشفرة وغير المشفرة
+    const { verifyPassword } = await import("./lib/supabase.js");
+    const candidates = store.users.filter(x=>x.username===username&&x.active);
+    let u = null;
+    for(const c of candidates){
+      const ok = await verifyPassword(password, c.password);
+      if(ok){ u=c; break; }
+    }
     if(u){onLogin(u)}
     else{setError("اسم المستخدم أو كلمة المرور غير صحيحة");setShake(true);setTimeout(()=>setShake(false),600)}
   };
@@ -977,6 +1002,16 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
     return()=>clearInterval(t);
   },[]);
 
+  // ── 5. تنبيه نفاد المخزون ─────────────────────────────────
+  const lowStockItems = checkStockAlerts(store.menu);
+  const prevLowRef = useRef(0);
+  useEffect(()=>{
+    if(lowStockItems.length > prevLowRef.current && (user.role==="admin"||user.role==="cashier")){
+      notifyLowStock(lowStockItems, settings);
+    }
+    prevLowRef.current = lowStockItems.length;
+  },[lowStockItems.length]);
+
   const markRead=()=>store.setNotifications(p=>p.map(n=>
     n.targetRoles.includes(user.role)&&!n.read.includes(user.id)?{...n,read:[...n.read,user.id]}:n
   ));
@@ -1033,7 +1068,15 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
             color:"#fff",borderRadius:10,padding:"6px 10px",fontSize:14}}>
             {dm?"☀":"🌙"}
           </button>
-          {/* Notifications */}
+          {lowStockItems.length > 0 && (user.role==="admin"||user.role==="cashier") && (
+            <button onClick={()=>setTab("bar")}
+              style={{background:"rgba(255,152,0,.3)",border:"none",color:"#ffe082",
+                borderRadius:10,padding:"5px 10px",fontSize:12,fontWeight:700,
+                animation:"pulse 2s infinite"}}
+              title={`${lowStockItems.length} أصناف منخفضة المخزون`}>
+              ⚠ {lowStockItems.length}
+            </button>
+          )}
           <div style={{position:"relative"}}>
             <button onClick={()=>{setShowNotifs(s=>!s);markRead()}}
               style={{background:"rgba(255,255,255,.2)",border:"none",color:"#fff",borderRadius:10,
@@ -1901,6 +1944,24 @@ function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                   style={{background:"var(--card2)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:14}}>
                   🖨
                 </button>
+                {/* 12. واتساب الفاتورة */}
+                {["ready","paid"].includes(order.status)&&(
+                  <button onClick={()=>sendReceiptWhatsApp(order, order.customerPhone||"", settings)}
+                    style={{background:"rgba(37,211,102,.15)",border:"none",borderRadius:8,
+                      padding:"8px 10px",fontSize:14,color:"#2e7d32"}}
+                    title="إرسال الفاتورة واتساب">
+                    💬
+                  </button>
+                )}
+                {/* 14. طباعة تذكرة البار */}
+                {["pending","preparing"].includes(order.status)&&canManage&&(
+                  <button onClick={()=>printKitchenTicket(order,"bar",settings)}
+                    style={{background:"rgba(21,101,192,.1)",border:"none",borderRadius:8,
+                      padding:"8px 10px",fontSize:14,color:"#1565c0"}}
+                    title="طباعة تذكرة البار">
+                    🍹
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -3424,6 +3485,34 @@ function CustomerFileTab({ store, showToast, dm, settings }) {
               <div style={{ fontWeight: 700, fontSize: 11, color: "var(--sub)" }}>{new Date(selected.lastVisit).toLocaleDateString("ar-SY")}</div>
             </div>
           </div>
+          {/* 10. نظام الولاء */}
+          {settings?.loyaltyEnabled && (() => {
+            const loy = getLoyaltyStatus(selected, settings);
+            return (
+              <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12,
+                background: loy.eligible ? "rgba(46,125,50,.1)" : "rgba(21,101,192,.07)",
+                border: `1.5px solid ${loy.eligible ? "#2e7d32" : "#1565c0"}20` }}>
+                <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6, color: loy.eligible ? "#2e7d32" : "#1565c0" }}>
+                  ⭐ {loy.eligible ? "مستحق مكافأة!" : "برنامج الولاء"}
+                </div>
+                {loy.eligible ? (
+                  <div style={{ fontSize: 13, color: "#2e7d32", fontWeight: 700 }}>
+                    🎉 خصم {loy.discountPercent}% على طلبه القادم!
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ height: 6, background: "var(--border)", borderRadius: 4, marginBottom: 6 }}>
+                      <div style={{ height: "100%", width: `${(loy.progress/loy.threshold)*100}%`,
+                        background: "#1565c0", borderRadius: 4, transition: "width .5s" }}/>
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--sub)" }}>
+                      {loy.progress}/{loy.threshold} زيارة — يحتاج {loy.nextReward} زيارة أخرى
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>📋 فواتيره ({custOrders.length})</h3>
         {custOrders.map(o => (
@@ -3805,7 +3894,7 @@ function ReportsTab({store,dm,settings}){
         ))}
       </div>
       {topItems.length>0&&(
-        <div className="card">
+        <div className="card" style={{marginBottom:16}}>
           <h3 style={{fontSize:14,fontWeight:800,marginBottom:14}}>🏆 أكثر المبيعات</h3>
           {topItems.map((item,i)=>(
             <div key={item.name} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
@@ -3821,6 +3910,82 @@ function ReportsTab({store,dm,settings}){
           ))}
         </div>
       )}
+
+      {/* 7. مقارنة المبيعات */}
+      {period !== "all" && (() => {
+        const now = new Date();
+        const comp = getSalesComparison(store.orders, start, now);
+        return (
+          <div className="card" style={{marginBottom:16}}>
+            <h3 style={{fontSize:14,fontWeight:800,marginBottom:14}}>📊 مقارنة بالفترة السابقة</h3>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{background:"var(--card2)",borderRadius:10,padding:12,textAlign:"center"}}>
+                <div style={{fontSize:11,color:"var(--sub)",marginBottom:4}}>الفترة الحالية</div>
+                <div style={{fontSize:18,fontWeight:900,color:"#c62828"}}>{comp.current.revenue.toLocaleString()} {CUR}</div>
+                <div style={{fontSize:12,color:"var(--sub)"}}>{comp.current.orders} طلب</div>
+              </div>
+              <div style={{background:"var(--card2)",borderRadius:10,padding:12,textAlign:"center"}}>
+                <div style={{fontSize:11,color:"var(--sub)",marginBottom:4}}>الفترة السابقة</div>
+                <div style={{fontSize:18,fontWeight:900}}>{comp.previous.revenue.toLocaleString()} {CUR}</div>
+                <div style={{fontSize:12,color:"var(--sub)"}}>{comp.previous.orders} طلب</div>
+              </div>
+            </div>
+            <div style={{marginTop:12,textAlign:"center",padding:"10px 0",borderRadius:10,
+              background:comp.isUp?"rgba(46,125,50,.1)":"rgba(198,40,40,.1)"}}>
+              <span style={{fontWeight:900,fontSize:16,color:comp.isUp?"#2e7d32":"#c62828"}}>
+                {comp.isUp?"▲":"▼"} {Math.abs(comp.change)}% {comp.isUp?"زيادة":"انخفاض"}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 9. تقرير الموظف الأفضل */}
+      {(() => {
+        const staffRpt = getStaffReport(store.orders, store.users);
+        if (!staffRpt.length) return null;
+        return (
+          <div className="card" style={{marginBottom:16}}>
+            <h3 style={{fontSize:14,fontWeight:800,marginBottom:14}}>👨‍💼 أفضل الموظفين</h3>
+            {staffRpt.slice(0,5).map((s,i)=>(
+              <div key={s.name} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
+                borderBottom:i<Math.min(staffRpt.length,5)-1?"1px solid var(--border)":"none"}}>
+                <span style={{fontSize:18}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":"👤"}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{s.name}</div>
+                  <div style={{fontSize:11,color:"var(--sub)"}}>{s.orders} طلب</div>
+                </div>
+                <span style={{fontWeight:700,color:"#c62828",fontSize:13}}>{s.revenue.toLocaleString()} {CUR}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* 8. خريطة ساعات الذروة */}
+      {(() => {
+        const peakData = getPeakHoursData(store.orders.filter(o=>o.status==="paid"));
+        const maxCount = Math.max(...peakData.map(h=>h.count), 1);
+        const workHours = peakData.filter(h=>h.count>0);
+        if (!workHours.length) return null;
+        return (
+          <div className="card" style={{marginBottom:16}}>
+            <h3 style={{fontSize:14,fontWeight:800,marginBottom:14}}>⏰ ساعات الذروة</h3>
+            <div style={{display:"flex",alignItems:"flex-end",gap:4,height:80}}>
+              {peakData.map(h=>(
+                <div key={h.hour} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  <div style={{width:"100%",background:h.count===maxCount?"#c62828":"rgba(198,40,40,.25)",borderRadius:"3px 3px 0 0",
+                    height:`${Math.max(4,(h.count/maxCount)*70)}px`,transition:"height .3s"}}/>
+                  {h.hour%4===0&&<div style={{fontSize:8,color:"var(--sub)"}}>{h.hour}:00</div>}
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:8,fontSize:12,color:"var(--sub)",textAlign:"center"}}>
+              ذروة: الساعة {peakData.reduce((a,b)=>b.count>a.count?b:a).hour}:00
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -3908,6 +4073,28 @@ function SettingsTab({store,showToast,dm,user}){
             <input className="input" placeholder="narden" value={form.cashierCode||""}
               onChange={e=>setForm(f=>({...f,cashierCode:e.target.value}))}
               style={{fontFamily:"monospace",letterSpacing:2}}/>
+          </S>
+          {/* 10. نظام الولاء */}
+          <S label="⭐ نظام الولاء">
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <input type="checkbox" checked={form.loyaltyEnabled||false}
+                onChange={e=>setForm(f=>({...f,loyaltyEnabled:e.target.checked}))} id="loyalty"/>
+              <label htmlFor="loyalty" style={{fontSize:13,fontWeight:600}}>تفعيل نظام الولاء</label>
+            </div>
+            {form.loyaltyEnabled&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <div>
+                  <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>عدد الزيارات للمكافأة</label>
+                  <input className="input" type="number" min="1" max="100" value={form.loyaltyVisitsForReward||10}
+                    onChange={e=>setForm(f=>({...f,loyaltyVisitsForReward:+e.target.value}))}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>نسبة الخصم عند المكافأة %</label>
+                  <input className="input" type="number" min="1" max="100" value={form.loyaltyDiscountPercent||10}
+                    onChange={e=>setForm(f=>({...f,loyaltyDiscountPercent:+e.target.value}))}/>
+                </div>
+              </div>
+            )}
           </S>
           <S label="لغة الواجهة">
             <div style={{display:"flex",gap:10}}>
