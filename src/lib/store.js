@@ -90,7 +90,7 @@ export const buildOutdoorTables = (count = 10) =>
 // الإعدادات الافتراضية
 // ══════════════════════════════════════════════════════════════
 export const DEFAULT_SETTINGS = {
-  cafeName: "Nardeen Caffe",
+  cafeName: "ناردين كافيه",
   signature: "بإدارة يحيى داؤود",
   currency: "ل.س",
   maxDiscount: 50,
@@ -235,6 +235,7 @@ const sbWrite = {
     total_sold: m.totalSold || 0, emoji: m.emoji || "",
     active: m.active !== false,
     outdoor_price: m.outdoorPrice ?? null,
+    image_url: m.image || m.imageUrl || "",
   }),
   deleteMenuItem: (id) => sbDelete("menu_items", id),
 
@@ -405,6 +406,7 @@ const mapMenu = m => ({
   minStock:     m.min_stock    ?? m.minStock     ?? 5,
   totalSold:    m.total_sold   ?? m.totalSold    ?? 0,
   outdoorPrice: m.outdoor_price ?? m.outdoorPrice ?? null,
+  image:        m.image_url    ?? m.image       ?? "",
 });
 const mapDebt = d => ({
   ...d,
