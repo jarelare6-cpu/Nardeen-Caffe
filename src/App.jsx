@@ -173,11 +173,17 @@ const GlobalStyle = ({dm,theme="default"}) => {
   const t = THEMES[theme]||THEMES.default;
   return (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&family=El+Messiri:wght@500;600;700&family=Cairo:wght@400;600;700;900&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
     :root{
       --red:${t.primary};--red-dark:${t.secondary};--green:#2e7d32;--gold:${t.accent};
-      --bg:${dm?"#0b0b16":"#eef1fb"};
+      --bg:${dm?"#0b0b16":"#f7eee8"};
+      --grad-bg:${dm
+        ? "radial-gradient(1100px 620px at 88% -8%,rgba(198,40,40,.30),transparent 58%),radial-gradient(900px 560px at -8% 6%,rgba(21,101,192,.26),transparent 55%),linear-gradient(160deg,#0b0b16,#12132c 60%,#0b0b16)"
+        : "radial-gradient(1000px 560px at 92% -6%,rgba(198,40,40,.32),transparent 55%),radial-gradient(820px 520px at -6% 4%,rgba(245,166,35,.26),transparent 55%),linear-gradient(160deg,#fbf2ec,#eef1fb 58%,#fbeee7)"};
+      --card-surface:${dm
+        ? "linear-gradient(160deg,#1b1d36,#15172b)"
+        : "linear-gradient(160deg,#ffffff,#fdf4ee)"};
       --card:${dm?"#181a30":"#ffffff"};
       --card2:${dm?"#20223c":"#eef1f9"};
       --border:${dm?"#2f3358":"#d7dcef"};
@@ -187,12 +193,6 @@ const GlobalStyle = ({dm,theme="default"}) => {
       --shadow-lg:${dm?"0 16px 44px rgba(0,0,0,.6)":"0 16px 40px rgba(40,55,110,.22)"};
       --grad-primary:linear-gradient(135deg,${t.primary},${t.secondary});
       --grad-accent:linear-gradient(135deg,${t.accent},${t.primary});
-      --grad-bg:${dm
-        ? "radial-gradient(1100px 620px at 88% -8%,rgba(198,40,40,.22),transparent 58%),radial-gradient(900px 560px at -8% 6%,rgba(21,101,192,.20),transparent 55%),linear-gradient(160deg,#0b0b16,#11132a 60%,#0b0b16)"
-        : "radial-gradient(1100px 620px at 88% -8%,rgba(198,40,40,.16),transparent 58%),radial-gradient(900px 560px at -8% 6%,rgba(21,101,192,.14),transparent 55%),linear-gradient(160deg,#eef1fb,#e6ebf8 60%,#eef1fb)"};
-      --card-surface:${dm
-        ? "linear-gradient(160deg,#1b1d36,#15172b)"
-        : "linear-gradient(160deg,#ffffff,#f3f5fd)"};
       --glow:0 0 0 3px ${t.primary}40;
       --ring:${t.primary};
       --sp-1:6px;--sp-2:10px;--sp-3:14px;--sp-4:20px;--sp-5:28px;
@@ -259,6 +259,63 @@ const GlobalStyle = ({dm,theme="default"}) => {
       .order-cart{border-radius:var(--radius)!important;max-height:none!important}
     }
     @media(min-width:641px){.show-mobile-only{display:none!important}}
+
+    /* ════════════════════════════════════════════════════════════
+       هوية ناردين الدافئة (v8.3) — طبقة موحّدة تُلوّن الموقع كاملاً
+       ════════════════════════════════════════════════════════════ */
+    :root{
+      --espresso:#3a2417; --caramel:#a8682f; --gold:#d9a441; --cream:#fff7ee;
+      --bg:${dm?"#140d08":"#fbf3ea"};
+      --card:${dm?"#1f160d":"#fffaf3"};
+      --card2:${dm?"#281a0e":"#f5e9da"};
+      --border:${dm?"#33240f":"#ead7c0"};
+      --text:${dm?"#f0e7db":"#3a2417"};
+      --sub:${dm?"#b39b82":"#8a6a4d"};
+      --card-surface:${dm?"linear-gradient(160deg,#211710,#191007)":"linear-gradient(160deg,#fffaf3,#fdf0e1)"};
+      --ring:#a8682f; --glow:0 0 0 3px rgba(168,104,47,.20);
+    }
+    /* خلفية كريمية دافئة + توهج قهوة وذهب */
+    body{
+      background:${dm
+        ? "radial-gradient(960px 540px at 92% -8%,rgba(168,104,47,.30),transparent 55%),radial-gradient(780px 480px at -6% 4%,rgba(217,164,65,.14),transparent 55%),linear-gradient(160deg,#140d08,#1d130b 60%,#140d08)"
+        : "radial-gradient(1000px 560px at 92% -6%,rgba(168,104,47,.18),transparent 55%),radial-gradient(820px 520px at -6% 4%,rgba(217,164,65,.20),transparent 55%),linear-gradient(160deg,#fbf3ea,#f6ebde 58%,#fdf6ee)"} !important;
+      color:${dm?"#f0e7db":"#3a2417"} !important;
+      background-attachment:fixed !important;
+    }
+    /* خطوط حيّة: عناوين El Messiri، نص Cairo */
+    h1,h2,h3,h4{font-family:'El Messiri','Tajawal',sans-serif !important; letter-spacing:.3px; line-height:1.35}
+    body,button,input,select,textarea{font-family:'Cairo','Tajawal',sans-serif}
+    /* الهيدر: تدرّج إسبريسو → كراميل */
+    header{
+      background:linear-gradient(120deg,#2b190e 0%,#5a331c 48%,#9a5526 100%) !important;
+      box-shadow:0 6px 28px rgba(58,36,23,.40) !important;
+    }
+    /* شريط التنقل دافئ */
+    nav{
+      background:${dm?"#1b120a":"#fff7ee"} !important;
+      border-bottom:2px solid ${dm?"#2c1d10":"#ecd9c2"} !important;
+    }
+    /* البطاقات: سطح كريمي بعمق ودفء */
+    .card{
+      background:var(--card-surface) !important;
+      border:1px solid ${dm?"rgba(217,164,65,.14)":"rgba(168,104,47,.16)"} !important;
+      border-radius:16px !important;
+      box-shadow:${dm?"0 8px 26px rgba(0,0,0,.50)":"0 10px 28px rgba(120,72,30,.10)"} !important;
+    }
+    .card.hoverable:hover{
+      transform:translateY(-4px) !important;
+      box-shadow:${dm?"0 18px 44px rgba(0,0,0,.6)":"0 18px 44px rgba(120,72,30,.20)"} !important;
+    }
+    /* الحقول والأزرار: حواف أنعم + تركيز دافئ */
+    .input,input,select,textarea{border-radius:12px}
+    .input:focus,input:focus,select:focus,textarea:focus{
+      border-color:#a8682f !important; box-shadow:0 0 0 3px rgba(168,104,47,.18) !important;
+    }
+    .btn,button{border-radius:12px}
+    /* روح في العناوين: لون قهوة دافئ + وزن */
+    h1,h2{color:${dm?"#f3eadf":"#4a2c18"}; font-weight:700}
+    /* تمرير دافئ */
+    ::selection{background:rgba(168,104,47,.30)}
   `}</style>
   );
 }
@@ -1126,7 +1183,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#fff",color:"#c62828",borderRadius:6,padding:"1px 5px"}}>v8.1</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#fff",color:"#c62828",borderRadius:6,padding:"1px 5px"}}>v8.3</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>
@@ -1305,14 +1362,20 @@ function DashboardTab({store,dm,settings}){
   const maxRev=Math.max(...hourly.map(d=>d.rev),1);
 
   const Stat=({icon,label,val,sub,color})=>(
-    <div className="card hoverable" style={{borderTop:`4px solid ${color}`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+    <div className="card hoverable" style={{
+      background:`linear-gradient(135deg, ${color}26, var(--card) 70%)`,
+      border:`1px solid ${color}40`,
+      borderTop:`4px solid ${color}`,
+      boxShadow:`0 10px 26px ${color}22, var(--shadow)`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
         <div>
-          <div style={{color:"var(--sub)",fontSize:12,marginBottom:5}}>{label}</div>
-          <div style={{fontSize:20,fontWeight:900,color}}>{val}</div>
-          {sub&&<div style={{fontSize:11,color:"var(--sub)",marginTop:3}}>{sub}</div>}
+          <div style={{color:"var(--sub)",fontSize:12,marginBottom:6,fontWeight:600}}>{label}</div>
+          <div style={{fontSize:24,fontWeight:900,color}}>{val}</div>
+          {sub&&<div style={{fontSize:11,color:"var(--sub)",marginTop:4}}>{sub}</div>}
         </div>
-        <span style={{fontSize:28}}>{icon}</span>
+        <span style={{fontSize:24,width:48,height:48,flexShrink:0,display:"flex",alignItems:"center",
+          justifyContent:"center",borderRadius:16,background:`${color}26`,
+          boxShadow:`inset 0 0 0 1px ${color}33`}}>{icon}</span>
       </div>
     </div>
   );
