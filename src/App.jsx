@@ -56,6 +56,31 @@ const CAT_LABELS = {
 };
 const CAT_ORDER = ["hot_drinks","cold_drinks","food","hookah"];
 
+// ── Phase 1: عرض صورة الصنف مع fallback للإيموجي ──────────────
+function ItemVisual({ item, size = 40, round = 12 }) {
+  const img = (item?.image || "").trim();
+  const emoji = item?.emoji || "🍽";
+  if (img) {
+    return (
+      <span style={{ display: "inline-block" }}>
+        <img
+          src={img}
+          alt={item?.name || ""}
+          loading="lazy"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+            const ph = e.currentTarget.nextSibling;
+            if (ph) ph.style.display = "block";
+          }}
+          style={{ width: size, height: size, objectFit: "cover", borderRadius: round, display: "block", margin: "0 auto" }}
+        />
+        <span style={{ display: "none", fontSize: Math.round(size * 0.8) }}>{emoji}</span>
+      </span>
+    );
+  }
+  return <div style={{ fontSize: Math.round(size * 0.8) }}>{emoji}</div>;
+}
+
 // Permissions per role
 const PERMISSIONS = {
   dashboard:    ["admin","cashier"],
@@ -104,7 +129,7 @@ const generateReceiptPDF = async (order, settings, tronAmount = 0) => {
     `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${it.emoji || ""} ${it.itemName}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:center">×${it.qty}</td><td style="padding:4px 8px;border-bottom:1px solid #eee;text-align:left;font-weight:700;color:#c62828">${(it.price * it.qty).toLocaleString()} ${CUR}</td></tr>`
   ).join("");
   const payLabel = order.paymentType === "cash" ? "💵 نقدي" : order.paymentType === "card" ? "💳 بطاقة" : order.paymentType === "tron" ? "💠 ترون" : order.paymentType === "debt" ? "📋 دين" : order.paymentType || "نقدي";
-  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>فاتورة #${order.orderNum||order.id}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;direction:rtl;color:#1a1a2e;background:#fff}.wrapper{max-width:380px;margin:0 auto;padding:24px 20px}.header{text-align:center;border-bottom:2px solid #c62828;padding-bottom:16px;margin-bottom:16px}.header h1{font-size:22px;color:#c62828;margin-bottom:4px}.header p{font-size:12px;color:#666}.meta{display:flex;justify-content:space-between;margin-bottom:12px;font-size:12px;color:#444}table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}.totals{background:#f9f9f9;border-radius:8px;padding:12px;margin-bottom:12px}.totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}.totals .grand{font-size:16px;font-weight:900;color:#c62828;border-top:2px solid #c62828;padding-top:8px;margin-top:4px}.tron{background:#e8f5e9;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#2e7d32;font-weight:700;text-align:center}.footer{text-align:center;border-top:1px dashed #ccc;padding-top:12px;font-size:11px;color:#888}@media print{body{background:white}}</style></head><body><div class="wrapper"><div class="header"><h1>☕ ${cafeName}</h1><p>${signature}</p></div><div class="meta"><span><strong>رقم الفاتورة:</strong> #${order.orderNum||order.id}</span><span>${dateStr} ${timeStr}</span></div>${order.table?`<div class="meta"><span><strong>الطاولة:</strong> ${order.table}</span><span><strong>الزبون:</strong> ${order.customerName||"زبون"}</span></div>`:""}<table><thead><tr style="background:#f0f0f0"><th style="padding:6px 8px;text-align:right">الصنف</th><th style="padding:6px 8px;text-align:center">الكمية</th><th style="padding:6px 8px;text-align:left">السعر</th></tr></thead><tbody>${itemsHTML}</tbody></table><div class="totals">${(order.discount||0)>0?`<div><span>قبل الخصم</span><span>${(order.originalTotal||order.total).toLocaleString()} ${CUR}</span></div><div style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${((order.originalTotal||0)-order.total).toLocaleString()} ${CUR}</span></div>`:""}<div class="grand"><span>الإجمالي</span><span>${(order.total||0).toLocaleString()} ${CUR}</span></div>${tronAmount>0?`<div style="color:#1565c0;margin-top:4px"><span>💠 الترون</span><span>${tronAmount.toLocaleString()} ${CUR}</span></div>`:""}<div style="margin-top:6px;font-size:12px"><span>طريقة الدفع</span><span>${payLabel}</span></div></div>${tronAmount>0?`<div class="tron">💠 مبلغ الترون: ${tronAmount.toLocaleString()} ${CUR}</div>`:""}</div>${order.notes?`<div style="background:#fff9e6;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#795548">📝 ${order.notes}</div>`:""}<div class="footer"><p>شكراً لزيارتكم ☕</p>${staffName?`<p style="margin-top:4px;font-weight:700">الموظف: ${staffName}</p>`:""}<p style="margin-top:6px">${cafeName} — ${signature}</p></div></div></div><script>window.addEventListener('load',()=>{window.print();});</script></body></html>`;
+  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>فاتورة #${order.orderNum||order.id}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;direction:rtl;color:#1a1a2e;background:#fff}.wrapper{max-width:380px;margin:0 auto;padding:24px 20px}.header{text-align:center;background:linear-gradient(135deg,#8e0000,#c62828);color:#fff;border-radius:12px;padding:18px 12px;margin-bottom:16px}.header h1{font-size:22px;color:#fff;margin-bottom:4px}.header p{font-size:12px;color:rgba(255,255,255,.85)}.meta{display:flex;justify-content:space-between;margin-bottom:12px;font-size:12px;color:#444}table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}.totals{background:#f9f9f9;border-radius:8px;padding:12px;margin-bottom:12px}.totals div{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}.totals .grand{font-size:16px;font-weight:900;color:#c62828;border-top:2px solid #c62828;padding-top:8px;margin-top:4px}.tron{background:#e8f5e9;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#2e7d32;font-weight:700;text-align:center}.footer{text-align:center;border-top:1px dashed #ccc;padding-top:12px;font-size:11px;color:#888}@media print{body{background:white}}</style></head><body><div class="wrapper"><div class="header"><h1>☕ ${cafeName}</h1><p>${signature}</p></div><div class="meta"><span><strong>رقم الفاتورة:</strong> #${order.orderNum||order.id}</span><span>${dateStr} ${timeStr}</span></div>${order.table?`<div class="meta"><span><strong>الطاولة:</strong> ${order.table}</span><span><strong>الزبون:</strong> ${order.customerName||"زبون"}</span></div>`:""}<table><thead><tr style="background:#f0f0f0"><th style="padding:6px 8px;text-align:right">الصنف</th><th style="padding:6px 8px;text-align:center">الكمية</th><th style="padding:6px 8px;text-align:left">السعر</th></tr></thead><tbody>${itemsHTML}</tbody></table><div class="totals">${(order.discount||0)>0?`<div><span>قبل الخصم</span><span>${(order.originalTotal||order.total).toLocaleString()} ${CUR}</span></div><div style="color:#2e7d32"><span>خصم ${order.discount}%</span><span>-${((order.originalTotal||0)-order.total).toLocaleString()} ${CUR}</span></div>`:""}<div class="grand"><span>الإجمالي</span><span>${(order.total||0).toLocaleString()} ${CUR}</span></div>${tronAmount>0?`<div style="color:#1565c0;margin-top:4px"><span>💠 الترون</span><span>${tronAmount.toLocaleString()} ${CUR}</span></div>`:""}<div style="margin-top:6px;font-size:12px"><span>طريقة الدفع</span><span>${payLabel}</span></div></div>${tronAmount>0?`<div class="tron">💠 مبلغ الترون: ${tronAmount.toLocaleString()} ${CUR}</div>`:""}</div>${order.notes?`<div style="background:#fff9e6;border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;color:#795548">📝 ${order.notes}</div>`:""}<div class="footer"><p>شكراً لزيارتكم ☕</p>${staffName?`<p style="margin-top:4px;font-weight:700">الموظف: ${staffName}</p>`:""}<p style="margin-top:6px">${cafeName} — ${signature}</p></div></div></div><script>window.addEventListener('load',()=>{window.print();});</script></body></html>`;
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const win = window.open(url, "_blank", "width=450,height=700");
@@ -159,19 +184,27 @@ const GlobalStyle = ({dm,theme="default"}) => {
       --text:${dm?"#e8eaf6":"#1a1c2e"};
       --sub:${dm?"#8890b0":"#6b7280"};
       --shadow:${dm?"0 4px 24px rgba(0,0,0,.45)":"0 2px 16px rgba(30,40,80,.08)"};
-      --radius:14px;
+      --shadow-lg:${dm?"0 14px 40px rgba(0,0,0,.55)":"0 14px 40px rgba(30,40,80,.16)"};
+      --grad-primary:linear-gradient(135deg,${t.primary},${t.secondary});
+      --grad-accent:linear-gradient(135deg,${t.accent},${t.primary});
+      --grad-bg:${dm?"radial-gradient(1200px 600px at 80% -10%,rgba(198,40,40,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(21,101,192,.10),transparent 55%)":"radial-gradient(1100px 560px at 85% -12%,rgba(198,40,40,.07),transparent 60%),radial-gradient(800px 480px at -8% 8%,rgba(21,101,192,.06),transparent 55%)"};
+      --glow:0 0 0 3px ${t.primary}33;
+      --ring:${t.primary};
+      --sp-1:6px;--sp-2:10px;--sp-3:14px;--sp-4:20px;--sp-5:28px;
+      --radius:14px;--radius-sm:10px;--radius-lg:20px;
     }
-    body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);color:var(--text);overflow-x:hidden}
+    body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);background-image:var(--grad-bg);background-attachment:fixed;color:var(--text);overflow-x:hidden;-webkit-font-smoothing:antialiased}
     ${theme==="dark"?":root{--bg:#080810;--card:#0e0e1a;--card2:#141420;--border:#1e1e2e;--text:#e8eaf6;--sub:#7070a0;--shadow:0 4px 24px rgba(0,0,0,.7);}":""}
     button{cursor:pointer;font-family:inherit;direction:rtl}
     input,select,textarea{font-family:inherit;direction:rtl;background:var(--card);color:var(--text)}
-    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
-    .input{width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;outline:none;transition:border .2s;background:var(--card);color:var(--text)}
-    .input:focus{border-color:var(--red)}
-    .btn{border:none;border-radius:10px;padding:10px 20px;font-weight:700;font-size:14px;transition:all .2s;display:inline-flex;align-items:center;gap:6px;justify-content:center}
-    .btn:hover{filter:brightness(1.1);transform:translateY(-1px)}
-    .btn:active{transform:translateY(0)}
-    .btn-red{background:var(--red);color:#fff}
+    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border:1px solid ${dm?"rgba(255,255,255,.04)":"rgba(20,30,60,.04)"};transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s ease}
+    .card.hoverable:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
+    .input{width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;outline:none;transition:border .2s,box-shadow .2s;background:var(--card);color:var(--text)}
+    .input:focus{border-color:var(--ring);box-shadow:var(--glow)}
+    .btn{border:none;border-radius:10px;padding:10px 20px;font-weight:700;font-size:14px;transition:transform .15s ease,box-shadow .2s ease,filter .2s ease;display:inline-flex;align-items:center;gap:6px;justify-content:center;position:relative;overflow:hidden}
+    .btn:hover{filter:brightness(1.07);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.18)}
+    .btn:active{transform:translateY(0) scale(.98)}
+    .btn-red{background:var(--grad-primary);color:#fff}
     .btn-green{background:var(--green);color:#fff}
     .btn-blue{background:#1565c0;color:#fff}
     .btn-ghost{background:transparent;border:1.5px solid var(--border);color:var(--text)}
@@ -182,12 +215,36 @@ const GlobalStyle = ({dm,theme="default"}) => {
     .s-paid{background:${dm?"rgba(84,110,122,.2)":"#f5f5f5"};color:#546e7a}
     .s-cancelled{background:${dm?"rgba(198,40,40,.2)":"#ffebee"};color:#c62828}
     .s-debt{background:${dm?"rgba(106,27,154,.2)":"#f3e5f5"};color:#6a1b9a}
-    .fade-in{animation:fadeIn .3s ease}
-    @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-    .slide-in{animation:slideIn .3s ease}
+    .fade-in{animation:fadeIn .35s cubic-bezier(.2,.7,.3,1)}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    .slide-in{animation:slideIn .35s cubic-bezier(.2,.7,.3,1)}
     @keyframes slideIn{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}
     .pulse{animation:pulse 2s infinite}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+    .pop-in{animation:popIn .35s cubic-bezier(.34,1.56,.64,1)}
+    @keyframes popIn{0%{opacity:0;transform:scale(.85)}100%{opacity:1;transform:scale(1)}}
+    .scale-in{animation:scaleIn .3s ease}
+    @keyframes scaleIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+    /* Staggered list entrance — set --i inline (index) */
+    .stagger>*{animation:fadeIn .4s both cubic-bezier(.2,.7,.3,1);animation-delay:calc(var(--i,0) * 45ms)}
+    /* Skeleton shimmer loaders */
+    .skeleton{position:relative;overflow:hidden;background:var(--card2);border-radius:10px}
+    .skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+      background:linear-gradient(90deg,transparent,${dm?"rgba(255,255,255,.06)":"rgba(255,255,255,.65)"},transparent);
+      animation:shimmer 1.4s infinite}
+    @keyframes shimmer{100%{transform:translateX(100%)}}
+    .floatY{animation:floatY 3.5s ease-in-out infinite}
+    @keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+    /* Product tile hover */
+    .item-tile{transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s ease,border-color .25s ease}
+    .item-tile:hover{transform:translateY(-4px) scale(1.02);box-shadow:0 12px 30px rgba(0,0,0,.35);border-color:rgba(255,255,255,.28)!important}
+    .order-item-card{transition:transform .2s cubic-bezier(.2,.7,.3,1),box-shadow .2s ease}
+    .order-item-card:hover{transform:translateY(-3px)}
+    .order-item-card:active{transform:scale(.97)}
+    /* Soft entrance for badges/counters */
+    .bump{animation:bump .3s ease}
+    @keyframes bump{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+    @media (prefers-reduced-motion: reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important}}
     .scroll-hide::-webkit-scrollbar{display:none}
     .scroll-hide{-ms-overflow-style:none;scrollbar-width:none}
     @media(max-width:640px){
@@ -289,6 +346,15 @@ export default function NardeenCaffe(){
   const [toast,setToast]=useState(null);
   const [dm,setDm]=useState(()=>localStorage.getItem("nc_dark")==="1");
   const prevLen=useRef(store.orders.length);
+
+  // ── Phase 4: مُسجّل أخطاء عام للتشخيص (لا يكسر الواجهة) ──
+  useEffect(()=>{
+    const onErr=(e)=>console.error("[Nardeen] خطأ غير متوقع:",e.error||e.message||e);
+    const onRej=(e)=>console.error("[Nardeen] وعد مرفوض:",e.reason);
+    window.addEventListener("error",onErr);
+    window.addEventListener("unhandledrejection",onRej);
+    return()=>{window.removeEventListener("error",onErr);window.removeEventListener("unhandledrejection",onRej);};
+  },[]);
 
   useEffect(()=>{
     if(store.orders.length>prevLen.current&&user) playOrderAlert();
@@ -603,7 +669,7 @@ function CustomerLanding({store,onEnter,onLogout,dm}){
                     style={{background:"rgba(255,255,255,0.07)",border:"1.5px solid rgba(255,255,255,0.12)",
                       borderRadius:16,padding:"16px 12px",textAlign:"center",transition:"all .3s",
                       boxShadow:"0 4px 16px rgba(0,0,0,.3)"}}>
-                    <div style={{fontSize:40,marginBottom:8}}>{item.emoji}</div>
+                    <div style={{marginBottom:8,minHeight:48,display:"flex",alignItems:"center",justifyContent:"center"}}><ItemVisual item={item} size={48} round={14}/></div>
                     <div style={{color:"#fff",fontWeight:700,fontSize:13,marginBottom:6,lineHeight:1.3}}>{item.name}</div>
                     <div style={{color:"#ff8a80",fontWeight:900,fontSize:14}}>{item.price.toLocaleString()} {CUR}</div>
                   </div>
@@ -798,11 +864,11 @@ function CustomerPortal({user,store,onLogout,showToast,addNotification,dm}){
                     {items.map(item=>{
                       const inCart=cart.find(c=>c.itemId===item.id);
                       return(
-                        <div key={item.id} onClick={()=>addToCart(item)}
+                        <div key={item.id} onClick={()=>addToCart(item)} className="order-item-card"
                           style={{background:"var(--card)",borderRadius:14,padding:14,cursor:"pointer",
                             transition:"all .2s",boxShadow:inCart?"0 0 0 2.5px #c62828,var(--shadow)":"var(--shadow)",
                             transform:inCart?"scale(1.03)":"scale(1)",position:"relative",userSelect:"none"}}>
-                          <div style={{fontSize:32,textAlign:"center",marginBottom:8}}>{item.emoji}</div>
+                          <div style={{marginBottom:8,minHeight:42,display:"flex",alignItems:"center",justifyContent:"center"}}><ItemVisual item={item} size={42} round={12}/></div>
                           <div style={{fontSize:13,fontWeight:700,textAlign:"center",marginBottom:4}}>{item.name}</div>
                           <div style={{fontSize:13,fontWeight:900,color:"#c62828",textAlign:"center"}}>
                             {item.price.toLocaleString()} {CUR}
@@ -1059,13 +1125,15 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
           {SUPABASE_READY?(
-            <span className="hide-mobile" style={{fontSize:10,background:"rgba(46,125,50,.3)",borderRadius:8,
-              padding:"3px 8px",color:"#a5d6a7",fontWeight:700}}>
+            <span style={{fontSize:10,background:store.syncing?"rgba(255,193,7,.3)":"rgba(46,125,50,.3)",borderRadius:8,
+              padding:"3px 8px",color:store.syncing?"#fff3c4":"#a5d6a7",fontWeight:700,
+              animation:store.syncing?"pulse 1.2s infinite":"none"}}>
               {store.syncing?"🔄 تزامن...":"☁ متصل"}
             </span>
           ):(
-            <span className="hide-mobile" style={{fontSize:10,background:"rgba(249,168,37,.25)",
-              borderRadius:8,padding:"3px 8px",color:"#ffe082",fontWeight:700}}>💾 محلي</span>
+            <span style={{fontSize:10,background:"rgba(229,57,53,.32)",
+              borderRadius:8,padding:"3px 8px",color:"#ffcdd2",fontWeight:800,
+              animation:"pulse 2s infinite"}} title="غير متصل بالسحابة — لن تتزامن البيانات بين الأجهزة">⚠ محلي</span>
           )}
           <span className="hide-mobile" style={{fontSize:12,background:"rgba(255,255,255,.15)",
             borderRadius:8,padding:"4px 10px",fontWeight:700}}>
@@ -1164,7 +1232,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
                 fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
                 whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
                 <span>{icon}</span>
-                <span className="hide-mobile">{label}</span>
+                <span className="nav-label">{label}</span>
               </button>
             ))}
           </div>
@@ -1229,7 +1297,7 @@ function DashboardTab({store,dm,settings}){
   const maxRev=Math.max(...hourly.map(d=>d.rev),1);
 
   const Stat=({icon,label,val,sub,color})=>(
-    <div className="card" style={{borderTop:`4px solid ${color}`}}>
+    <div className="card hoverable scale-in" style={{borderTop:`4px solid ${color}`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div>
           <div style={{color:"var(--sub)",fontSize:12,marginBottom:5}}>{label}</div>
@@ -2741,7 +2809,6 @@ function ExpensesTab({store,user,showToast,dm,settings}){
     {id:"rent",label:"🏠 إيجار"},
     {id:"utilities",label:"💡 خدمات"},
     {id:"maintenance",label:"🔧 صيانة"},
-    {id:"complimentary",label:"🎁 ضيافة"},
     {id:"other",label:"📦 أخرى"},
   ];
 
@@ -3065,7 +3132,7 @@ function HookahTab({store,user,showToast,addNotification,dm,settings}){
 function MenuTab({store,showToast,dm,settings}){
   const [showForm,setShowForm]=useState(false);
   const [editItem,setEditItem]=useState(null);
-  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕"});
+  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕",image:""});
   const [cat,setCat]=useState("all");
 
   const filtered=cat==="all"?store.menu:store.menu.filter(m=>m.category===cat);
@@ -3079,12 +3146,12 @@ function MenuTab({store,showToast,dm,settings}){
       store.setMenu(p=>[...p,{id:"m"+Date.now(),...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,totalSold:0}]);
       showToast("تم إضافة الصنف");
     }
-    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕"});
+    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕",image:""});
   };
 
   const openEdit=(item)=>{
     setEditItem(item);
-    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),emoji:item.emoji||"☕"});
+    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),emoji:item.emoji||"☕",image:item.image||""});
     setShowForm(true);
   };
 
@@ -3110,8 +3177,8 @@ function MenuTab({store,showToast,dm,settings}){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(185px,1fr))",gap:12}}>
         {filtered.map(item=>(
-          <div key={item.id} className="card" style={{position:"relative"}}>
-            <div style={{fontSize:32,textAlign:"center",marginBottom:6}}>{item.emoji}</div>
+          <div key={item.id} className="card hoverable" style={{position:"relative"}}>
+            <div style={{textAlign:"center",marginBottom:6,minHeight:36,display:"flex",alignItems:"center",justifyContent:"center"}}><ItemVisual item={item} size={36} round={10}/></div>
             <div style={{fontWeight:800,fontSize:13,textAlign:"center"}}>{item.name}</div>
             <div style={{fontSize:11,textAlign:"center",color:"var(--sub)",marginBottom:2}}>{CAT_LABELS[item.category]}</div>
             <div style={{color:"#c62828",fontWeight:900,textAlign:"center",fontSize:14,marginTop:4}}>
@@ -3133,12 +3200,19 @@ function MenuTab({store,showToast,dm,settings}){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:400,maxHeight:"88vh",overflowY:"auto"}}>
             <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>{editItem?"✏ تعديل الصنف":"➕ إضافة صنف"}</div>
-            {[["الاسم بالعربية","name","text"],["الاسم بالإنجليزية","nameEn","text"],["السعر","price","number"],["المخزون","stock","number"],["الحد الأدنى","minStock","number"],["إيموجي","emoji","text"]].map(([label,key,type])=>(
+            {[["الاسم بالعربية","name","text"],["الاسم بالإنجليزية","nameEn","text"],["السعر","price","number"],["المخزون","stock","number"],["الحد الأدنى","minStock","number"],["إيموجي","emoji","text"],["رابط الصورة (اختياري)","image","text"]].map(([label,key,type])=>(
               <div key={key} style={{marginBottom:12}}>
                 <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>{label}</label>
                 <input className="input" type={type} value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))}/>
               </div>
             ))}
+            {(form.image||"").trim() && (
+              <div style={{marginBottom:12,textAlign:"center"}}>
+                <img src={form.image} alt="معاينة" style={{width:90,height:90,objectFit:"cover",borderRadius:14,border:"1px solid var(--border)"}}
+                  onError={e=>{e.currentTarget.style.opacity=.25;}}/>
+                <div style={{fontSize:10,color:"var(--sub)",marginTop:4}}>معاينة الصورة</div>
+              </div>
+            )}
             <div style={{marginBottom:16}}>
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>الفئة</label>
               <select className="input" value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}>
