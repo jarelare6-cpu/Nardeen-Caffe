@@ -81,6 +81,60 @@ function ItemVisual({ item, size = 40, round = 12 }) {
   return <div style={{ fontSize: Math.round(size * 0.8) }}>{emoji}</div>;
 }
 
+// ── Phase ب: شريط التنقّل السفلي اللمسي ──────────────────────
+function BottomNav({ navItems, tab, setTab, role }) {
+  const [showMore, setShowMore] = useState(false);
+  const adminPrimary = ["dashboard", "outdoor_admin", "menu", "bar"];
+  let primary, rest;
+  if (role === "admin") {
+    primary = adminPrimary.map(k => navItems.find(([t]) => t === k)).filter(Boolean);
+    rest = navItems.filter(([t]) => !adminPrimary.includes(t));
+  } else if (navItems.length <= 5) {
+    primary = navItems; rest = [];
+  } else {
+    primary = navItems.slice(0, 4); rest = navItems.slice(4);
+  }
+  const go = (t) => { setTab(t); setShowMore(false); };
+  const moreActive = rest.some(([t]) => t === tab);
+  return (
+    <>
+      {showMore && (
+        <div className="bn-sheet-overlay" onClick={e => { if (e.target === e.currentTarget) setShowMore(false); }}>
+          <div className="bn-sheet">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 800 }}>كل الأقسام</h3>
+              <button onClick={() => setShowMore(false)}
+                style={{ border: "none", background: "var(--card2)", borderRadius: 10, width: 34, height: 34, fontSize: 16, cursor: "pointer", color: "var(--text)" }}>✕</button>
+            </div>
+            <div className="bn-grid">
+              {navItems.map(([t, icon, label]) => (
+                <button key={t} className={tab === t ? "active" : ""} onClick={() => go(t)}>
+                  <span className="bn-ic">{icon}</span>
+                  <span className="bn-lb">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="bottom-nav" role="navigation">
+        {primary.map(([t, icon, label]) => (
+          <button key={t} className={"bn-cell" + (tab === t ? " active" : "")} onClick={() => go(t)}>
+            <span className="bn-ic">{icon}</span>
+            <span className="bn-lb">{label}</span>
+          </button>
+        ))}
+        {rest.length > 0 && (
+          <button className={"bn-cell" + (moreActive ? " active" : "")} onClick={() => setShowMore(true)}>
+            <span className="bn-ic">⋯</span>
+            <span className="bn-lb">المزيد</span>
+          </button>
+        )}
+      </div>
+    </>
+  );
+}
+
 // Permissions per role
 const PERMISSIONS = {
   dashboard:    ["admin","cashier"],
@@ -264,58 +318,85 @@ const GlobalStyle = ({dm,theme="default"}) => {
        هوية ناردين الدافئة (v8.3) — طبقة موحّدة تُلوّن الموقع كاملاً
        ════════════════════════════════════════════════════════════ */
     :root{
-      --espresso:#3a2417; --caramel:#a8682f; --gold:#d9a441; --cream:#fff7ee;
-      --bg:${dm?"#140d08":"#fbf3ea"};
-      --card:${dm?"#1f160d":"#fffaf3"};
-      --card2:${dm?"#281a0e":"#f5e9da"};
-      --border:${dm?"#33240f":"#ead7c0"};
-      --text:${dm?"#f0e7db":"#3a2417"};
-      --sub:${dm?"#b39b82":"#8a6a4d"};
-      --card-surface:${dm?"linear-gradient(160deg,#211710,#191007)":"linear-gradient(160deg,#fffaf3,#fdf0e1)"};
-      --ring:#a8682f; --glow:0 0 0 3px rgba(168,104,47,.20);
+      --accent:#1565c0; --accent2:#c62828;
+      --bg:${dm?"#0f1320":"#f5f7fb"};
+      --card:${dm?"#161c2b":"#ffffff"};
+      --card2:${dm?"#1e2740":"#eef1f7"};
+      --border:${dm?"#26304a":"#e6e9f2"};
+      --text:${dm?"#e9edf7":"#1f2533"};
+      --sub:${dm?"#9aa6c4":"#6b7388"};
+      --card-surface:${dm?"#161c2b":"#ffffff"};
+      --ring:#1565c0; --glow:0 0 0 3px rgba(21,101,192,.18);
     }
-    /* خلفية كريمية دافئة + توهج قهوة وذهب */
+    /* خلفية فاتحة نظيفة هادئة */
     body{
-      background:${dm
-        ? "radial-gradient(960px 540px at 92% -8%,rgba(168,104,47,.30),transparent 55%),radial-gradient(780px 480px at -6% 4%,rgba(217,164,65,.14),transparent 55%),linear-gradient(160deg,#140d08,#1d130b 60%,#140d08)"
-        : "radial-gradient(1000px 560px at 92% -6%,rgba(168,104,47,.18),transparent 55%),radial-gradient(820px 520px at -6% 4%,rgba(217,164,65,.20),transparent 55%),linear-gradient(160deg,#fbf3ea,#f6ebde 58%,#fdf6ee)"} !important;
-      color:${dm?"#f0e7db":"#3a2417"} !important;
-      background-attachment:fixed !important;
+      background:${dm?"#0f1320":"#f5f7fb"} !important;
+      color:${dm?"#e9edf7":"#1f2533"} !important;
     }
-    /* خطوط حيّة: عناوين El Messiri، نص Cairo */
-    h1,h2,h3,h4{font-family:'El Messiri','Tajawal',sans-serif !important; letter-spacing:.3px; line-height:1.35}
+    /* خطوط أنيقة: عناوين El Messiri، نص Cairo */
+    h1,h2,h3,h4{font-family:'El Messiri','Tajawal',sans-serif !important; letter-spacing:.2px; line-height:1.4}
     body,button,input,select,textarea{font-family:'Cairo','Tajawal',sans-serif}
-    /* الهيدر: تدرّج إسبريسو → كراميل */
+    /* الهيدر: تدرّج أزرق → أحمر أنيق */
     header{
-      background:linear-gradient(120deg,#2b190e 0%,#5a331c 48%,#9a5526 100%) !important;
-      box-shadow:0 6px 28px rgba(58,36,23,.40) !important;
+      background:linear-gradient(120deg,#1565c0 0%,#5b3fb0 52%,#c62828 100%) !important;
+      box-shadow:0 4px 22px rgba(30,50,110,.28) !important;
     }
-    /* شريط التنقل دافئ */
-    nav{
-      background:${dm?"#1b120a":"#fff7ee"} !important;
-      border-bottom:2px solid ${dm?"#2c1d10":"#ecd9c2"} !important;
-    }
-    /* البطاقات: سطح كريمي بعمق ودفء */
+    /* الشريط العلوي (للزبون فقط) */
+    nav{ background:${dm?"#131829":"#ffffff"} !important; border-bottom:1px solid ${dm?"#222b42":"#eceff5"} !important; }
+    /* بطاقات بيضاء راقية بظلال خفيفة */
     .card{
       background:var(--card-surface) !important;
-      border:1px solid ${dm?"rgba(217,164,65,.14)":"rgba(168,104,47,.16)"} !important;
+      border:1px solid ${dm?"rgba(255,255,255,.05)":"#eceff5"} !important;
       border-radius:16px !important;
-      box-shadow:${dm?"0 8px 26px rgba(0,0,0,.50)":"0 10px 28px rgba(120,72,30,.10)"} !important;
+      box-shadow:${dm?"0 6px 22px rgba(0,0,0,.45)":"0 6px 20px rgba(30,45,90,.07)"} !important;
     }
-    .card.hoverable:hover{
-      transform:translateY(-4px) !important;
-      box-shadow:${dm?"0 18px 44px rgba(0,0,0,.6)":"0 18px 44px rgba(120,72,30,.20)"} !important;
-    }
-    /* الحقول والأزرار: حواف أنعم + تركيز دافئ */
+    .card.hoverable:hover{ transform:translateY(-3px) !important; box-shadow:${dm?"0 14px 36px rgba(0,0,0,.55)":"0 14px 34px rgba(30,45,90,.13)"} !important; }
+    /* حقول نظيفة + تركيز أزرق */
     .input,input,select,textarea{border-radius:12px}
-    .input:focus,input:focus,select:focus,textarea:focus{
-      border-color:#a8682f !important; box-shadow:0 0 0 3px rgba(168,104,47,.18) !important;
-    }
+    .input:focus,input:focus,select:focus,textarea:focus{ border-color:#1565c0 !important; box-shadow:0 0 0 3px rgba(21,101,192,.16) !important; }
     .btn,button{border-radius:12px}
-    /* روح في العناوين: لون قهوة دافئ + وزن */
-    h1,h2{color:${dm?"#f3eadf":"#4a2c18"}; font-weight:700}
-    /* تمرير دافئ */
-    ::selection{background:rgba(168,104,47,.30)}
+    h1,h2{color:${dm?"#eef2fb":"#1b2436"}; font-weight:700}
+    ::selection{background:rgba(21,101,192,.22)}
+
+    /* ════════ الشريط السفلي اللمسي (Bottom Tab Bar) ════════ */
+    .bottom-nav{
+      position:fixed; left:0; right:0; bottom:0; z-index:300;
+      display:flex; align-items:stretch; justify-content:space-around;
+      background:${dm?"rgba(19,24,41,.96)":"rgba(255,255,255,.97)"};
+      backdrop-filter:saturate(1.4) blur(8px); -webkit-backdrop-filter:saturate(1.4) blur(8px);
+      border-top:1px solid ${dm?"#222b42":"#e8ebf3"};
+      box-shadow:0 -6px 22px rgba(30,45,90,${dm?".5":".10"});
+      padding:6px 6px calc(6px + env(safe-area-inset-bottom)) 6px;
+    }
+    .bn-cell{
+      flex:1; min-height:60px; border:none; background:none; cursor:pointer;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      border-radius:14px; transition:transform .15s ease, background .2s ease, color .2s ease;
+      color:${dm?"#9aa6c4":"#6b7388"}; font-family:'Cairo','Tajawal',sans-serif;
+    }
+    .bn-cell:active{transform:scale(.92)}
+    .bn-cell .bn-ic{font-size:22px; line-height:1}
+    .bn-cell .bn-lb{font-size:10px; font-weight:600}
+    .bn-cell.active{ color:#fff; background:linear-gradient(135deg,#1565c0,#c62828); box-shadow:0 6px 16px rgba(21,101,192,.30); }
+    .bn-cell.active .bn-lb{font-weight:800}
+    .bn-sheet-overlay{position:fixed; inset:0; z-index:320; background:rgba(15,19,32,.5); display:flex; align-items:flex-end}
+    .bn-sheet{
+      width:100%; background:${dm?"#131829":"#ffffff"}; border-radius:22px 22px 0 0;
+      padding:14px 14px calc(18px + env(safe-area-inset-bottom)); box-shadow:0 -10px 40px rgba(0,0,0,.3);
+      animation:bnUp .28s cubic-bezier(.2,.7,.3,1);
+    }
+    @keyframes bnUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    .bn-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:10px}
+    .bn-grid button{
+      min-height:74px; border:1px solid ${dm?"#222b42":"#eceff5"}; border-radius:16px; cursor:pointer;
+      background:${dm?"#1a2236":"#f7f9fd"}; color:${dm?"#e9edf7":"#1f2533"};
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;
+      font-family:'Cairo','Tajawal',sans-serif; transition:transform .12s ease;
+    }
+    .bn-grid button:active{transform:scale(.93)}
+    .bn-grid button.active{background:linear-gradient(135deg,#1565c0,#c62828); color:#fff; border-color:transparent}
+    .bn-grid .bn-ic{font-size:24px}
+    .bn-grid .bn-lb{font-size:11px; font-weight:700}
   `}</style>
   );
 }
@@ -1183,7 +1264,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#fff",color:"#c62828",borderRadius:6,padding:"1px 5px"}}>v8.3</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#fff",color:"#c62828",borderRadius:6,padding:"1px 5px"}}>v8.4</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>
@@ -1260,52 +1341,10 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
       </header>
 
       {/* Nav */}
-      <nav style={{background:"var(--card)",borderBottom:"2px solid var(--border)",padding:"0 8px",position:"relative"}}>
-        {/* موبايل: قائمة منسدلة للأدمن فقط */}
-        {user.role==="admin"?(
-          <>
-            <div className="show-mobile-only" style={{padding:"6px 0"}}>
-              <select
-                value={tab}
-                onChange={e=>setTab(e.target.value)}
-                style={{width:"100%",padding:"10px 14px",border:"1.5px solid var(--border)",
-                  borderRadius:10,background:"var(--card)",color:"var(--text)",
-                  fontSize:14,fontWeight:700,fontFamily:"inherit",outline:"none",
-                  appearance:"none",paddingLeft:32}}>
-                {navItems.map(([t,icon,label])=>(
-                  <option key={t} value={t}>{icon} {label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="hide-mobile" style={{display:"flex",overflowX:"auto"}}>
-              {navItems.map(([t,icon,label])=>(
-                <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
-                  background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
-                  fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
-                  whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
-                  <span>{icon}</span>
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        ):(
-          <div style={{display:"flex",overflowX:"auto"}} className="scroll-hide">
-            {navItems.map(([t,icon,label])=>(
-              <button key={t} onClick={()=>setTab(t)} style={{padding:"12px 14px",border:"none",
-                background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
-                fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
-                whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:5}}>
-                <span>{icon}</span>
-                <span className="nav-label">{label}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </nav>
+      {/* التنقّل استُبدل بالشريط السفلي اللمسي BottomNav (v8.4) */}
 
       {/* Content */}
-      <main style={{flex:1,padding:16,maxWidth:1280,width:"100%",margin:"0 auto"}}>
+      <main style={{flex:1,padding:16,paddingBottom:96,maxWidth:1280,width:"100%",margin:"0 auto"}}>
         <ErrorBoundary key={tab}>
         {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} key={store.orders.length+"_"+store.orders.filter(o=>o.status==="paid").length}/>}
         {tab==="inventory"  &&canAccess(user.role,"dashboard") &&<InventoryTab   store={store} settings={settings}/>}
@@ -1329,6 +1368,7 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         </ErrorBoundary>
       </main>
+      {user.role!=="customer" && <BottomNav navItems={navItems} tab={tab} setTab={setTab} role={user.role}/>}
       <div style={{height:"env(safe-area-inset-bottom,0px)"}}/>
     </div>
   );
