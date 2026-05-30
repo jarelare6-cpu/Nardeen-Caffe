@@ -397,3 +397,106 @@ export const printOrder = (order, menu, copy = 1, settings) => {
   const win = window.open(url, "_blank", "width=450,height=600");
   if (win) win.onafterprint = () => URL.revokeObjectURL(url);
 };
+
+// ══════════════════════════════════════════════════════════════
+// v7 — أدوات تقفيل الوردية (8)
+// ══════════════════════════════════════════════════════════════
+/**
+ * يحسب ملخص الوردية من الطلبات والمصاريف ضمن نطاق زمني
+ * @param {Array} orders - كل الطلبات
+ * @param {Array} expenses - كل المصاريف
+ * @param {string} shiftId - معرف الوردية (للفلترة الدقيقة)
+ * @param {Date} openedAt - وقت فتح الوردية
+ * @param {string} branch - الفرع
+ */
+export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "main") => {
+  const from = openedAt ? new Date(openedAt) : new Date(0);
+  // طلبات الوردية: إما بنفس shiftId أو ضمن النطاق الزمني وبنفس الفرع
+  const shiftOrders = orders.filter(o => {
+    const matchBranch = (o.branch || "main") === branch;
+    if (!matchBranch) return false;
+    if (shiftId && o.shiftId) return o.shiftId === shiftId;
+    const paidTime = o.paidAt ? new Date(o.paidAt) : null;
+    return paidTime && paidTime >= from;
+  });
+
+  const paid = shiftOrders.filter(o => o.status === "paid");
+  const cashSales = paid.filter(o => o.paymentType === "cash").reduce((s, o) => s + (o.total || 0), 0);
+  const cardSales = paid.filter(o => o.paymentType === "card").reduce((s, o) => s + (o.total || 0), 0);
+  const tronSales = paid.reduce((s, o) => s + (o.tronAmount || 0), 0);
+  const debtTotal = shiftOrders.filter(o => o.status === "debt").reduce((s, o) => s + (o.total || 0), 0);
+  const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
+  const totalSales = paid.reduce((s, o) => s + (o.total || 0), 0);
+
+  const shiftExpenses = (expenses || []).filter(e => {
+    const eTime = new Date(e.date);
+    const matchBranch = (e.branch || "main") === branch;
+    return matchBranch && eTime >= from;
+  }).reduce((s, e) => s + (e.amount || 0), 0);
+
+  return {
+    cashSales, cardSales, tronSales, debtTotal, compTotal, totalSales,
+    ordersCount: paid.length,
+    expensesTotal: shiftExpenses,
+  };
+};
+
+// ══════════════════════════════════════════════════════════════
+// v7 — أدوات KDS (1) — حساب لون/حالة الطلب حسب وقت الانتظار
+// ══════════════════════════════════════════════════════════════
+/**
+ * يُرجع حالة الطلب البصرية حسب دقائق الانتظار
+ * @param {string} createdAt
+ * @returns {{minutes, level, color, label}}
+ */
+export const getOrderUrgency = (createdAt, thresholds = { warn: 5, danger: 10 }) => {
+  const mins = createdAt ? Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000) : 0;
+  let level = "normal", color = "#2e7d32", label = "جديد";
+  if (mins >= thresholds.danger) { level = "danger"; color = "#c62828"; label = "متأخر جداً"; }
+  else if (mins >= thresholds.warn) { level = "warn"; color = "#e65100"; label = "تأخير"; }
+  return { minutes: mins, level, color, label };
+};
+
+/**
+ * متوسط وقت التحضير للطلبات المكتملة (بالدقائق)
+ */
+export const getAvgPrepTime = (orders) => {
+  const completed = orders.filter(o => o.readyAt && o.createdAt);
+  if (!completed.length) return 0;
+  const total = completed.reduce((s, o) =>
+    s + (new Date(o.readyAt).getTime() - new Date(o.createdAt).getTime()) / 60000, 0);
+  return Math.round(total / completed.length);
+};
+
+// ══════════════════════════════════════════════════════════════
+// v7 — محفظة الولاء (6)
+// ══════════════════════════════════════════════════════════════
+/**
+ * يحسب النقاط المكتسبة من مبلغ الطلب
+ * @param {number} total
+ * @param {Object} settings
+ */
+export const calcEarnedPoints = (total, settings) => {
+  const rate = settings?.loyaltyEarnRate ?? 0.05; // 5% افتراضي
+  return Math.floor((total || 0) * rate);
+};
+
+/**
+ * طبقة العضوية حسب إجمالي الإنفاق
+ */
+export const getCustomerTier = (totalSpent, settings) => {
+  const t = totalSpent || 0;
+  const tiers = settings?.loyaltyTiers || { silver: 50000, gold: 200000, vip: 500000 };
+  if (t >= tiers.vip)    return { key: "vip",    label: "💎 VIP",    color: "#6a1b9a", mult: 2 };
+  if (t >= tiers.gold)   return { key: "gold",   label: "🥇 ذهبي",   color: "#f9a825", mult: 1.5 };
+  if (t >= tiers.silver) return { key: "silver", label: "🥈 فضي",    color: "#90a4ae", mult: 1.2 };
+  return { key: "bronze", label: "🥉 برونزي", color: "#8d6e63", mult: 1 };
+};
+
+/**
+ * قيمة النقاط القابلة للاستبدال (نقطة = كم وحدة عملة)
+ */
+export const pointsToValue = (points, settings) => {
+  const ratio = settings?.loyaltyPointValue ?? 1; // 1 نقطة = 1 وحدة
+  return Math.floor((points || 0) * ratio);
+};
