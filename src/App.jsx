@@ -13,8 +13,11 @@ import {
   getLoyaltyStatus, calcLoyaltyDiscount,
   getPartialPaymentStatus,
   getStaffReport, getPeakHoursData, getSalesComparison,
+  calcShiftSummary, getOrderUrgency, getAvgPrepTime,
+  calcEarnedPoints, getCustomerTier, pointsToValue,
 } from "./lib/utils.js";
 import { checkSessionExpiry, touchSession } from "./lib/store.js";
+import { KitchenDisplayTab, ShiftCloseTab } from "./Features.jsx";
 
 // ═══════════════════════════════════
 // CONSTANTS
@@ -61,6 +64,8 @@ const PERMISSIONS = {
   cashier:      ["admin","cashier"],
   bar:          ["admin","bar"],
   hookah:       ["admin","hookah"],
+  kds:          ["admin","bar","hookah","cashier"],
+  shift:        ["admin","cashier"],
   menu:         ["admin"],
   tables:       ["admin","cashier"],
   staff:        ["admin"],
@@ -1027,8 +1032,10 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
     ["expenses","📒","المصاريف"],
     ["bar","🥤","البار"],
     ["hookah","💨","الأراكيل"],
+    ["kds","🖥️","شاشة المطبخ"],
     ["menu","🍽","المنيو"],
     ["tables","🪑","الطاولات"],
+    ["shift","🔐","تقفيل الوردية"],
     ["staff","👨‍💼","الموظفون"],
     ["reports","📈","التقارير"],
     ["receipts","🧾","الفواتير"],
@@ -1176,6 +1183,8 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         {tab==="expenses"   &&canAccess(user.role,"expenses")  &&<ExpensesTab    store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="bar"        &&canAccess(user.role,"bar")       &&<BarTab         store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="hookah"     &&canAccess(user.role,"hookah")    &&<HookahTab      store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
+        {tab==="kds"        &&canAccess(user.role,"kds")       &&<KitchenDisplayTab store={store} user={user} showToast={showToast} addNotification={addNotification} settings={settings}/>}
+        {tab==="shift"      &&canAccess(user.role,"shift")     &&<ShiftCloseTab  store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
@@ -2030,11 +2039,14 @@ function CashierTab({ store, user, showToast, dm, settings }) {
     const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
     const finalTotal = order.total - discAmt;
     const tronAmt = tronAmounts[order.id] || 0;
+    // ربط بالوردية المفتوحة (الفرع الرئيسي)
+    const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
     const paid = {
       ...order, status: "paid", paymentStatus: "paid",
       paymentType: payType,
       paidAt: new Date().toISOString(), paidBy: user.id, paidByName: user.name,
       discount: disc, originalTotal: order.total, total: finalTotal,
+      shiftId: openShift?.id || order.shiftId || null,
     };
     const updated = store.orders.map(o => o.id === order.id ? paid : o);
     store.setOrders(() => updated);
@@ -2042,7 +2054,28 @@ function CashierTab({ store, user, showToast, dm, settings }) {
       id: Date.now().toString(), orderId: order.id, orderNum: order.orderNum,
       amount: finalTotal, at: new Date().toISOString(), by: user.name,
       type: payType === "tron" ? "tron" : "sale",
+      branch: order.branch || "main", shiftId: openShift?.id || null,
     }, ...p]);
+
+    // 6. نظام الولاء — إضافة نقاط للزبون المسجَّل
+    if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
+      const cust = (store.customers || []).find(c => c.name === order.customerName);
+      if (cust) {
+        const tier = getCustomerTier(cust.totalSpent || 0, settings);
+        const earned = Math.floor(calcEarnedPoints(finalTotal, settings) * tier.mult);
+        if (earned > 0) {
+          store.setCustomers(p => p.map(c => c.id === cust.id
+            ? { ...c, loyaltyPoints: (c.loyaltyPoints || 0) + earned }
+            : c));
+          store.setLoyaltyLog(p => [{
+            id: "loy_" + Date.now(), customerId: cust.id, customerName: cust.name,
+            type: "earn", points: earned, orderId: order.id, orderNum: order.orderNum,
+            note: `كسب من طلب #${order.orderNum}`, createdBy: user.name,
+            createdAt: new Date().toISOString(),
+          }, ...p]);
+        }
+      }
+    }
 
     // حفظ الفاتورة في السجل
     saveReceiptRecord(paid, settings, store, tronAmt);
@@ -2845,7 +2878,7 @@ function BarTab({store,user,showToast,addNotification,dm,settings}){
     store.setMenu(p=>p.map(m=>m.id===id?{...m,stock:Math.max(0,m.stock+delta)}:m));
   };
   const markReady=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"ready"}:o));
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"ready",readyAt:new Date().toISOString()}:o));
     addNotification(`✅ طلب #${order.orderNum} جاهز من البار`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
     showToast(`طلب #${order.orderNum} جاهز ✅`);
   };
@@ -2877,7 +2910,7 @@ function BarTab({store,user,showToast,addNotification,dm,settings}){
                 {order.notes&&<div style={{background:"rgba(249,168,37,.1)",borderRadius:6,padding:"5px 8px",fontSize:11,color:"#e65100",marginTop:6}}>📝 {order.notes}</div>}
                 <div style={{display:"flex",gap:8,marginTop:10}}>
                   {order.status==="pending"&&(
-                    <button onClick={()=>store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"preparing"}:o))}
+                    <button onClick={()=>store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"preparing",preparingAt:new Date().toISOString()}:o))}
                       style={{flex:1,background:"#1976d2",color:"#fff",border:"none",borderRadius:8,padding:"8px",fontWeight:700,fontSize:12}}>
                       👨‍🍳 بدء
                     </button>
@@ -2948,7 +2981,7 @@ function HookahTab({store,user,showToast,addNotification,dm,settings}){
     store.setMenu(p=>p.map(m=>m.id===id?{...m,stock:Math.max(0,m.stock+delta)}:m));
   };
   const markReady=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"ready"}:o));
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"ready",readyAt:new Date().toISOString()}:o));
     addNotification(`✅ طلب الأراكيل #${order.orderNum} جاهز`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
     showToast(`طلب #${order.orderNum} جاهز ✅`);
   };
@@ -2979,7 +3012,7 @@ function HookahTab({store,user,showToast,addNotification,dm,settings}){
                 {order.notes&&<div style={{background:"rgba(249,168,37,.1)",borderRadius:6,padding:"5px 8px",fontSize:11,color:"#e65100",marginTop:6}}>📝 {order.notes}</div>}
                 <div style={{display:"flex",gap:8,marginTop:10}}>
                   {order.status==="pending"&&(
-                    <button onClick={()=>store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"preparing"}:o))}
+                    <button onClick={()=>store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"preparing",preparingAt:new Date().toISOString()}:o))}
                       style={{flex:1,background:"#6a1b9a",color:"#fff",border:"none",borderRadius:8,padding:"8px",fontWeight:700,fontSize:12}}>
                       🔥 بدء
                     </button>
@@ -3427,7 +3460,7 @@ function CustomerFileTab({ store, showToast, dm, settings }) {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  // 🔵 تحميل الزبائن من Supabase عند فتح التبويب
+  // 🔵 تحميل الزبائن من Supabase عند فتح التبويب (يحافظ على كل الحقول)
   useEffect(() => {
     if (!SUPABASE_READY) return;
     setLoading(true);
@@ -3435,7 +3468,15 @@ function CustomerFileTab({ store, showToast, dm, settings }) {
       .then(rows => {
         if (rows && rows.length > 0) {
           store.setCustomers(rows.map(r => ({
-            id: r.id, name: r.name, visits: r.visits || 1,
+            id: r.id, name: r.name,
+            visits: r.visits || 1,
+            phone: r.phone || "",
+            totalOrders: r.total_orders || 0,
+            totalSpent: r.total_spent || 0,
+            loyaltyPoints: r.loyalty_points || 0,
+            loyaltyRedeemed: r.loyalty_redeemed || 0,
+            tier: r.tier || "bronze",
+            notes: r.notes || "",
             lastVisit: r.last_visit, createdAt: r.created_at,
             orders: r.orders || [],
           })));
@@ -3510,6 +3551,57 @@ function CustomerFileTab({ store, showToast, dm, settings }) {
                     </div>
                   </>
                 )}
+              </div>
+            );
+          })()}
+          {/* 6. محفظة الولاء — النقاط + الطبقة + الاستبدال */}
+          {settings?.loyaltyEnabled && (() => {
+            const tier = getCustomerTier(selected.totalSpent || custTotal, settings);
+            const points = selected.loyaltyPoints || 0;
+            const value = pointsToValue(points, settings);
+            const redeem = () => {
+              if (points <= 0) { showToast("لا توجد نقاط للاستبدال", "warn"); return; }
+              if (!window.confirm(`استبدال ${points} نقطة بقيمة ${value.toLocaleString()} ${CUR}؟`)) return;
+              store.setCustomers(p => p.map(c => c.id === selected.id
+                ? { ...c, loyaltyPoints: 0, loyaltyRedeemed: (c.loyaltyRedeemed || 0) + points }
+                : c));
+              store.setLoyaltyLog(p => [{
+                id: "loy_" + Date.now(), customerId: selected.id, customerName: selected.name,
+                type: "redeem", points: -points, orderId: null, orderNum: "",
+                note: `استبدال ${points} نقطة بـ ${value.toLocaleString()} ${CUR}`,
+                createdBy: "أدمن", createdAt: new Date().toISOString(),
+              }, ...p]);
+              setSelected(s => ({ ...s, loyaltyPoints: 0, loyaltyRedeemed: (s.loyaltyRedeemed || 0) + points }));
+              showToast(`🎁 تم استبدال ${points} نقطة — امنح الزبون خصم ${value.toLocaleString()} ${CUR}`);
+            };
+            return (
+              <div style={{ marginTop: 14, padding: "14px 16px", borderRadius: 12,
+                background: "linear-gradient(135deg, rgba(106,27,154,.08), rgba(21,101,192,.08))",
+                border: "1.5px solid rgba(106,27,154,.2)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontWeight: 800, fontSize: 14 }}>💳 محفظة الولاء</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, borderRadius: 20, padding: "3px 12px",
+                    background: `${tier.color}20`, color: tier.color }}>{tier.label}</span>
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <div style={{ flex: 1, textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: "10px 8px" }}>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>النقاط الحالية</div>
+                    <div style={{ fontWeight: 900, fontSize: 22, color: "#6a1b9a" }}>{points.toLocaleString()}</div>
+                  </div>
+                  <div style={{ flex: 1, textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: "10px 8px" }}>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>قيمتها</div>
+                    <div style={{ fontWeight: 900, fontSize: 16, color: "#2e7d32" }}>{value.toLocaleString()} {CUR}</div>
+                  </div>
+                </div>
+                <button onClick={redeem} disabled={points <= 0}
+                  style={{ width: "100%", marginTop: 10, background: points > 0 ? "#6a1b9a" : "var(--card2)",
+                    color: points > 0 ? "#fff" : "var(--sub)", border: "none", borderRadius: 10, padding: 11,
+                    fontWeight: 800, fontSize: 13, cursor: points > 0 ? "pointer" : "not-allowed" }}>
+                  🎁 استبدال النقاط بخصم
+                </button>
+                <div style={{ fontSize: 10, color: "var(--sub)", textAlign: "center", marginTop: 6 }}>
+                  معدل الكسب {((settings?.loyaltyEarnRate ?? 0.05) * 100).toFixed(0)}% × مضاعف الطبقة {tier.mult}×
+                </div>
               </div>
             );
           })()}
@@ -4092,6 +4184,17 @@ function SettingsTab({store,showToast,dm,user}){
                   <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>نسبة الخصم عند المكافأة %</label>
                   <input className="input" type="number" min="1" max="100" value={form.loyaltyDiscountPercent||10}
                     onChange={e=>setForm(f=>({...f,loyaltyDiscountPercent:+e.target.value}))}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>معدل كسب النقاط %</label>
+                  <input className="input" type="number" min="0" max="100" step="1"
+                    value={Math.round((form.loyaltyEarnRate ?? 0.05)*100)}
+                    onChange={e=>setForm(f=>({...f,loyaltyEarnRate:(+e.target.value)/100}))}/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>قيمة النقطة ({form.currency||"ل.س"})</label>
+                  <input className="input" type="number" min="0" step="0.1" value={form.loyaltyPointValue ?? 1}
+                    onChange={e=>setForm(f=>({...f,loyaltyPointValue:+e.target.value}))}/>
                 </div>
               </div>
             )}
