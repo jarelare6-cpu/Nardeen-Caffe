@@ -177,18 +177,23 @@ const GlobalStyle = ({dm,theme="default"}) => {
     *{box-sizing:border-box;margin:0;padding:0}
     :root{
       --red:${t.primary};--red-dark:${t.secondary};--green:#2e7d32;--gold:${t.accent};
-      --bg:${dm?"#0d0d18":"#f4f6fa"};
-      --card:${dm?"#16182a":"#ffffff"};
-      --card2:${dm?"#1e2035":"#f0f2f8"};
-      --border:${dm?"#2a2d4a":"#dde1ed"};
-      --text:${dm?"#e8eaf6":"#1a1c2e"};
-      --sub:${dm?"#8890b0":"#6b7280"};
-      --shadow:${dm?"0 4px 24px rgba(0,0,0,.45)":"0 2px 16px rgba(30,40,80,.08)"};
-      --shadow-lg:${dm?"0 14px 40px rgba(0,0,0,.55)":"0 14px 40px rgba(30,40,80,.16)"};
+      --bg:${dm?"#0b0b16":"#eef1fb"};
+      --card:${dm?"#181a30":"#ffffff"};
+      --card2:${dm?"#20223c":"#eef1f9"};
+      --border:${dm?"#2f3358":"#d7dcef"};
+      --text:${dm?"#eceeff":"#161830"};
+      --sub:${dm?"#9097c4":"#5b6480"};
+      --shadow:${dm?"0 4px 24px rgba(0,0,0,.5)":"0 4px 20px rgba(40,55,110,.12)"};
+      --shadow-lg:${dm?"0 16px 44px rgba(0,0,0,.6)":"0 16px 40px rgba(40,55,110,.22)"};
       --grad-primary:linear-gradient(135deg,${t.primary},${t.secondary});
       --grad-accent:linear-gradient(135deg,${t.accent},${t.primary});
-      --grad-bg:${dm?"radial-gradient(1200px 600px at 80% -10%,rgba(198,40,40,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(21,101,192,.10),transparent 55%)":"radial-gradient(1100px 560px at 85% -12%,rgba(198,40,40,.07),transparent 60%),radial-gradient(800px 480px at -8% 8%,rgba(21,101,192,.06),transparent 55%)"};
-      --glow:0 0 0 3px ${t.primary}33;
+      --grad-bg:${dm
+        ? "radial-gradient(1100px 620px at 88% -8%,rgba(198,40,40,.22),transparent 58%),radial-gradient(900px 560px at -8% 6%,rgba(21,101,192,.20),transparent 55%),linear-gradient(160deg,#0b0b16,#11132a 60%,#0b0b16)"
+        : "radial-gradient(1100px 620px at 88% -8%,rgba(198,40,40,.16),transparent 58%),radial-gradient(900px 560px at -8% 6%,rgba(21,101,192,.14),transparent 55%),linear-gradient(160deg,#eef1fb,#e6ebf8 60%,#eef1fb)"};
+      --card-surface:${dm
+        ? "linear-gradient(160deg,#1b1d36,#15172b)"
+        : "linear-gradient(160deg,#ffffff,#f3f5fd)"};
+      --glow:0 0 0 3px ${t.primary}40;
       --ring:${t.primary};
       --sp-1:6px;--sp-2:10px;--sp-3:14px;--sp-4:20px;--sp-5:28px;
       --radius:14px;--radius-sm:10px;--radius-lg:20px;
@@ -197,7 +202,7 @@ const GlobalStyle = ({dm,theme="default"}) => {
     ${theme==="dark"?":root{--bg:#080810;--card:#0e0e1a;--card2:#141420;--border:#1e1e2e;--text:#e8eaf6;--sub:#7070a0;--shadow:0 4px 24px rgba(0,0,0,.7);}":""}
     button{cursor:pointer;font-family:inherit;direction:rtl}
     input,select,textarea{font-family:inherit;direction:rtl;background:var(--card);color:var(--text)}
-    .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border:1px solid ${dm?"rgba(255,255,255,.04)":"rgba(20,30,60,.04)"};transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s ease}
+    .card{background:var(--card-surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border:1px solid ${dm?"rgba(255,255,255,.06)":"rgba(40,55,110,.06)"};transition:transform .25s cubic-bezier(.2,.7,.3,1),box-shadow .25s ease}
     .card.hoverable:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
     .input{width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;outline:none;transition:border .2s,box-shadow .2s;background:var(--card);color:var(--text)}
     .input:focus{border-color:var(--ring);box-shadow:var(--glow)}
@@ -1119,7 +1124,10 @@ function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,d
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:22}}>☕</span>
           <div>
-            <div style={{fontWeight:900,fontSize:14}}>{settings?.cafeName||"Nardeen Caffe"}</div>
+            <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
+              {settings?.cafeName||"ناردين كافيه"}
+              <span style={{fontSize:9,fontWeight:900,background:"#fff",color:"#c62828",borderRadius:6,padding:"1px 5px"}}>v8.1</span>
+            </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>
         </div>
@@ -1297,7 +1305,7 @@ function DashboardTab({store,dm,settings}){
   const maxRev=Math.max(...hourly.map(d=>d.rev),1);
 
   const Stat=({icon,label,val,sub,color})=>(
-    <div className="card hoverable scale-in" style={{borderTop:`4px solid ${color}`}}>
+    <div className="card hoverable" style={{borderTop:`4px solid ${color}`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div>
           <div style={{color:"var(--sub)",fontSize:12,marginBottom:5}}>{label}</div>
