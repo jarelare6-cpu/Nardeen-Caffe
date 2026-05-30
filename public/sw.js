@@ -1,5 +1,5 @@
-// sw.js — Nardeen Caffe v8.3 Service Worker (network-first)
-const CACHE = "nardeen-v8-3";
+// sw.js — Nardeen Caffe v8.4 Service Worker (network-first)
+const CACHE = "nardeen-v8-4";
 const OFFLINE_ASSETS = ["/", "/index.html", "/manifest.json"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(OFFLINE_ASSETS))); self.skipWaiting(); });
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))); self.clients.claim(); });
