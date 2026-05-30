@@ -59,6 +59,22 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
   }, [activeOrders.length]);
 
   const avgPrep = getAvgPrepTime(store.orders || []);
+  const kdsRef = useRef(null);
+  const [isFs, setIsFs] = useState(false);
+  useEffect(() => {
+    const onFs = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleFullscreen = () => {
+    const el = kdsRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+    }
+  };
 
   const advanceOrder = (order) => {
     const isOutdoor = order.branch === "outdoor";
@@ -84,7 +100,7 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
   };
 
   return (
-    <div className="fade-in">
+    <div className="fade-in" ref={kdsRef} style={{ background: isFs ? "var(--bg)" : "transparent", minHeight: isFs ? "100vh" : "auto", padding: isFs ? 18 : 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900 }}>🖥️ شاشة المطبخ (KDS)</h2>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -94,6 +110,11 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
           <span style={{ fontSize: 12, color: "#2e7d32", background: "rgba(46,125,50,.12)", borderRadius: 8, padding: "5px 10px", fontWeight: 700 }}>
             {activeOrders.length} طلب نشط
           </span>
+          <button onClick={toggleFullscreen}
+            style={{ fontSize: 12, fontWeight: 700, border: "none", cursor: "pointer", borderRadius: 8, padding: "5px 12px",
+              background: "var(--grad-primary)", color: "#fff" }}>
+            {isFs ? "🗗 خروج" : "⛶ ملء الشاشة"}
+          </button>
         </div>
       </div>
 
