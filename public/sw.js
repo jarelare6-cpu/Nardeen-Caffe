@@ -1,16 +1,11 @@
-// sw.js — Nardeen Caffe v6 Service Worker
-// يعمل offline ويخزن الموارد الأساسية
-const CACHE = "nardeen-v6";
-const OFFLINE_ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-];
+// sw.js — Nardeen Caffe v8.1 Service Worker
+// استراتيجية network-first: يجلب أحدث نسخة دائماً عند توفر الإنترنت،
+// ويعود للكاش فقط عند انقطاع الاتصال. هذا يضمن ظهور أي تحديث فوراً.
+const CACHE = "nardeen-v8-1";
+const OFFLINE_ASSETS = ["/", "/index.html", "/manifest.json"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(OFFLINE_ASSETS))
-  );
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(OFFLINE_ASSETS)));
   self.skipWaiting();
 });
 
@@ -24,21 +19,18 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
-  // Skip non-GET requests
   if (e.request.method !== "GET") return;
-  // Skip Supabase API calls — يجب أن تكون fresh دائماً
-  if (e.request.url.includes("supabase.co")) return;
+  if (e.request.url.includes("supabase.co")) return; // API دائماً fresh
 
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const net = fetch(e.request).then((res) => {
-        if (res.ok) {
+    fetch(e.request)
+      .then((res) => {
+        if (res && res.ok) {
           const clone = res.clone();
           caches.open(CACHE).then((c) => c.put(e.request, clone));
         }
         return res;
-      });
-      return cached || net;
-    })
+      })
+      .catch(() => caches.match(e.request).then((c) => c || caches.match("/index.html")))
   );
 });
