@@ -44,6 +44,9 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes]       = useState("");
   const [showPay, setShowPay]   = useState(null); // order to pay
+  const [payTronInput, setPayTronInput] = useState("");
+  const [payDebtName, setPayDebtName]   = useState("");
+  const [payMode, setPayMode]   = useState("pay"); // pay | debt
   const [tableCount, setTableCount] = useState(null); // for settings
 
   const settings  = store.settings  || {};
@@ -157,62 +160,85 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
     showToast(`✓ طلب ${orderNum} مُسجّل`);
   };
 
-  // ── تسديد الطلب ──────────────────────────────────────────────
-  const payOrder = (order, pt) => {
+  // ── تسديد الطلب (نقدي/بطاقة/ترون) — مطابق للكاش الرئيسي ──────
+  const payOrder = (order, pt, tronAmt = 0) => {
     const now = new Date().toISOString();
+    const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === "outdoor");
 
-    // تحديث الطلب
     const paidOrder = {
       ...order,
-      status:      "paid",
-      paymentType: pt,
-      paidAt:      now,
-      paidByName:  user.name,
+      status:       "paid",
+      paymentStatus:"paid",
+      paymentType:  pt,
+      paidAt:       now,
+      paidBy:       user.id,
+      paidByName:   user.name,
+      tronAmount:   tronAmt || 0,
+      shiftId:      openShift?.id || null,
+      branch:       "outdoor",
     };
     store.setOrders(p => p.map(o => o.id === order.id ? paidOrder : o));
 
     // تحرير الطاولة
     store.setOutdoorTables(p => p.map(t =>
-      t.orderId === order.id
-        ? { ...t, status: "free", orderId: null, openedAt: null }
-        : t
+      t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t
     ));
 
     // cash log
-    const cashEntry = {
-      id:       "cl_out_" + Date.now(),
-      orderId:  order.id,
-      orderNum: order.orderNum,
-      amount:   order.total,
-      at:       now,
-      by:       user.name,
-      type:     "sale",
-      branch:   "outdoor",
-    };
-    store.setCashLog(p => [cashEntry, ...p]);
+    store.setCashLog(p => [{
+      id: "cl_out_" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+      amount: order.total, at: now, by: user.name,
+      type: pt === "tron" ? "tron" : "sale", branch: "outdoor",
+      shiftId: openShift?.id || null,
+    }, ...p]);
 
     // receipt
-    const receipt = {
-      id:           "rcpt_out_" + order.id + "_" + Date.now(),
-      orderId:      order.id,
-      orderNum:     order.orderNum,
-      customerName: order.customerName,
-      tableNum:     order.table,
-      items:        order.items,
-      total:        order.total,
-      discount:     order.discount || 0,
-      paymentType:  pt,
-      notes:        order.notes || "",
-      createdBy:    user.name,
-      createdAt:    now,
-      cafeName:     settings.cafeName || "Nardeen Caffe",
-      tronAmount:   0,
-      branch:       "outdoor",
-    };
-    store.setReceipts(p => [receipt, ...p]);
+    store.setReceipts(p => [{
+      id: "rcpt_out_" + order.id + "_" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+      customerName: order.customerName, tableNum: order.table, items: order.items,
+      total: order.total, discount: order.discount || 0, paymentType: pt,
+      notes: order.notes || "", createdBy: user.name, createdAt: now,
+      cafeName: settings.cafeName || "Nardeen Caffe", tronAmount: tronAmt || 0, branch: "outdoor",
+    }, ...p]);
 
     setShowPay(null);
     showToast(`✓ تم تسديد ${order.orderNum}`);
+  };
+
+  // ── تسجيل دين الحديقة ──────────────────────────────────────
+  const debtOrder = (order, customerName) => {
+    const now = new Date().toISOString();
+    store.setOrders(p => p.map(o => o.id === order.id
+      ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName } : o));
+    store.setOutdoorTables(p => p.map(t =>
+      t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t));
+    store.setDebts(p => [{
+      id: "d_out_" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+      customerName, amount: order.total, remaining: order.total,
+      date: now, settled: false, settledAt: null, createdBy: user.name,
+      notes: `حديقة — ${order.table}`, branch: "outdoor",
+    }, ...p]);
+    setShowPay(null);
+    showToast(`💳 تم تسجيل دين ${customerName}`, "warn");
+  };
+
+  // ── ضيافة الحديقة (كامل الطلب) ─────────────────────────────
+  const compOrder = (order) => {
+    const now = new Date().toISOString();
+    store.setOrders(p => p.map(o => o.id === order.id
+      ? { ...o, status: "complimentary", isComplimentary: true,
+          compAmount: order.total, originalTotal: order.total, total: 0,
+          paidBy: user.id, paidByName: user.name, paidAt: now } : o));
+    store.setOutdoorTables(p => p.map(t =>
+      t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t));
+    store.setCompLog(p => [{
+      id: "comp_out_" + Date.now(), customerName: order.customerName || "زبون حديقة",
+      tableNum: order.table, items: (order.items || []).map(it => it.itemName),
+      amount: order.total, date: now, createdBy: user.name,
+      orderId: order.id, orderNum: order.orderNum, branch: "outdoor",
+    }, ...p]);
+    setShowPay(null);
+    showToast(`🎁 ضيافة ${order.orderNum}`, "warn");
   };
 
   // ── فلتر المنيو ──────────────────────────────────────────────
@@ -639,16 +665,16 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
         )}
       </main>
 
-      {/* ── نافذة التسديد ── */}
+      {/* ── نافذة التسديد — كاملة مثل الكاش الرئيسي ── */}
       {showPay && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 999,
           display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-        }} onClick={e => { if (e.target === e.currentTarget) setShowPay(null); }}>
-          <div style={{ background: "#0d2137", borderRadius: 20, padding: 28, width: "100%", maxWidth: 360,
-            border: "1px solid #1a3a5c", boxShadow: "0 24px 60px rgba(0,0,0,.6)" }}>
-            <div style={{ textAlign: "center", marginBottom: 16 }}>
-              <div style={{ fontSize: 40, marginBottom: 6 }}>💰</div>
+        }} onClick={e => { if (e.target === e.currentTarget) { setShowPay(null); setPayMode("pay"); setPayTronInput(""); setPayDebtName(""); } }}>
+          <div style={{ background: "#0d2137", borderRadius: 20, padding: 24, width: "100%", maxWidth: 380,
+            border: "1px solid #1a3a5c", boxShadow: "0 24px 60px rgba(0,0,0,.6)", maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ textAlign: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 36, marginBottom: 4 }}>💰</div>
               <h2 style={{ fontSize: 18, fontWeight: 900, color: "#4fc3f7" }}>تسديد {showPay.orderNum}</h2>
               <div style={{ fontSize: 13, color: "#8ab4d4", marginTop: 4 }}>{showPay.table}</div>
             </div>
@@ -666,26 +692,67 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                 <span>{showPay.total.toLocaleString()} {CUR}</span>
               </div>
             </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#8ab4d4", marginBottom: 8 }}>طريقة الدفع</div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              {[["cash", "💵 نقدي"], ["card", "💳 بطاقة"], ["tron", "💠 ترون"]].map(([v, label]) => (
-                <button key={v} className="obtn" onClick={() => setPayType(v)}
-                  style={{
-                    flex: 1, background: payType === v ? "#4fc3f7" : "#1a3a5c",
-                    color: payType === v ? "#000" : "#e8f4fd", fontSize: 13,
-                  }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button className="obtn" onClick={() => setShowPay(null)}
-                style={{ flex: 1, background: "#1a3a5c", color: "#8ab4d4" }}>إلغاء</button>
-              <button className="obtn" onClick={() => payOrder(showPay, payType)}
-                style={{ flex: 2, background: "#1b5e20", color: "#fff", fontSize: 15 }}>
-                ✓ تأكيد التسديد
-              </button>
-            </div>
+
+            {payMode === "pay" ? (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#8ab4d4", marginBottom: 8 }}>طريقة الدفع</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  {[["cash", "💵 نقدي"], ["card", "💳 بطاقة"], ["tron", "💠 ترون"]].map(([v, label]) => (
+                    <button key={v} className="obtn" onClick={() => setPayType(v)}
+                      style={{ flex: 1, background: payType === v ? "#4fc3f7" : "#1a3a5c",
+                        color: payType === v ? "#000" : "#e8f4fd", fontSize: 13 }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {payType === "tron" && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ fontSize: 12, color: "#8ab4d4", display: "block", marginBottom: 4 }}>مبلغ الترون ({CUR})</label>
+                    <input className="oinput" type="number" min="0" value={payTronInput}
+                      onChange={e => setPayTronInput(e.target.value)} placeholder="0"
+                      style={{ textAlign: "center", fontWeight: 900, fontSize: 16 }} />
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <button className="obtn" onClick={() => { setShowPay(null); setPayType("cash"); setPayTronInput(""); }}
+                    style={{ flex: 1, background: "#1a3a5c", color: "#8ab4d4" }}>إلغاء</button>
+                  <button className="obtn" onClick={() => payOrder(showPay, payType, payType === "tron" ? (+payTronInput || 0) : 0)}
+                    style={{ flex: 2, background: "#1b5e20", color: "#fff", fontSize: 15 }}>
+                    ✓ تأكيد التسديد
+                  </button>
+                </div>
+                {/* خيارات إضافية: دين / ضيافة */}
+                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                  <button className="obtn" onClick={() => setPayMode("debt")}
+                    style={{ flex: 1, background: "rgba(106,27,154,.25)", color: "#ce93d8", fontSize: 12, border: "1px solid rgba(106,27,154,.4)" }}>
+                    💳 تسجيل دين
+                  </button>
+                  <button className="obtn" onClick={() => { if (window.confirm("ضيافة كامل الطلب؟")) compOrder(showPay); }}
+                    style={{ flex: 1, background: "rgba(0,137,123,.25)", color: "#80cbc4", fontSize: 12, border: "1px solid rgba(0,137,123,.4)" }}>
+                    🎁 ضيافة كاملة
+                  </button>
+                </div>
+              </>
+            ) : (
+              // ── وضع تسجيل الدين ──
+              <>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#ce93d8", marginBottom: 8 }}>💳 تسجيل دين</div>
+                <label style={{ fontSize: 12, color: "#8ab4d4", display: "block", marginBottom: 4 }}>اسم الزبون (إلزامي)</label>
+                <input className="oinput" value={payDebtName} autoFocus
+                  onChange={e => setPayDebtName(e.target.value)} placeholder="اسم الزبون"
+                  style={{ marginBottom: 12 }} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="obtn" onClick={() => { setPayMode("pay"); setPayDebtName(""); }}
+                    style={{ flex: 1, background: "#1a3a5c", color: "#8ab4d4" }}>← رجوع</button>
+                  <button className="obtn" onClick={() => {
+                    if (!payDebtName.trim()) { showToast("أدخل اسم الزبون", "error"); return; }
+                    debtOrder(showPay, payDebtName.trim()); setPayMode("pay"); setPayDebtName("");
+                  }} style={{ flex: 2, background: "#6a1b9a", color: "#fff", fontSize: 15 }}>
+                    ✓ تأكيد الدين
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
