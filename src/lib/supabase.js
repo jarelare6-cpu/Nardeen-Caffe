@@ -213,3 +213,39 @@ export const subscribePermOverrides = (onUpsert) => {
     }).subscribe();
   return () => supabase.removeChannel(ch);
 };
+
+// ══════════════════════════════════════════════════════════════
+// v7: Real-time للورديات (shifts)
+// ══════════════════════════════════════════════════════════════
+export const subscribeShifts = (onInsert, onUpdate, onDelete) => {
+  if (!supabase) return () => {};
+  const ch = supabase.channel("shifts-rt-v7")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "shifts" }, p => onInsert && onInsert(p.new))
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "shifts" }, p => onUpdate && onUpdate(p.new))
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "shifts" }, p => onDelete && onDelete(p.old))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+// ══════════════════════════════════════════════════════════════
+// v7: Real-time لسجل الولاء (loyalty_log)
+// ══════════════════════════════════════════════════════════════
+export const subscribeLoyaltyLog = (onInsert) => {
+  if (!supabase) return () => {};
+  const ch = supabase.channel("loyalty-rt-v7")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "loyalty_log" }, p => onInsert && onInsert(p.new))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+// ══════════════════════════════════════════════════════════════
+// v7: Real-time لسجل النقد (cash_log)
+// ══════════════════════════════════════════════════════════════
+export const subscribeCashLog = (onInsert, onDelete) => {
+  if (!supabase) return () => {};
+  const ch = supabase.channel("cashlog-rt-v7")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "cash_log" }, p => onInsert && onInsert(p.new))
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "cash_log" }, p => onDelete && onDelete(p.old))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
