@@ -482,7 +482,16 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                       transform: inCart ? "scale(1.03)" : "scale(1)",
                     }}>
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 28, marginBottom: 4 }}>{item.emoji}</div>
+                      <div style={{ marginBottom: 4, minHeight: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {(item.image || "").trim()
+                          ? <img src={item.image} alt={item.name} loading="lazy"
+                              onError={e=>{e.currentTarget.style.display="none";const s=e.currentTarget.nextSibling;if(s)s.style.display="block";}}
+                              style={{ width: 34, height: 34, objectFit: "cover", borderRadius: 10 }}/>
+                          : null}
+                        {(item.image || "").trim()
+                          ? <span style={{ display: "none", fontSize: 28 }}>{item.emoji}</span>
+                          : <span style={{ fontSize: 28 }}>{item.emoji}</span>}
+                      </div>
                       <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, lineHeight: 1.3 }}>{item.name}</div>
                       <div style={{ fontSize: 13, fontWeight: 900, color: "#4fc3f7" }}>
                         {item.price.toLocaleString()} {CUR}
