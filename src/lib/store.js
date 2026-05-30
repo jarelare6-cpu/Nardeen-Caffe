@@ -17,13 +17,23 @@ import {
   subscribeDebts, subscribeExpenses, subscribeMenu,
   subscribeReceipts, subscribeCompLog, subscribeCustomers,
   subscribeSettings, subscribePermOverrides,
+  subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll,
 } from "./supabase";
 
-// ── localStorage helpers ──────────────────────────────────────
+// ── تخزين: أونلاين فقط — لا حفظ محلي للبيانات ──────────────────
+// المصدر الوحيد للحقيقة هو Supabase. localStorage معطّل للبيانات
+// التجارية بناءً على طلب المستخدم. تبقى فقط أعلام واجهة صغيرة.
+const UI_KEYS = new Set(["nc_dark", "nc_pw_hashed", "nc_guest_id", "nc_session"]);
 const ls = {
-  get: (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
-  set: (k, v)   => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  get: (k, def) => {
+    if (!UI_KEYS.has(k)) return def; // البيانات التجارية تأتي من Supabase فقط
+    try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; }
+  },
+  set: (k, v) => {
+    if (!UI_KEYS.has(k)) return; // لا تحفظ البيانات التجارية محلياً
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+  },
 };
 
 // ── BroadcastChannel ──────────────────────────────────────────
@@ -246,6 +256,9 @@ const sbWrite = {
     worker_name: o.workerName || "",
     tron_amount: o.tronAmount || 0,
     branch: o.branch || "main",
+    shift_id: o.shiftId || null,
+    preparing_at: o.preparingAt || null,
+    ready_at: o.readyAt || null,
   }),
   deleteOrder: (id) => sbDelete("orders", id),
 
@@ -306,6 +319,7 @@ const sbWrite = {
     items: c.items || [], amount: c.amount || 0,
     reason: c.reason || "", created_by: c.createdBy || c.by || "",
     created_at: c.createdAt || c.at || new Date().toISOString(),
+    branch: c.branch || "main",
   }),
 
   customer: (c) => sbUpsert("customers", {
@@ -316,11 +330,46 @@ const sbWrite = {
     total_spent: c.totalSpent || 0,
     notes: c.notes || "",
     loyalty_points: c.loyaltyPoints || 0,
+    loyalty_redeemed: c.loyaltyRedeemed || 0,
+    tier: c.tier || "bronze",
     created_at: c.createdAt || new Date().toISOString(),
     last_visit: c.lastVisit || null,
     orders: c.orders || [],
   }),
   deleteCustomer: (id) => sbDelete("customers", id),
+
+  // v7: تقفيل الوردية
+  shift: (s) => sbUpsert("shifts", {
+    id: s.id, user_id: s.userId || null, user_name: s.userName || "",
+    branch: s.branch || "main",
+    opened_at: s.openedAt || new Date().toISOString(),
+    closed_at: s.closedAt || null,
+    opening_cash: s.openingCash || 0,
+    expected_cash: s.expectedCash || 0,
+    counted_cash: s.countedCash || 0,
+    difference: s.difference || 0,
+    total_sales: s.totalSales || 0,
+    cash_sales: s.cashSales || 0,
+    card_sales: s.cardSales || 0,
+    tron_sales: s.tronSales || 0,
+    debt_total: s.debtTotal || 0,
+    comp_total: s.compTotal || 0,
+    orders_count: s.ordersCount || 0,
+    expenses_total: s.expensesTotal || 0,
+    status: s.status || "open",
+    notes: s.notes || "",
+    created_at: s.createdAt || new Date().toISOString(),
+  }),
+
+  // v7: محفظة الولاء
+  loyaltyLog: (l) => sbUpsert("loyalty_log", {
+    id: l.id, customer_id: l.customerId || null,
+    customer_name: l.customerName || "",
+    type: l.type || "earn", points: l.points || 0,
+    order_id: l.orderId || null, order_num: l.orderNum || "",
+    note: l.note || "", created_by: l.createdBy || "",
+    created_at: l.createdAt || new Date().toISOString(),
+  }),
 };
 
 // ══════════════════════════════════════════════════════════════
@@ -346,6 +395,9 @@ const mapOrder = o => ({
   workerName:   o.worker_name   ?? o.workerName   ?? "",
   tronAmount:   o.tron_amount   ?? o.tronAmount   ?? 0,
   branch:       o.branch        ?? "main",
+  shiftId:      o.shift_id      ?? o.shiftId      ?? null,
+  preparingAt:  o.preparing_at  ?? o.preparingAt  ?? null,
+  readyAt:      o.ready_at       ?? o.readyAt      ?? null,
 });
 const mapMenu = m => ({
   ...m,
@@ -361,6 +413,7 @@ const mapDebt = d => ({
   createdBy:    d.created_by    ?? d.createdBy    ?? "",
   orderId:      d.order_id      ?? d.orderId      ?? null,
   orderNum:     d.order_num     ?? d.orderNum     ?? "",
+  branch:       d.branch        ?? "main",
 });
 const mapExpense = e => ({
   ...e,
@@ -412,6 +465,7 @@ const mapCompLog = c => ({
   tableNum:     c.table_num     ?? c.tableNum     ?? "",
   createdBy:    c.created_by    ?? c.createdBy    ?? c.by ?? "",
   createdAt:    c.created_at    ?? c.createdAt    ?? c.at ?? new Date().toISOString(),
+  branch:       c.branch        ?? "main",
 });
 const mapCustomer = c => ({
   ...c,
@@ -419,9 +473,44 @@ const mapCustomer = c => ({
   totalOrders:  c.total_orders ?? c.totalOrders ?? 0,
   totalSpent:   c.total_spent  ?? c.totalSpent  ?? 0,
   loyaltyPoints:c.loyalty_points ?? c.loyaltyPoints ?? 0,
+  loyaltyRedeemed: c.loyalty_redeemed ?? c.loyaltyRedeemed ?? 0,
+  tier:         c.tier         ?? "bronze",
+  phone:        c.phone        ?? "",
   createdAt:    c.created_at   ?? c.createdAt   ?? new Date().toISOString(),
   lastVisit:    c.last_visit   ?? c.lastVisit   ?? null,
   orders:       c.orders       ?? [],
+});
+const mapShift = s => ({
+  ...s,
+  userId:        s.user_id       ?? s.userId       ?? null,
+  userName:      s.user_name     ?? s.userName     ?? "",
+  branch:        s.branch        ?? "main",
+  openedAt:      s.opened_at     ?? s.openedAt     ?? null,
+  closedAt:      s.closed_at     ?? s.closedAt     ?? null,
+  openingCash:   s.opening_cash  ?? s.openingCash  ?? 0,
+  expectedCash:  s.expected_cash ?? s.expectedCash ?? 0,
+  countedCash:   s.counted_cash  ?? s.countedCash  ?? 0,
+  difference:    s.difference    ?? 0,
+  totalSales:    s.total_sales   ?? s.totalSales   ?? 0,
+  cashSales:     s.cash_sales    ?? s.cashSales    ?? 0,
+  cardSales:     s.card_sales    ?? s.cardSales    ?? 0,
+  tronSales:     s.tron_sales    ?? s.tronSales    ?? 0,
+  debtTotal:     s.debt_total    ?? s.debtTotal    ?? 0,
+  compTotal:     s.comp_total    ?? s.compTotal    ?? 0,
+  ordersCount:   s.orders_count  ?? s.ordersCount  ?? 0,
+  expensesTotal: s.expenses_total ?? s.expensesTotal ?? 0,
+  status:        s.status        ?? "open",
+  notes:         s.notes         ?? "",
+  createdAt:     s.created_at    ?? s.createdAt    ?? new Date().toISOString(),
+});
+const mapLoyalty = l => ({
+  ...l,
+  customerId:   l.customer_id   ?? l.customerId   ?? null,
+  customerName: l.customer_name ?? l.customerName ?? "",
+  orderId:      l.order_id      ?? l.orderId      ?? null,
+  orderNum:     l.order_num     ?? l.orderNum     ?? "",
+  createdBy:    l.created_by    ?? l.createdBy    ?? "",
+  createdAt:    l.created_at    ?? l.createdAt    ?? new Date().toISOString(),
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -448,6 +537,8 @@ export const useStore = () => {
   const [compLog,       setCompLogRaw]       = useState(() => ls.get("nc_complog",  []));
   const [customers,     setCustomersRaw]     = useState(() => ls.get("nc_customers",[]));
   const [permOverrides, setPermOverridesRaw] = useState(() => ls.get("nc_perms",   {}));
+  const [shifts,        setShiftsRaw]        = useState(() => ls.get("nc_shifts",   []));
+  const [loyaltyLog,    setLoyaltyLogRaw]    = useState(() => ls.get("nc_loyalty",  []));
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
 
@@ -643,6 +734,34 @@ export const useStore = () => {
     });
   }, []);
 
+  // v7: الورديات — تُرفع لـ Supabase
+  const setShifts = useCallback((v) => {
+    setShiftsRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      ls.set("nc_shifts", next); broadcast("nc_shifts", next);
+      if (SUPABASE_READY) {
+        next.forEach(s => {
+          const old = p.find(x => x.id === s.id);
+          if (!old || JSON.stringify(old) !== JSON.stringify(s)) sbWrite.shift(s);
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  // v7: سجل الولاء — يُرفع لـ Supabase
+  const setLoyaltyLog = useCallback((v) => {
+    setLoyaltyLogRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      ls.set("nc_loyalty", next); broadcast("nc_loyalty", next);
+      if (SUPABASE_READY) {
+        const prevIds = new Set(p.map(l => l.id));
+        next.filter(l => !prevIds.has(l.id)).forEach(l => sbWrite.loyaltyLog(l));
+      }
+      return next;
+    });
+  }, []);
+
   const addTable = useCallback(() => {
     setTablesRaw(p => {
       const maxNum = p.length > 0 ? Math.max(...p.map(t => t.number)) : 0;
@@ -714,6 +833,8 @@ export const useStore = () => {
         case "nc_complog":        setCompLogRaw(data);       break;
         case "nc_customers":      setCustomersRaw(data);     break;
         case "nc_perms":          setPermOverridesRaw(data); break;
+        case "nc_shifts":         setShiftsRaw(data);        break;
+        case "nc_loyalty":        setLoyaltyLogRaw(data);    break;
       }
     };
     bc.addEventListener("message", handler);
@@ -741,6 +862,8 @@ export const useStore = () => {
           case "nc_complog":        setCompLogRaw(data);       break;
           case "nc_customers":      setCustomersRaw(data);     break;
           case "nc_perms":          setPermOverridesRaw(data); break;
+          case "nc_shifts":         setShiftsRaw(data);        break;
+          case "nc_loyalty":        setLoyaltyLogRaw(data);    break;
         }
       } catch {}
     };
@@ -768,7 +891,9 @@ export const useStore = () => {
       supabase.from("customers").select("*").order("created_at", { ascending: false }),
       supabase.from("app_settings").select("*").eq("id", "main").single(),
       supabase.from("perm_overrides").select("*").eq("id", "main").single(),
-    ]).then(([ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms]) => {
+      supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(200),
+      supabase.from("loyalty_log").select("*").order("created_at", { ascending: false }).limit(300),
+    ]).then(([ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy]) => {
       if (ord.data?.length)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
       if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
       if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
@@ -785,6 +910,8 @@ export const useStore = () => {
       if (cust.data?.length) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
       if (sett.data?.data)   { setSettingsRaw(s => { const n = { ...s, ...sett.data.data }; ls.set("nc_settings", n); return n; }); }
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
+      if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   ls.set("nc_shifts",   d); }
+      if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);ls.set("nc_loyalty",  d); }
       setCloudReady(true);
     }).catch(err => {
       console.error("Supabase load error:", err);
@@ -904,6 +1031,33 @@ export const useStore = () => {
     });
   }, []);
 
+  // v7: subscription لسجل النقد (مهم لتقفيل الوردية عبر الأجهزة)
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeCashLog(
+      (r) => setCashLogRaw(p => { const c = mapCash(r); const n = [c, ...p.filter(x => x.id !== c.id)]; ls.set("nc_cash", n); broadcast("nc_cash", n); return n; }),
+      (r) => setCashLogRaw(p => { const n = p.filter(x => x.id !== r.id); ls.set("nc_cash", n); broadcast("nc_cash", n); return n; }),
+    );
+  }, []);
+
+  // v7: subscriptions للورديات
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeShifts(
+      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = [s, ...p.filter(x => x.id !== s.id)]; ls.set("nc_shifts", n); broadcast("nc_shifts", n); return n; }),
+      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = p.map(x => x.id === s.id ? s : x);   ls.set("nc_shifts", n); broadcast("nc_shifts", n); return n; }),
+      (r) => setShiftsRaw(p => { const n = p.filter(x => x.id !== r.id);                                ls.set("nc_shifts", n); broadcast("nc_shifts", n); return n; }),
+    );
+  }, []);
+
+  // v7: subscription لسجل الولاء
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeLoyaltyLog(
+      (r) => setLoyaltyLogRaw(p => { const l = mapLoyalty(r); const n = [l, ...p.filter(x => x.id !== l.id)]; ls.set("nc_loyalty", n); broadcast("nc_loyalty", n); return n; }),
+    );
+  }, []);
+
   return {
     users, setUsers,
     menu, setMenu,
@@ -919,6 +1073,8 @@ export const useStore = () => {
     compLog, setCompLog,
     customers, setCustomers,
     permOverrides, setPermOverrides,
+    shifts, setShifts,
+    loyaltyLog, setLoyaltyLog,
     syncing, cloudReady,
   };
 };
