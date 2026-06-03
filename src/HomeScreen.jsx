@@ -13,6 +13,41 @@ import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./Ope
 import { DashboardTab, InventoryTab, MenuTab, TablesTab, CompLogTab, CustomerFileTab, ReceiptsTab, StaffTab, ReportsTab, SettingsTab, OutdoorAdminTab } from "./AdminScreens.jsx";
 import { KitchenDisplayTab, ShiftCloseTab } from "./Features.jsx";
 
+// ── ErrorBoundary ──────────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("[Nardeen] خطأ في التبويب:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--sub)" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>حدث خطأ في هذا التبويب</div>
+          <div style={{ fontSize: 12, marginBottom: 16, color: "var(--sub)" }}>
+            {this.state.error?.message || ""}
+          </div>
+          <button
+            className="btn btn-red"
+            onClick={() => this.setState({ hasError: false, error: null })}
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 export function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,dm,toggleDark,settings}){
   const [tab,setTab]=useState(()=>{
     if(canAccess(user.role,"dashboard")) return "dashboard";
