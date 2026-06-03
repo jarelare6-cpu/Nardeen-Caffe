@@ -1,0 +1,1379 @@
+// شاشات التشغيل (طلبات/كاشير/ديون/مصاريف) — مفصولة من App.jsx
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
+import OutdoorScreen from "./OutdoorScreen.jsx";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue } from "./lib/utils.js";
+import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
+import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
+import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+
+export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
+  const [cart,setCart]=useState([]);
+  const [search,setSearch]=useState("");
+  const [cat,setCat]=useState("all");
+  const [tableNum,setTableNum]=useState("");
+  const [notes,setNotes]=useState("");
+  const [customerName,setCustomerName]=useState("");
+  const [discount,setDiscount]=useState(0);
+  const [submitting,setSubmitting]=useState(false);
+  const [orderMode,setOrderMode]=useState("new"); // "new" | "addto"
+  const [targetOrderId,setTargetOrderId]=useState(""); // للإضافة لطلب موجود
+  const [tableError,setTableError]=useState("");
+  const CUR=settings?.currency||"ل.س";
+  const maxDiscount=settings?.maxDiscount??50;
+  const isAdmin=user.role===ROLES.ADMIN;
+
+  // الطلبات النشطة الصالحة للإضافة
+  const activeOrders=store.orders.filter(o=>!["paid","cancelled","complimentary"].includes(o.status));
+
+  const filtered=store.menu.filter(m=>{
+    const ms=m.name.toLowerCase().includes(search.toLowerCase())||(m.nameEn||"").toLowerCase().includes(search.toLowerCase());
+    const mc=cat==="all"||m.category===cat;
+    return ms&&mc&&m.stock>0;
+  });
+
+  const addToCart=(item)=>setCart(p=>{
+    const ex=p.find(c=>c.itemId===item.id);
+    if(ex) return p.map(c=>c.itemId===item.id?{...c,qty:c.qty+1}:c);
+    return [...p,{itemId:item.id,itemName:item.name,price:item.price,qty:1,emoji:item.emoji}];
+  });
+  const removeFromCart=(id)=>setCart(p=>{
+    const ex=p.find(c=>c.itemId===id);
+    if(ex&&ex.qty>1) return p.map(c=>c.itemId===id?{...c,qty:c.qty-1}:c);
+    return p.filter(c=>c.itemId!==id);
+  });
+
+  const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
+  const cartCount=cart.reduce((s,c)=>s+c.qty,0);
+  const discountAmt=Math.round(cartTotal*Math.min(discount,maxDiscount)/100);
+  const finalTotal=cartTotal-discountAmt;
+
+  const placeOrder=()=>{
+    setTableError("");
+    if(!cart.length){showToast("السلة فارغة","error");return}
+    if(!tableNum.trim()){setTableError("⚠ رقم الطاولة مطلوب");return}
+
+    if(orderMode==="addto"){
+      // إضافة لطلب موجود
+      if(!targetOrderId){showToast("⚠ اختر الطلب المراد الإضافة إليه","error");return}
+      const target=store.orders.find(o=>o.id===targetOrderId);
+      if(!target){showToast("الطلب غير موجود","error");return}
+      const mergedItems=[...target.items];
+      cart.forEach(ci=>{
+        const ex=mergedItems.find(i=>i.itemId===ci.itemId);
+        if(ex) ex.qty+=ci.qty;
+        else mergedItems.push({...ci});
+      });
+      const newTotal=mergedItems.reduce((s,i)=>s+i.price*i.qty,0);
+      store.setOrders(p=>p.map(o=>o.id===targetOrderId?{...o,items:mergedItems,total:newTotal,status:"pending"}:o));
+      store.setMenu(p=>p.map(m=>{
+        const ci=cart.find(c=>c.itemId===m.id);
+        if(!ci) return m;
+        return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
+      }));
+      const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
+      const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
+      if(hasDrinks) addNotification(`🍹 إضافة للطلب #${target.orderNum} — البار`,[ROLES.BAR],targetOrderId);
+      if(hasHookah) addNotification(`💨 إضافة للطلب #${target.orderNum} — أراكيل`,[ROLES.HOOKAH],targetOrderId);
+      addNotification(`📋 تم إضافة أصناف للطلب #${target.orderNum}`,[ROLES.CASHIER,ROLES.ADMIN],targetOrderId);
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);setTargetOrderId("");
+      showToast(`✓ تم الإضافة للطلب #${target.orderNum}`);
+      return;
+    }
+
+    setSubmitting(true);
+    setTimeout(()=>{
+      const orderNum=(store.orders.length+1).toString().padStart(4,"0");
+      const newOrder={
+        id:Date.now().toString(),orderNum,
+        customerId:user.id,customerName:customerName||user.name,
+        workerName:user.name,table:tableNum.trim(),notes,items:cart,
+        total:finalTotal,originalTotal:cartTotal,discount,
+        paymentType:"cash",
+        status:ORDER_STATUS.PENDING,
+        createdAt:new Date().toISOString(),paymentStatus:"pending",
+      };
+      store.setOrders(p=>[newOrder,...p]);
+      store.setMenu(p=>p.map(m=>{
+        const ci=cart.find(c=>c.itemId===m.id);
+        if(!ci) return m;
+        return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
+      }));
+      // إضافة الزبون لملف الزبائن — store.setCustomers يتولى المزامنة مع Supabase تلقائياً
+      if(customerName.trim()){
+        store.setCustomers(p=>{
+          const ex=p.find(c=>c.name===customerName.trim());
+          if(ex){
+            const updated={
+              ...ex,
+              visits:(ex.visits||0)+1,
+              totalOrders:(ex.totalOrders||0)+1,
+              totalSpent:(ex.totalSpent||0)+newOrder.total,
+              lastVisit:new Date().toISOString(),
+              orders:[newOrder.id,...(ex.orders||[])],
+            };
+            return p.map(c=>c.name===customerName.trim()?updated:c);
+          }
+          return [{
+            id:"cust_"+Date.now(),
+            name:customerName.trim(),
+            visits:1,
+            totalOrders:1,
+            totalSpent:newOrder.total,
+            lastVisit:new Date().toISOString(),
+            createdAt:new Date().toISOString(),
+            orders:[newOrder.id],
+            phone:"",email:"",notes:"",
+          },...p];
+        });
+      }
+
+      const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
+      const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
+      if(hasDrinks) addNotification(`🍹 طلب #${orderNum} للبار${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.BAR],newOrder.id);
+      if(hasHookah) addNotification(`💨 طلب نرجيلة #${orderNum}${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.HOOKAH],newOrder.id);
+      addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
+      // تحديث حالة الطاولة
+      store.setTables(p=>p.map(t=>String(t.number)===String(tableNum.trim())?{...t,status:"occupied",openedAt:t.openedAt||new Date().toISOString()}:t));
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
+      setSubmitting(false);
+      saveReceiptRecord(newOrder, settings, store, 0);
+      showToast(`تم تسجيل الطلب #${orderNum} ✓`);
+      if(window.confirm(`🖨️ طباعة فاتورة الطلب #${orderNum}؟`)){
+        printOrder(newOrder,store.menu,1,settings);
+        setTimeout(()=>printOrder(newOrder,store.menu,2,settings),800);
+      }
+    },800);
+  };
+
+  return(
+    <div className="fade-in order-grid" style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:14,height:"calc(100vh - 130px)"}}>
+      {/* Menu */}
+      <div style={{display:"flex",flexDirection:"column",gap:10,overflow:"hidden"}}>
+        <div className="card" style={{padding:12}}>
+          <input className="input" placeholder="🔍 بحث في المنيو..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginBottom:10}}/>
+          <div style={{display:"flex",gap:8,overflowX:"auto"}} className="scroll-hide">
+            <button onClick={()=>setCat("all")} style={{padding:"6px 14px",borderRadius:20,border:"none",
+              background:cat==="all"?"#c62828":"var(--card2)",color:cat==="all"?"#fff":"var(--sub)",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+              🍽 الكل
+            </button>
+            {CAT_ORDER.map(c=>(
+              <button key={c} onClick={()=>setCat(c)} style={{padding:"6px 14px",borderRadius:20,border:"none",
+                background:cat===c?"#c62828":"var(--card2)",color:cat===c?"#fff":"var(--sub)",fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+                {CAT_LABELS[c]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{flex:1,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(135px,1fr))",gap:8,paddingBottom:10}} className="scroll-hide">
+          {filtered.map(item=>{
+            const inCart=cart.find(c=>c.itemId===item.id);
+            return(
+              <div key={item.id} onClick={()=>addToCart(item)}
+                style={{background:"var(--card)",borderRadius:12,padding:12,cursor:"pointer",
+                  transition:"all .2s",boxShadow:inCart?"0 0 0 2px #c62828,var(--shadow)":"var(--shadow)",
+                  transform:inCart?"scale(1.03)":"scale(1)",position:"relative",userSelect:"none"}}>
+                <div style={{fontSize:26,textAlign:"center",marginBottom:5}}>{item.emoji}</div>
+                <div style={{fontSize:11,fontWeight:700,textAlign:"center",marginBottom:3,lineHeight:1.3}}>{item.name}</div>
+                <div style={{fontSize:11,fontWeight:900,color:"#c62828",textAlign:"center"}}>{item.price.toLocaleString()} {CUR}</div>
+                <div style={{fontSize:9,color:item.stock<=item.minStock?"#ff9800":"var(--sub)",textAlign:"center",marginTop:2}}>
+                  مخزون: {item.stock}
+                </div>
+                {inCart&&<div style={{position:"absolute",top:6,left:6,background:"#c62828",color:"#fff",
+                  borderRadius:"50%",width:20,height:20,fontSize:11,fontWeight:900,
+                  display:"flex",alignItems:"center",justifyContent:"center"}}>{inCart.qty}</div>}
+              </div>
+            );
+          })}
+          {filtered.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:40,color:"var(--sub)"}}>لا توجد أصناف</div>}
+        </div>
+      </div>
+
+      {/* Cart */}
+      <div className="order-cart" style={{background:"var(--card)",borderRadius:16,boxShadow:"var(--shadow)",
+        display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{padding:"14px 14px 10px",background:"linear-gradient(135deg,#c62828,#8e0000)"}}>
+          <div style={{color:"#fff",fontWeight:900,fontSize:15}}>
+            🛒 السلة {cartCount>0&&<span style={{background:"rgba(255,255,255,.3)",borderRadius:20,padding:"2px 8px",fontSize:12}}>{cartCount}</span>}
+          </div>
+        </div>
+        {/* وضع الطلب */}
+        <div style={{padding:"10px 12px",borderBottom:"1px solid var(--border)",display:"flex",gap:6}}>
+          <button onClick={()=>setOrderMode("new")}
+            style={{flex:1,padding:"8px 4px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",
+              background:orderMode==="new"?"#c62828":"var(--card2)",color:orderMode==="new"?"#fff":"var(--sub)"}}>
+            ➕ طلب جديد
+          </button>
+          <button onClick={()=>setOrderMode("addto")}
+            style={{flex:1,padding:"8px 4px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",
+              background:orderMode==="addto"?"#1565c0":"var(--card2)",color:orderMode==="addto"?"#fff":"var(--sub)"}}>
+            📋 إضافة لطلب
+          </button>
+        </div>
+        <div style={{padding:"10px 12px",borderBottom:"1px solid var(--border)",display:"flex",flexDirection:"column",gap:8}}>
+          {orderMode==="addto"&&(
+            <select className="input" value={targetOrderId} onChange={e=>setTargetOrderId(e.target.value)} style={{fontSize:13}}>
+              <option value="">— اختر الطلب —</option>
+              {activeOrders.map(o=>(
+                <option key={o.id} value={o.id}>#{o.orderNum} — {o.customerName} • ط{o.table}</option>
+              ))}
+            </select>
+          )}
+          <div>
+            <input className="input" placeholder="🪑 رقم الطاولة *" value={tableNum} onChange={e=>{setTableNum(e.target.value);setTableError("");}}
+              style={{fontSize:13,border:tableError?"2px solid #c62828":undefined}}/>
+            {tableError&&<div style={{color:"#c62828",fontSize:11,marginTop:3,fontWeight:700}}>{tableError}</div>}
+          </div>
+          <input className="input" placeholder="👤 اسم الزبون (اختياري)" value={customerName} onChange={e=>setCustomerName(e.target.value)} style={{fontSize:13}}/>
+          <textarea className="input" placeholder="📝 ملاحظات..." value={notes} onChange={e=>setNotes(e.target.value)} style={{resize:"none",height:50,fontSize:13}}/>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <label style={{fontSize:12,color:"var(--sub)",whiteSpace:"nowrap"}}>خصم %</label>
+            <input className="input" type="number" min="0" max={isAdmin?100:maxDiscount} value={discount}
+              onChange={e=>setDiscount(Math.min(isAdmin?100:maxDiscount,Math.max(0,+e.target.value)))}
+              style={{fontSize:13}}/>
+          </div>
+
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"8px 12px"}} className="scroll-hide">
+          {!cart.length?(
+            <div style={{textAlign:"center",color:"var(--sub)",paddingTop:30}}>
+              <div style={{fontSize:38,marginBottom:8}}>🛒</div>
+              <div style={{fontSize:12}}>اضغط على الأصناف</div>
+            </div>
+          ):cart.map(item=>(
+            <div key={item.itemId} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+              <span style={{fontSize:20}}>{item.emoji}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,fontWeight:600}}>{item.itemName}</div>
+                <div style={{fontSize:11,color:"#c62828",fontWeight:700}}>{(item.price*item.qty).toLocaleString()} {CUR}</div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,background:"var(--card2)",borderRadius:20,padding:"3px 8px"}}>
+                <button onClick={()=>removeFromCart(item.itemId)} style={{background:"none",border:"none",fontSize:15,color:"#c62828",fontWeight:900,lineHeight:1}}>−</button>
+                <span style={{fontWeight:900,fontSize:13,minWidth:18,textAlign:"center"}}>{item.qty}</span>
+                <button onClick={()=>addToCart(store.menu.find(m=>m.id===item.itemId))} style={{background:"none",border:"none",fontSize:15,color:"#2e7d32",fontWeight:900,lineHeight:1}}>+</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{padding:"12px 14px",borderTop:"2px solid var(--border)"}}>
+          {discount>0&&(
+            <>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:3,fontSize:12,color:"var(--sub)"}}>
+                <span>قبل الخصم</span><span>{cartTotal.toLocaleString()} {CUR}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,fontSize:12,color:"#2e7d32",fontWeight:700}}>
+                <span>خصم {discount}%</span><span>-{discountAmt.toLocaleString()} {CUR}</span>
+              </div>
+            </>
+          )}
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,fontSize:15,fontWeight:900}}>
+            <span>الإجمالي</span>
+            <span style={{color:"#c62828"}}>{finalTotal.toLocaleString()} {CUR}</span>
+          </div>
+
+          <button onClick={placeOrder} disabled={submitting||!cart.length}
+            style={{width:"100%",background:submitting||!cart.length?"#999":"#c62828",color:"#fff",border:"none",
+              borderRadius:10,padding:"12px",fontWeight:900,fontSize:14,cursor:submitting||!cart.length?"not-allowed":"pointer"}}>
+            {submitting?"⏳ جاري الإرسال...":`✓ تأكيد الطلب${cartCount>0?` (${cartCount})`:""}` }
+          </button>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ═══════════════════════════════════
+// ORDERS TAB — with edit order feature
+// ═══════════════════════════════════
+
+export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
+  const [filter,setFilter]=useState("active");
+  const [search,setSearch]=useState("");
+  const [editOrder,setEditOrder]=useState(null);
+  const CUR=settings?.currency||"ل.س";
+  const canManage=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
+  const isBarOrHookah=[ROLES.BAR,ROLES.HOOKAH].includes(user.role);
+  // فقط الأدمن والكاشير يرون الطلبات المنتهية
+  const canSeeHistory=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
+
+  const filtered=store.orders.filter(o=>{
+    // الموظفون (بار، أراكيل، عامل) يرون الطلبات النشطة فقط
+    if(!canSeeHistory && ["paid","cancelled"].includes(o.status)) return false;
+    if(filter==="active") return!["paid","cancelled","debt"].includes(o.status);
+    if(filter==="debt") return o.status==="debt";
+    if(filter==="paid") return canSeeHistory && o.status==="paid";
+    if(filter==="cancelled") return canSeeHistory && o.status==="cancelled";
+    if(filter==="all") return canSeeHistory || !["paid","cancelled"].includes(o.status);
+    return true;
+  }).filter(o=>{
+    if(!search) return true;
+    return (o.orderNum||"").includes(search)||(o.customerName||"").includes(search)||(o.table||"").includes(search);
+  }).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+
+  const updateStatus=(order,newStatus)=>{
+    store.setOrders(p=>p.map(o=>{
+      if(o.id!==order.id) return o;
+      if(newStatus==="ready") return {...o,status:"ready",readyAt:new Date().toISOString(),items:o.items.map(i=>({...i,prepared:true}))};
+      if(newStatus==="preparing") return {...o,status:"preparing",preparingAt:o.preparingAt||new Date().toISOString()};
+      return {...o,status:newStatus};
+    }));
+    if(newStatus==="ready") addNotification(`✅ طلب #${order.orderNum} جاهز`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
+    showToast(`تم تحديث الطلب #${order.orderNum}`);
+  };
+  const cancelOrder=(order)=>{
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled"}:o));
+    store.setMenu(p=>p.map(m=>{
+      const ci=order.items.find(i=>i.itemId===m.id);
+      if(!ci) return m;
+      return{...m,stock:m.stock+ci.qty,totalSold:Math.max(0,m.totalSold-ci.qty)};
+    }));
+    showToast(`تم إلغاء الطلب #${order.orderNum}`,"error");
+  };
+
+  const statusBtns={
+    pending:["preparing","👨‍🍳 بدء التحضير"],
+    preparing:["ready","✅ تعيين جاهز"],
+  };
+
+  // Edit order modal
+  const EditModal=({order,onClose})=>{
+    const [items,setItems]=useState(order.items.map(i=>({...i})));
+    const [tbl,setTbl]=useState(order.table||"");
+    const [note,setNote]=useState(order.notes||"");
+    const total=items.reduce((s,i)=>s+i.price*i.qty,0);
+    const save=()=>{
+      store.setOrders(p=>p.map(o=>o.id===order.id?{...o,items,table:tbl,notes:note,total}:o));
+      showToast("تم تعديل الطلب");onClose();
+    };
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:600,padding:20}}>
+        <div className="card fade-in" style={{width:"100%",maxWidth:400,maxHeight:"88vh",overflowY:"auto"}}>
+          <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>✏ تعديل الطلب #{order.orderNum}</div>
+          <input className="input" value={tbl} onChange={e=>setTbl(e.target.value)} placeholder="رقم الطاولة" style={{marginBottom:10}}/>
+          <textarea className="input" value={note} onChange={e=>setNote(e.target.value)} style={{height:60,resize:"none",marginBottom:14}} placeholder="ملاحظات"/>
+          {items.map((item,idx)=>(
+            <div key={idx} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"6px 10px",background:"var(--card2)",borderRadius:10}}>
+              <span style={{fontSize:18}}>{item.emoji}</span>
+              <div style={{flex:1,fontSize:13,fontWeight:600}}>{item.itemName}</div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:Math.max(1,it.qty-1)}:it))}
+                  style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>−</button>
+                <span style={{minWidth:24,textAlign:"center",fontWeight:900}}>{item.qty}</span>
+                <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:it.qty+1}:it))}
+                  style={{background:"#e8f5e9",color:"#2e7d32",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>+</button>
+                <button onClick={()=>setItems(p=>p.filter((_,i)=>i!==idx))}
+                  style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontSize:13}}>🗑</button>
+              </div>
+            </div>
+          ))}
+          <div style={{fontWeight:900,fontSize:15,margin:"10px 0"}}>الإجمالي: {total.toLocaleString()} {CUR}</div>
+          <div style={{display:"flex",gap:10}}>
+            <button className="btn btn-red" style={{flex:1}} onClick={save}>حفظ</button>
+            <button className="btn btn-ghost" style={{flex:1}} onClick={onClose}>إلغاء</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return(
+    <div className="fade-in">
+      {editOrder&&<EditModal order={editOrder} onClose={()=>setEditOrder(null)}/>}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <h2 style={{fontSize:18,fontWeight:900}}>📋 الطلبات ({filtered.length})</h2>
+        <input className="input" placeholder="🔍 بحث..." value={search} onChange={e=>setSearch(e.target.value)} style={{maxWidth:200,fontSize:13}}/>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:14,overflowX:"auto"}} className="scroll-hide">
+        {[["active","نشطة"],["debt","💳 ديون"],["paid","مدفوعة"],["cancelled","ملغاة"],["all","الكل"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={{padding:"7px 14px",borderRadius:20,border:"none",
+            background:filter===v?"#c62828":"var(--card2)",color:filter===v?"#fff":"var(--sub)",
+            fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {!filtered.length?(
+        <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
+          <div style={{fontSize:48}}>📋</div><div style={{marginTop:10}}>لا توجد طلبات</div>
+        </div>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
+          {filtered.map(order=>(
+            <div key={order.id} className="card slide-in" style={{borderRight:`4px solid ${STATUS_COLORS[order.status]}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontWeight:900,fontSize:15}}># {order.orderNum}</span>
+                  {order.table&&<span style={{background:"rgba(21,101,192,.15)",color:"#1565c0",borderRadius:6,
+                    padding:"2px 8px",fontSize:11,fontWeight:700}}>🪑 {order.table}</span>}
+                </div>
+                <span className={`badge s-${order.status}`} style={{fontSize:11,fontWeight:700}}>
+                  {STATUS_LABELS[order.status]}
+                </span>
+              </div>
+              <div style={{fontSize:12,color:"var(--sub)",marginBottom:8}}>
+                👤 {order.customerName} • {new Date(order.createdAt).toLocaleString("ar-SY",{hour:"2-digit",minute:"2-digit",month:"short",day:"numeric"})}
+              </div>
+              {["pending","preparing"].includes(order.status)&&(
+                <div style={{marginBottom:8}}>
+                  <OrderTimer createdAt={order.createdAt} dm={dm}/>
+                </div>
+              )}
+              <div style={{borderTop:"1px dashed var(--border)",paddingTop:8,marginBottom:8}}>
+                {order.items.map((item,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 0"}}>
+                    <span>{item.emoji} {item.itemName} ×{item.qty}</span>
+                    <span style={{color:"#c62828",fontWeight:600}}>{(item.price*item.qty).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+              {order.notes&&<div style={{background:"rgba(249,168,37,.1)",borderRadius:8,padding:"6px 10px",fontSize:11,color:"#e65100",marginBottom:8}}>📝 {order.notes}</div>}
+              {order.discount>0&&<div style={{fontSize:11,color:"#2e7d32",marginBottom:5}}>خصم {order.discount}%: -{((order.originalTotal||order.total)-order.total).toLocaleString()} {CUR}</div>}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,borderTop:"1px solid var(--border)",paddingTop:8}}>
+                <span style={{fontWeight:900,fontSize:14}}>الإجمالي:</span>
+                <span style={{fontWeight:900,fontSize:15,color:"#c62828"}}>{order.total.toLocaleString()} {CUR}</span>
+              </div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {canManage&&statusBtns[order.status]&&(
+                  <button onClick={()=>updateStatus(order,statusBtns[order.status][0])}
+                    style={{flex:1,background:"#c62828",color:"#fff",border:"none",borderRadius:8,padding:"8px",fontWeight:700,fontSize:12}}>
+                    {statusBtns[order.status][1]}
+                  </button>
+                )}
+                {isBarOrHookah&&order.status==="pending"&&(
+                  <button onClick={()=>updateStatus(order,"preparing")}
+                    style={{flex:1,background:"#1976d2",color:"#fff",border:"none",borderRadius:8,padding:"8px",fontWeight:700,fontSize:12}}>
+                    بدء التحضير
+                  </button>
+                )}
+                {canManage&&!["paid","cancelled"].includes(order.status)&&(
+                  <>
+                    <button onClick={()=>setEditOrder(order)}
+                      style={{background:"rgba(25,118,210,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#1565c0"}}>
+                      ✏
+                    </button>
+                    <button onClick={()=>cancelOrder(order)}
+                      style={{background:"rgba(198,40,40,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#c62828"}}>
+                      🚫
+                    </button>
+                  </>
+                )}
+                <button onClick={()=>printOrder(order,store.menu,2,settings)}
+                  style={{background:"var(--card2)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:14}}>
+                  🖨
+                </button>
+                {/* 12. واتساب الفاتورة */}
+                {["ready","paid"].includes(order.status)&&(
+                  <button onClick={()=>sendReceiptWhatsApp(order, order.customerPhone||"", settings)}
+                    style={{background:"rgba(37,211,102,.15)",border:"none",borderRadius:8,
+                      padding:"8px 10px",fontSize:14,color:"#2e7d32"}}
+                    title="إرسال الفاتورة واتساب">
+                    💬
+                  </button>
+                )}
+                {/* 14. طباعة تذكرة البار */}
+                {["pending","preparing"].includes(order.status)&&canManage&&(
+                  <button onClick={()=>printKitchenTicket(order,"bar",settings)}
+                    style={{background:"rgba(21,101,192,.1)",border:"none",borderRadius:8,
+                      padding:"8px 10px",fontSize:14,color:"#1565c0"}}
+                    title="طباعة تذكرة البار">
+                    🍹
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════
+// CASHIER TAB
+// ═══════════════════════════════════
+
+export function CashierTab({ store, user, showToast, dm, settings }) {
+  const CUR = settings?.currency || "ل.س";
+  const maxDiscount = settings?.maxDiscount ?? 50;
+  const isAdmin = user?.role === "admin";
+  const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const todayRevenue = useMemo(() =>
+    store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + o.total, 0)
+    , [store.orders, today]);
+  const readyOrders = useMemo(() => store.orders.filter(o => o.status === "ready"), [store.orders]);
+  const todayExpenses = useMemo(() =>
+    (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && new Date(e.date) >= today).reduce((s, e) => s + e.amount, 0)
+    , [store.expenses, today]);
+  const tronToday = useMemo(() =>
+    (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today).reduce((s, r) => s + r.tronAmount, 0)
+    , [store.receipts, today]);
+  // الجرد = إيرادات − مصاريف + ترون
+  const dailyInventory = todayRevenue - todayExpenses + tronToday;
+
+  const [customerFilter, setCustomerFilter] = useState(""); // فلتر الزبون
+  const [discounts, setDiscounts] = useState({});
+  const [tronAmounts, setTronAmounts] = useState({});
+  const [debtModal, setDebtModal] = useState(null);
+  const [debtNameInput, setDebtNameInput] = useState("");
+  const [debtNameError, setDebtNameError] = useState("");
+  const [debtMergeMode, setDebtMergeMode] = useState(false); // وضع الإضافة لدين سابق
+  const [debtMergeName, setDebtMergeName] = useState("");    // اسم الزبون للدمج
+  const [compModal, setCompModal] = useState(null);
+  const [compItems, setCompItems] = useState([]);
+  const [tronModal, setTronModal] = useState(null);
+  const [tronInput, setTronInput] = useState("");
+  const [partialModal, setPartialModal] = useState(null); // دفع جزئي
+  const [partialInput, setPartialInput] = useState("");
+
+  // تطبيق فلتر الزبون
+  const filteredReady = readyOrders.filter(o =>
+    !customerFilter || (o.customerName || "").includes(customerFilter)
+  );
+
+  const autoFreeTable = (tableNum, updatedOrders) => {
+    if (!tableNum) return;
+    const remaining = updatedOrders.filter(o =>
+      String(o.table) === String(tableNum) &&
+      !["paid", "cancelled", "debt", "complimentary"].includes(o.status)
+    );
+    if (remaining.length === 0) {
+      store.setTables(p => p.map(t =>
+        String(t.number) === String(tableNum) ? { ...t, status: "free", openedAt: null } : t
+      ));
+    }
+  };
+
+  const markPaid = async (order, payType = "cash") => {
+    const disc = discounts[order.id] || 0;
+    const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
+    const finalTotal = order.total - discAmt;
+    const tronAmt = tronAmounts[order.id] || 0;
+    // ربط بالوردية المفتوحة (الفرع الرئيسي)
+    const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
+    const paid = {
+      ...order, status: "paid", paymentStatus: "paid",
+      paymentType: payType,
+      paidAt: new Date().toISOString(), paidBy: user.id, paidByName: user.name,
+      discount: disc, originalTotal: order.total, total: finalTotal,
+      shiftId: openShift?.id || order.shiftId || null,
+    };
+    const updated = store.orders.map(o => o.id === order.id ? paid : o);
+    store.setOrders(() => updated);
+    store.setCashLog(p => [{
+      id: Date.now().toString(), orderId: order.id, orderNum: order.orderNum,
+      amount: finalTotal, at: new Date().toISOString(), by: user.name,
+      type: payType === "tron" ? "tron" : "sale",
+      branch: order.branch || "main", shiftId: openShift?.id || null,
+    }, ...p]);
+
+    // 6. نظام الولاء — إضافة نقاط للزبون المسجَّل
+    if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
+      const cust = (store.customers || []).find(c => c.name === order.customerName);
+      if (cust) {
+        const tier = getCustomerTier(cust.totalSpent || 0, settings);
+        const earned = Math.floor(calcEarnedPoints(finalTotal, settings) * tier.mult);
+        if (earned > 0) {
+          store.setCustomers(p => p.map(c => c.id === cust.id
+            ? { ...c, loyaltyPoints: (c.loyaltyPoints || 0) + earned }
+            : c));
+          store.setLoyaltyLog(p => [{
+            id: "loy_" + Date.now(), customerId: cust.id, customerName: cust.name,
+            type: "earn", points: earned, orderId: order.id, orderNum: order.orderNum,
+            note: `كسب من طلب #${order.orderNum}`, createdBy: user.name,
+            createdAt: new Date().toISOString(),
+          }, ...p]);
+        }
+      }
+    }
+
+    // حفظ الفاتورة في السجل
+    saveReceiptRecord(paid, settings, store, tronAmt);
+
+    // PDF
+    await generateReceiptPDF(paid, settings, tronAmt);
+
+    showToast(`💰 تم الدفع — ${order.customerName || "زبون"} #${order.orderNum}`);
+    autoFreeTable(order.table, updated);
+    setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
+    setTronAmounts(p => { const n = { ...p }; delete n[order.id]; return n; });
+    setTronModal(null);
+  };
+
+  const markDebt = (order) => {
+    setDebtNameInput(order.customerName && order.customerName !== "زبون" ? order.customerName : "");
+    setDebtNameError("");
+    setDebtMergeMode(false);
+    setDebtMergeName("");
+    setDebtModal(order);
+  };
+
+  const confirmDebt = () => {
+    // التحقق من الاسم — إلزامي في كلا الوضعين
+    const nameToUse = debtMergeMode ? debtMergeName.trim() : debtNameInput.trim();
+    if (!nameToUse) {
+      setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين");
+      return;
+    }
+    const order = debtModal;
+    const updated = store.orders.map(o =>
+      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse } : o
+    );
+    store.setOrders(() => updated);
+
+    if (debtMergeMode) {
+      // ── إضافة لدين سابق: ابحث عن دين غير مسوَّى بنفس الاسم ──
+      const existingDebt = store.debts.find(
+        d => !d.settled && d.customerName.trim() === nameToUse
+      );
+      if (existingDebt) {
+        // أضف المبلغ للدين الموجود
+        store.setDebts(p => p.map(d =>
+          d.id === existingDebt.id
+            ? { ...d, amount: d.amount + order.total, remaining: d.remaining + order.total,
+                notes: (d.notes ? d.notes + " | " : "") + `طلب #${order.orderNum}: ${order.total.toLocaleString()} ${CUR}` }
+            : d
+        ));
+        showToast(`💳 تمت إضافة ${order.total.toLocaleString()} ${CUR} لدين ${nameToUse}`, "warn");
+      } else {
+        // لا يوجد دين سابق — أنشئ واحداً جديداً
+        store.setDebts(p => [{
+          id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+          customerName: nameToUse, amount: order.total, remaining: order.total,
+          date: new Date().toISOString(), settled: false, settledAt: null,
+          createdBy: user.name, notes: order.notes || "",
+        }, ...p]);
+        showToast(`💳 تم إنشاء دين جديد لـ ${nameToUse} (لم يوجد دين سابق)`, "warn");
+      }
+    } else {
+      // ── دين عادي جديد ──
+      store.setDebts(p => [{
+        id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
+        customerName: nameToUse, amount: order.total, remaining: order.total,
+        date: new Date().toISOString(), settled: false, settledAt: null,
+        createdBy: user.name, notes: order.notes || "",
+      }, ...p]);
+      showToast(`💳 تم تسجيل الدين — ${nameToUse}`, "warn");
+    }
+
+    autoFreeTable(order.table, updated);
+    setDebtModal(null);
+    setDebtNameInput("");
+    setDebtMergeMode(false);
+    setDebtMergeName("");
+  };
+
+  const openComp = (order) => {
+    setCompItems(order.items.map((_, i) => ({ idx: i, qty: 0, selected: false })));
+    setCompModal(order);
+  };
+
+  const confirmComp = (fullComp) => {
+    const order = compModal;
+    // منع الضيافة المكررة — تحقق من عناصر الطلب التي أُعطيت ضيافة مسبقاً
+    const alreadyComp = (order.items || []).filter(it => it.complimentary || it.compQty > 0);
+    let compAmt = 0;
+    let updatedItems = [...order.items];
+    if (fullComp) {
+      compAmt = order.total;
+      updatedItems = order.items.map(it => ({ ...it, complimentary: true }));
+    } else {
+      updatedItems = order.items.map((it, i) => {
+        const ci = compItems[i];
+        if (!ci?.selected || !ci.qty) return it;
+        // منع ضيافة نفس الصنف مرتين
+        if (it.complimentary || it.compQty >= it.qty) return it;
+        compAmt += it.price * Math.min(ci.qty, it.qty - (it.compQty || 0));
+        return { ...it, compQty: Math.min((it.compQty || 0) + ci.qty, it.qty), complimentary: (it.compQty || 0) + ci.qty >= it.qty };
+      });
+    }
+    if (compAmt <= 0) { showToast("⚠ لا توجد أصناف جديدة للضيافة", "warn"); setCompModal(null); return; }
+    const remaining = order.total - compAmt;
+    const updated = store.orders.map(o => o.id === order.id ? {
+      ...o, status: remaining <= 0 ? "complimentary" : "ready",
+      items: updatedItems, compAmount: (o.compAmount||0) + compAmt,
+      total: Math.max(0, remaining), originalTotal: o.originalTotal || order.total,
+      isComplimentary: remaining <= 0,
+      paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
+    } : o);
+    store.setOrders(() => updated);
+    // تسجيل في سجل الضيافة فقط (لا في المصاريف)
+    store.setCompLog(p => [{
+      id: "comp" + Date.now(),
+      customerName: order.customerName || "زبون",
+      tableNum: order.table || "",
+      items: updatedItems.filter(it => it.complimentary || it.compQty > 0).map(it => it.itemName),
+      amount: compAmt, date: new Date().toISOString(),
+      createdBy: user.name, orderId: order.id, orderNum: order.orderNum,
+    }, ...p]);
+    if (remaining <= 0) autoFreeTable(order.table, updated);
+    showToast(`🎁 تم تسجيل الضيافة — ${compAmt.toLocaleString()} ${CUR}`, "warn");
+    setCompModal(null);
+  };
+
+  const openTron = (order) => {
+    setTronInput(String(tronAmounts[order.id] || ""));
+    setTronModal(order);
+  };
+
+  return (
+    <div className="fade-in">
+      {/* Stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 20 }}>
+        {[
+          ["💰", "إيرادات اليوم", todayRevenue, "#2e7d32"],
+          ["📋", "طلبات جاهزة", readyOrders.length, "#1565c0"],
+          ["🧾", "الجرد اليومي", dailyInventory, dailyInventory>=0?"#6a1b9a":"#e65100"],
+          ["💠", "الترون اليوم", tronToday, "#6a1b9a"],
+        ].map(([em, lbl, val, col]) => (
+          <div key={lbl} className="card" style={{ borderTop: `4px solid ${col}`, textAlign: "center" }}>
+            <div style={{ fontSize: 24, marginBottom: 4 }}>{em}</div>
+            <div style={{ fontSize: 11, color: "var(--sub)" }}>{lbl}</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: col }}>
+              {typeof val === "number" && val > 999 ? val.toLocaleString() + " " + CUR : val}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginBottom: 14, display: "flex", gap: 8, alignItems: "center" }}>
+        <input className="input" placeholder="🔍 فلترة بالزبون..." value={customerFilter}
+          onChange={e => setCustomerFilter(e.target.value)}
+          style={{ maxWidth: 240, fontSize: 13 }} />
+        {customerFilter && (
+          <button onClick={() => setCustomerFilter("")}
+            style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "var(--card2)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            ✕ إلغاء
+          </button>
+        )}
+      </div>
+
+      <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 12, color: "#c62828" }}>
+        ⏳ طلبات جاهزة للدفع ({filteredReady.length})
+      </h3>
+
+      {!filteredReady.length ? (
+        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+          <div>لا توجد طلبات جاهزة في الوقت الحالي</div>
+        </div>
+      ) : filteredReady.map(order => {
+        const disc = discounts[order.id] || 0;
+        const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
+        const finalTotal = order.total - discAmt;
+        const tronAmt = tronAmounts[order.id] || 0;
+
+        return (
+          <div key={order.id} className="card" style={{ marginBottom: 14, borderRight: "4px solid #2e7d32" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>طلب #{order.orderNum}</div>
+                <div style={{ fontSize: 12, color: "var(--sub)" }}>
+                  {order.customerName} {order.table ? `• طاولة ${order.table}` : ""}
+                </div>
+              </div>
+              <span style={{ background: "rgba(46,125,50,.2)", color: "#2e7d32", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700 }}>جاهز</span>
+            </div>
+
+            {(order.items || []).map((i, idx) => (
+              <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0", borderBottom: "1px dashed var(--border)" }}>
+                <span>{i.emoji} {i.itemName} ×{i.qty}</span>
+                <span style={{ fontWeight: 700 }}>{(i.price * i.qty).toLocaleString()} {CUR}</span>
+              </div>
+            ))}
+
+            <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <label style={{ fontSize: 12, color: "var(--sub)", whiteSpace: "nowrap" }}>خصم %</label>
+              <input type="number" min="0" max={isAdmin ? 100 : maxDiscount} value={disc}
+                onChange={e => setDiscounts(p => ({ ...p, [order.id]: Math.min(isAdmin ? 100 : maxDiscount, Math.max(0, +e.target.value)) }))}
+                style={{ width: 70, padding: "5px 8px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 13, background: "var(--card)", color: "var(--text)" }} />
+              {/* الترون */}
+              <button onClick={() => openTron(order)}
+                style={{ background: tronAmt > 0 ? "rgba(106,27,154,.2)" : "rgba(106,27,154,.1)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.3)", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                💠 {tronAmt > 0 ? `ترون: ${tronAmt.toLocaleString()} ${CUR}` : "إضافة ترون"}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, padding: "8px 0", borderTop: "2px solid var(--border)" }}>
+              {disc > 0 && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--sub)", marginBottom: 2 }}>
+                    <span>قبل الخصم</span><span>{order.total.toLocaleString()} {CUR}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#2e7d32", marginBottom: 4 }}>
+                    <span>خصم {disc}%</span><span>-{discAmt.toLocaleString()} {CUR}</span>
+                  </div>
+                </>
+              )}
+              {tronAmt > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6a1b9a", marginBottom: 4 }}>
+                  <span>💠 الترون</span><span>{tronAmt.toLocaleString()} {CUR}</span>
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900 }}>
+                <span>الإجمالي</span>
+                <span style={{ color: "#c62828" }}>{finalTotal.toLocaleString()} {CUR}</span>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button onClick={() => markPaid(order, "cash")}
+                style={{ flex: 2, minWidth: 100, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                💵 دفع نقدي
+              </button>
+              <button onClick={() => markPaid(order, "card")}
+                style={{ flex: 1, minWidth: 70, background: "#1565c0", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                💳 بطاقة
+              </button>
+              {tronAmt > 0 && (
+                <button onClick={() => markPaid(order, "tron")}
+                  style={{ flex: 1, minWidth: 70, background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                  💠 ترون
+                </button>
+              )}
+              <button onClick={() => { setPartialInput(""); setPartialModal(order); }}
+                style={{ flex: 1, minWidth: 70, background: "rgba(230,81,0,.15)", color: "#e65100", border: "1.5px solid rgba(230,81,0,.3)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                💰 جزئي
+              </button>
+              <button onClick={() => openComp(order)}
+                style={{ flex: 1, minWidth: 60, background: "rgba(0,137,123,.15)", color: "#00897b", border: "1.5px solid rgba(0,137,123,.25)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                🎁 ضيافة
+              </button>
+              <button onClick={() => markDebt(order)}
+                style={{ flex: 1, minWidth: 60, background: "rgba(106,27,154,.15)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.25)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                💳 دين
+              </button>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Partial Payment Modal */}
+      {partialModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", fontSize: 44, marginBottom: 10 }}>💰</div>
+            <h3 style={{ textAlign: "center", fontWeight: 900, marginBottom: 4 }}>دفع جزئي</h3>
+            <p style={{ textAlign: "center", fontSize: 13, color: "var(--sub)", marginBottom: 14 }}>
+              إجمالي الطلب: <strong>{partialModal.total.toLocaleString()} {CUR}</strong>
+            </p>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>المبلغ المدفوع الآن ({CUR})</label>
+            <input className="input" type="number" min="0" max={partialModal.total} value={partialInput}
+              autoFocus onChange={e => setPartialInput(e.target.value)}
+              style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 8 }} />
+            {partialInput && +partialInput < partialModal.total && (
+              <div style={{ background: "rgba(230,81,0,.1)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 13, color: "#e65100", fontWeight: 700 }}>
+                المتبقي: {(partialModal.total - +partialInput).toLocaleString()} {CUR} — سيُحوَّل لدين
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => {
+                const paid = Math.min(Math.max(0, +partialInput || 0), partialModal.total);
+                if (paid <= 0) { showToast("أدخل مبلغاً صحيحاً", "error"); return; }
+                if (paid >= partialModal.total) { markPaid(partialModal, "cash"); setPartialModal(null); return; }
+                const remaining = partialModal.total - paid;
+                // دفع جزئي: الباقي يصبح دين
+                const updated = store.orders.map(o => o.id === partialModal.id ? {
+                  ...o, status: "paid", paymentStatus: "partial",
+                  paymentType: "cash", paidAt: new Date().toISOString(),
+                  paidBy: user.id, paidByName: user.name,
+                  partialPaid: paid, total: paid,
+                } : o);
+                store.setOrders(() => updated);
+                store.setCashLog(p => [{ id: Date.now().toString(), orderId: partialModal.id, orderNum: partialModal.orderNum, amount: paid, at: new Date().toISOString(), by: user.name, type: "partial" }, ...p]);
+                store.setDebts(p => [{ id: "d" + Date.now(), orderId: partialModal.id, orderNum: partialModal.orderNum, customerName: partialModal.customerName || "زبون", amount: remaining, remaining, date: new Date().toISOString(), settled: false, settledAt: null, createdBy: user.name, notes: `دفع جزئي — دفع ${paid.toLocaleString()} ${CUR}` }, ...p]);
+                saveReceiptRecord({ ...partialModal, total: paid, paymentType: "cash" }, settings, store, 0);
+                autoFreeTable(partialModal.table, updated);
+                showToast(`✓ دفع جزئي ${paid.toLocaleString()} ${CUR} — باقي ${remaining.toLocaleString()} ${CUR} دين`);
+                setPartialModal(null);
+              }} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#e65100", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                ✓ تأكيد الدفع الجزئي
+              </button>
+              <button onClick={() => setPartialModal(null)}
+                style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tron Modal */}
+      {tronModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", fontSize: 44, marginBottom: 10 }}>💠</div>
+            <h3 style={{ textAlign: "center", fontWeight: 900, marginBottom: 4 }}>دفع بالترون</h3>
+            <p style={{ textAlign: "center", fontSize: 13, color: "var(--sub)", marginBottom: 14 }}>
+              طلب #{tronModal.orderNum} — إجمالي: {tronModal.total.toLocaleString()} {CUR}
+            </p>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
+              مبلغ الترون ({CUR})
+            </label>
+            <input className="input" type="number" min="0" placeholder="0" value={tronInput}
+              autoFocus onChange={e => setTronInput(e.target.value)}
+              style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 14 }} />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => {
+                const amt = Math.max(0, +tronInput || 0);
+                setTronAmounts(p => ({ ...p, [tronModal.id]: amt }));
+                setTronModal(null);
+                showToast(`💠 تم تسجيل الترون: ${amt.toLocaleString()} ${CUR}`);
+              }} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#6a1b9a", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                ✓ تأكيد
+              </button>
+              <button onClick={() => setTronModal(null)}
+                style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Debt Modal */}
+      {debtModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 400 }}>
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 44, marginBottom: 6 }}>💳</div>
+              <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>تسجيل دين</h2>
+              <p style={{ fontSize: 13, color: "var(--sub)" }}>طلب #{debtModal.orderNum} — {debtModal.total.toLocaleString()} {CUR}</p>
+            </div>
+
+            {/* اختيار الوضع */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+              <button
+                onClick={() => { setDebtMergeMode(false); setDebtNameError(""); }}
+                style={{ padding: "10px 8px", borderRadius: 10, border: `2px solid ${!debtMergeMode ? "#6a1b9a" : "var(--border)"}`,
+                  background: !debtMergeMode ? "rgba(106,27,154,.15)" : "var(--card2)",
+                  color: !debtMergeMode ? "#6a1b9a" : "var(--text)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                📋 دين جديد
+              </button>
+              <button
+                onClick={() => { setDebtMergeMode(true); setDebtNameError(""); }}
+                style={{ padding: "10px 8px", borderRadius: 10, border: `2px solid ${debtMergeMode ? "#e65100" : "var(--border)"}`,
+                  background: debtMergeMode ? "rgba(230,81,0,.15)" : "var(--card2)",
+                  color: debtMergeMode ? "#e65100" : "var(--text)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                ➕ إضافة لدين سابق
+              </button>
+            </div>
+
+            {!debtMergeMode ? (
+              <>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
+                  اسم الزبون <span style={{ color: "#c62828" }}>*</span>
+                </label>
+                <input className="input" placeholder="اسم الزبون..." value={debtNameInput} autoFocus
+                  onChange={e => { setDebtNameInput(e.target.value); setDebtNameError(""); }}
+                  onKeyDown={e => e.key === "Enter" && confirmDebt()}
+                  style={{ marginBottom: 10, fontSize: 16, fontWeight: 700 }} />
+              </>
+            ) : (
+              <>
+                <label style={{ fontSize: 12, fontWeight: 700, color: "#e65100", marginBottom: 6, display: "block" }}>
+                  اسم الزبون صاحب الدين السابق <span style={{ color: "#c62828" }}>*</span>
+                </label>
+                <input className="input" placeholder="اكتب الاسم بالضبط كما في سجل الديون..." value={debtMergeName} autoFocus
+                  onChange={e => { setDebtMergeName(e.target.value); setDebtNameError(""); }}
+                  onKeyDown={e => e.key === "Enter" && confirmDebt()}
+                  style={{ marginBottom: 8, fontSize: 15, fontWeight: 700, borderColor: "#e65100" }} />
+                {/* اقتراحات أسماء من الديون الحالية */}
+                {debtMergeName.length >= 1 && (() => {
+                  const matches = (store.debts || []).filter(d =>
+                    !d.settled && d.customerName.includes(debtMergeName)
+                  ).slice(0, 4);
+                  return matches.length > 0 ? (
+                    <div style={{ background: "var(--card2)", borderRadius: 10, marginBottom: 10, overflow: "hidden" }}>
+                      {matches.map(d => (
+                        <button key={d.id} onClick={() => { setDebtMergeName(d.customerName); setDebtNameError(""); }}
+                          style={{ display: "block", width: "100%", textAlign: "right", padding: "10px 14px",
+                            background: "none", border: "none", borderBottom: "1px solid var(--border)",
+                            cursor: "pointer", fontSize: 13, color: "var(--text)" }}>
+                          <span style={{ fontWeight: 700 }}>{d.customerName}</span>
+                          <span style={{ color: "#c62828", marginRight: 8, fontSize: 12 }}>
+                            متبقي: {d.remaining.toLocaleString()} {CUR}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ background: "rgba(198,40,40,.08)", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#c62828" }}>
+                      لا يوجد دين سابق بهذا الاسم — سيُنشأ دين جديد تلقائياً
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            {debtNameError && (
+              <div style={{ background: "rgba(198,40,40,.15)", color: "#c62828", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                {debtNameError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setDebtModal(null); setDebtMergeMode(false); setDebtMergeName(""); setDebtNameInput(""); }}
+                style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
+                إلغاء
+              </button>
+              <button onClick={confirmDebt}
+                style={{ flex: 2, padding: 12, borderRadius: 12, border: "none",
+                  background: debtMergeMode ? "#e65100" : "#6a1b9a",
+                  color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                {debtMergeMode ? "➕ إضافة للدين السابق" : "✓ تسجيل الدين"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Complimentary Modal */}
+      {compModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 420 }}>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 14 }}>🎁 تسجيل ضيافة</h3>
+            {compModal.items.map((it, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                <input type="checkbox" checked={!!compItems[i]?.selected}
+                  onChange={e => setCompItems(p => p.map((c, ci) => ci === i ? { ...c, selected: e.target.checked, qty: e.target.checked ? it.qty : 0 } : c))}
+                  style={{ width: 18, height: 18, accentColor: "#00897b" }} />
+                <span style={{ flex: 1, fontSize: 13 }}>{it.emoji} {it.itemName} ×{it.qty}</span>
+                {compItems[i]?.selected && (
+                  <input type="number" min="1" max={it.qty} value={compItems[i]?.qty || it.qty}
+                    onChange={e => setCompItems(p => p.map((c, ci) => ci === i ? { ...c, qty: Math.min(it.qty, Math.max(1, +e.target.value)) } : c))}
+                    style={{ width: 55, padding: "4px 8px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 13, background: "var(--card)", color: "var(--text)" }} />
+                )}
+                <span style={{ fontSize: 12, color: "#c62828", fontWeight: 700, minWidth: 80, textAlign: "left" }}>
+                  {(it.price * (compItems[i]?.selected ? (compItems[i]?.qty || it.qty) : it.qty)).toLocaleString()} {CUR}
+                </span>
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              <button onClick={() => confirmComp(true)} style={{ flex: 1, minWidth: 100, padding: 11, borderRadius: 10, border: "none", background: "#00897b", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🎁 ضيافة كاملة</button>
+              <button onClick={() => confirmComp(false)} style={{ flex: 1, minWidth: 100, padding: 11, borderRadius: 10, border: "none", background: "#f9a825", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>✓ ضيافة جزئية</button>
+              <button onClick={() => setCompModal(null)} style={{ flex: 1, minWidth: 80, padding: 11, borderRadius: 10, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
+
+// ═══════════════════════════════════
+// BAR TAB
+// ═══════════════════════════════════
+
+
+export function DebtsTab({store,user,showToast,dm,settings}){
+  const CUR=settings?.currency||"ل.س";
+  const [filter,setFilter]=useState("unsettled");
+  const [showAdd,setShowAdd]=useState(false);
+  const [form,setForm]=useState({customerName:"",amount:"",notes:""});
+
+  const debts=store.debts||[];
+  const filtered=debts.filter(d=>filter==="all"?true:filter==="settled"?d.settled:!d.settled)
+    .sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  const totalUnsettled=debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
+  const totalSettled=debts.filter(d=>d.settled).reduce((s,d)=>s+d.amount,0);
+
+  const settleDebt=(id,amount)=>{
+    const debt=store.debts.find(d=>d.id===id);
+    store.setDebts(p=>p.map(d=>{
+      if(d.id!==id) return d;
+      const pay=Math.min(amount,d.remaining);
+      const newRemaining=d.remaining-pay;
+      return{...d,remaining:newRemaining,settled:newRemaining<=0,settledAt:newRemaining<=0?new Date().toISOString():null};
+    }));
+    store.setCashLog(p=>[{id:Date.now().toString(),orderId:"debt_"+id,orderNum:"دين",amount,at:new Date().toISOString(),by:user.name,type:"debt_payment"},...p]);
+    // ✅ إضافة الدين المستوفى إلى الإيرادات
+    const revEntry={
+      id:"debt_rev_"+id+"_"+Date.now(),
+      orderNum:"D-"+(debt?.customerName||id).slice(0,6),
+      customerName:(debt?.customerName||"زبون")+" — دين",
+      customerId:"debt",table:"-",
+      items:[{itemId:"debt",itemName:"استيفاء دين",emoji:"💳",qty:1,price:amount}],
+      total:amount,status:"paid",paymentType:"debt_settled",
+      notes:"دين مستوفى — "+(debt?.notes||debt?.customerName||""),
+      createdAt:new Date().toISOString(),paidAt:new Date().toISOString(),
+      paidBy:user.name,discount:0,isDebtSettlement:true,
+    };
+    store.setOrders(p=>[revEntry,...p]);
+    showToast(`✅ تم استيفاء الدين وإضافته للإيرادات`);
+  };
+
+  const addManualDebt=()=>{
+    if(!form.customerName||!form.amount){showToast("يرجى ملء الحقول","error");return}
+    store.setDebts(p=>[{
+      id:"d"+Date.now(),orderId:null,orderNum:"يدوي",
+      customerName:form.customerName,amount:+form.amount,remaining:+form.amount,
+      date:new Date().toISOString(),settled:false,settledAt:null,
+      createdBy:user.name,notes:form.notes,
+    },...p]);
+    showToast("تم تسجيل الدين");setShowAdd(false);setForm({customerName:"",amount:"",notes:""});
+  };
+
+  return(
+    <div className="fade-in">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <h2 style={{fontSize:18,fontWeight:900}}>💳 سجل الديون</h2>
+        <button className="btn btn-red" onClick={()=>setShowAdd(true)}>+ دين يدوي</button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:18}}>
+        <div className="card" style={{borderTop:"4px solid #c62828",textAlign:"center"}}>
+          <div style={{fontSize:24,marginBottom:4}}>💳</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>إجمالي الديون</div>
+          <div style={{fontSize:18,fontWeight:900,color:"#c62828"}}>{totalUnsettled.toLocaleString()} {CUR}</div>
+        </div>
+        <div className="card" style={{borderTop:"4px solid #2e7d32",textAlign:"center"}}>
+          <div style={{fontSize:24,marginBottom:4}}>✅</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>ديون مستوفاة</div>
+          <div style={{fontSize:18,fontWeight:900,color:"#2e7d32"}}>{totalSettled.toLocaleString()} {CUR}</div>
+        </div>
+        <div className="card" style={{borderTop:"4px solid #f9a825",textAlign:"center"}}>
+          <div style={{fontSize:24,marginBottom:4}}>📋</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>ديون معلقة</div>
+          <div style={{fontSize:18,fontWeight:900,color:"#f9a825"}}>{debts.filter(d=>!d.settled).length}</div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {[["unsettled","معلقة"],["settled","مستوفاة"],["all","الكل"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
+            background:filter===v?"#c62828":"var(--card2)",color:filter===v?"#fff":"var(--sub)",fontWeight:700,fontSize:12}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {!filtered.length?(
+        <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
+          <div style={{fontSize:48}}>💳</div><div style={{marginTop:10}}>لا توجد ديون</div>
+        </div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {filtered.map(d=>(
+            <div key={d.id} className="card" style={{borderRight:`4px solid ${d.settled?"#2e7d32":"#c62828"}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div>
+                  <div style={{fontWeight:900,fontSize:15}}>👤 {d.customerName}</div>
+                  <div style={{fontSize:11,color:"var(--sub)"}}>
+                    {new Date(d.date).toLocaleDateString("ar-SY")} • طلب #{d.orderNum}
+                  </div>
+                </div>
+                <span style={{background:d.settled?"rgba(46,125,50,.2)":"rgba(198,40,40,.2)",
+                  color:d.settled?"#2e7d32":"#c62828",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>
+                  {d.settled?"✅ مستوفى":"⏳ معلق"}
+                </span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
+                <span style={{color:"var(--sub)"}}>المبلغ الأصلي:</span>
+                <span style={{fontWeight:700}}>{d.amount.toLocaleString()} {CUR}</span>
+              </div>
+              {!d.settled&&d.remaining!==d.amount&&(
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
+                  <span style={{color:"var(--sub)"}}>المتبقي:</span>
+                  <span style={{fontWeight:900,color:"#c62828"}}>{d.remaining.toLocaleString()} {CUR}</span>
+                </div>
+              )}
+              {d.notes&&<div style={{fontSize:12,color:"var(--sub)",marginBottom:8}}>📝 {d.notes}</div>}
+              {!d.settled&&(
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <button onClick={()=>settleDebt(d.id,d.remaining)}
+                    style={{flex:1,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontWeight:700,fontSize:12}}>
+                    ✅ استيفاء كامل ({d.remaining.toLocaleString()} {CUR})
+                  </button>
+                  <button onClick={()=>{
+                    const v=window.prompt(`استيفاء جزئي (المتبقي: ${d.remaining.toLocaleString()} ${CUR}):`);
+                    const n=+v;
+                    if(v&&n>0&&n<=d.remaining) settleDebt(d.id,n);
+                    else if(v) showToast("مبلغ غير صحيح","error");
+                  }} style={{background:"rgba(46,125,50,.2)",color:"#2e7d32",border:"none",borderRadius:8,padding:"9px 12px",fontWeight:700,fontSize:12}}>
+                    جزئي
+                  </button>
+                </div>
+              )}
+              {d.settled&&d.settledAt&&(
+                <div style={{fontSize:11,color:"#2e7d32",marginTop:6}}>
+                  ✅ استوفي بتاريخ {new Date(d.settledAt).toLocaleDateString("ar-SY")}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAdd&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:380}}>
+            <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>➕ تسجيل دين يدوي</div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>اسم الزبون</label>
+              <input className="input" value={form.customerName} onChange={e=>setForm(f=>({...f,customerName:e.target.value}))}/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>المبلغ ({CUR})</label>
+              <input className="input" type="number" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>ملاحظات</label>
+              <textarea className="input" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={{height:60,resize:"none"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <button className="btn btn-red" style={{flex:1}} onClick={addManualDebt}>تسجيل</button>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setShowAdd(false)}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════
+// EXPENSES TAB — المصاريف
+// ═══════════════════════════════════
+
+export function ExpensesTab({store,user,showToast,dm,settings}){
+  const CUR=settings?.currency||"ل.س";
+  const today=new Date();today.setHours(0,0,0,0);
+  const [showAdd,setShowAdd]=useState(false);
+  const [period,setPeriod]=useState("today");
+  const [form,setForm]=useState({description:"",amount:"",category:"other",notes:"",isSecondary:false});
+
+  const expCats=[
+    {id:"supplies",label:"🛒 مستلزمات"},
+    {id:"salary",label:"👷 رواتب"},
+    {id:"rent",label:"🏠 إيجار"},
+    {id:"utilities",label:"💡 خدمات"},
+    {id:"maintenance",label:"🔧 صيانة"},
+    {id:"other",label:"📦 أخرى"},
+  ];
+
+  const getStart=()=>{
+    const d=new Date();
+    if(period==="today"){d.setHours(0,0,0,0);return d}
+    if(period==="week"){d.setDate(d.getDate()-7);return d}
+    if(period==="month"){d.setDate(1);d.setHours(0,0,0,0);return d}
+    return new Date(0);
+  };
+
+  const expenses=store.expenses||[];
+  const filtered=expenses.filter(e=>new Date(e.date)>=getStart()).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const total=filtered.reduce((s,e)=>s+e.amount,0);
+
+  const addExpense=()=>{
+    if(!form.description||!form.amount){showToast("يرجى ملء الحقول","error");return}
+    store.setExpenses(p=>[{
+      id:"exp"+Date.now(),description:form.description,label:form.description,amount:+form.amount,
+      category:form.category,notes:form.notes,
+      date:new Date().toISOString(),createdBy:user.name,by:user.name,
+      isSecondary:form.isSecondary||false,
+    },...p]);
+    showToast(form.isSecondary?"تم تسجيل المصروف الثانوي ⭐":"تم تسجيل المصروف");
+    setShowAdd(false);setForm({description:"",amount:"",category:"other",notes:"",isSecondary:false});
+  };
+
+  return(
+    <div className="fade-in">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <h2 style={{fontSize:18,fontWeight:900}}>📒 المصاريف</h2>
+        <button className="btn btn-red" onClick={()=>setShowAdd(true)}>+ مصروف جديد</button>
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setPeriod(v)} style={{padding:"7px 14px",borderRadius:20,border:"none",
+            background:period===v?"#c62828":"var(--card2)",color:period===v?"#fff":"var(--sub)",fontWeight:700,fontSize:12}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="card" style={{marginBottom:16,borderRight:"4px solid #e65100"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:13,color:"var(--sub)"}}>إجمالي المصاريف</div>
+          <div style={{fontSize:22,fontWeight:900,color:"#e65100"}}>{total.toLocaleString()} {CUR}</div>
+        </div>
+      </div>
+
+      {!filtered.length?(
+        <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
+          <div style={{fontSize:48}}>📒</div><div style={{marginTop:10}}>لا توجد مصاريف</div>
+        </div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {filtered.map(e=>{
+            const cat=expCats.find(c=>c.id===e.category)||expCats[expCats.length-1];
+            return(
+              <div key={e.id} className="card" style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{fontSize:28}}>{cat.label.split(" ")[0]}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{e.description}</div>
+                  <div style={{fontSize:11,color:"var(--sub)"}}>
+                    {cat.label.split(" ").slice(1).join(" ")} • {new Date(e.date).toLocaleDateString("ar-SY")} • {e.createdBy}
+                  </div>
+                  {e.notes&&<div style={{fontSize:11,color:"var(--sub)"}}>📝 {e.notes}</div>}
+                </div>
+                <div style={{fontWeight:900,color:"#e65100",fontSize:15}}>{e.amount.toLocaleString()} {CUR}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAdd&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:380,maxHeight:"88vh",overflowY:"auto"}}>
+            <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>➕ مصروف جديد</div>
+            {[["الوصف","description","text"],["المبلغ","amount","number"]].map(([label,key,type])=>(
+              <div key={key} style={{marginBottom:12}}>
+                <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>{label}</label>
+                <input className="input" type={type} value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))}/>
+              </div>
+            ))}
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>الفئة</label>
+              <select className="input" value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}>
+                {expCats.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>ملاحظات</label>
+              <textarea className="input" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={{height:60,resize:"none"}}/>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              <div style={{marginBottom:10}}>
+                <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",
+                  padding:"10px 14px",borderRadius:12,
+                  background:form.isSecondary?"rgba(249,168,37,.15)":"var(--card2)",
+                  border:form.isSecondary?"1.5px solid #f9a825":"1.5px solid var(--border)"}}>
+                  <input type="checkbox" checked={form.isSecondary||false}
+                    onChange={e=>setForm(f=>({...f,isSecondary:e.target.checked}))}
+                    style={{width:18,height:18,accentColor:"#f9a825"}}/>
+                  <span style={{fontWeight:700,fontSize:13,color:form.isSecondary?"#f9a825":"var(--text)"}}>
+                    ⭐ مصروف ثانوي (لا يدخل في الجرد اليومي)
+                  </span>
+                </label>
+              </div>
+              <button className="btn btn-red" style={{flex:1,background:form.isSecondary?"#f9a825":undefined}} onClick={addExpense}>تسجيل</button>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setShowAdd(false)}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════
+// BAR TAB
+// ═══════════════════════════════════
+
