@@ -69,16 +69,25 @@ export const sbLogin = async (username, password) => {
 };
 
 // ── Helpers ──────────────────────────────────────────────────
+// تقرير أخطاء المزامنة: يُظهرها بدل ابتلاعها بصمت (مشكلة عدم ظهور الطلب)
+export const reportSyncError = (op, table, message) => {
+  console.warn(`${op}(${table}):`, message);
+  try {
+    window.dispatchEvent(new CustomEvent("nc-sync-error", { detail: { op, table, message } }));
+  } catch {}
+};
+
 export const sbUpsert = async (table, row, conflict = "id") => {
   if (!supabase) return;
   const { error } = await supabase.from(table).upsert(row, { onConflict: conflict });
-  if (error) console.warn(`sbUpsert(${table}):`, error.message);
+  if (error) reportSyncError("sbUpsert", table, error.message);
+  return error || null;
 };
 
 export const sbDelete = async (table, id) => {
   if (!supabase) return;
   const { error } = await supabase.from(table).delete().eq("id", id);
-  if (error) console.warn(`sbDelete(${table}):`, error.message);
+  if (error) reportSyncError("sbDelete", table, error.message);
 };
 
 export const sbDeleteAll = async (table) => {

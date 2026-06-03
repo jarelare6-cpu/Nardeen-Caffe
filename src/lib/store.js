@@ -544,13 +544,15 @@ export const useStore = () => {
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
 
-  // ── تشفير كلمات المرور الافتراضية عند أول تشغيل ──────────
+  // ── تشفير كلمات المرور الافتراضية محلياً عند أول تشغيل ──────────
+  // مهم: لا نرفع المستخدمين الافتراضيين هنا إطلاقاً، حتى لا نكتب فوق
+  // كلمات مرور مُعدّلة موجودة في Supabase. البذر يتم في تأثير التحميل
+  // أدناه فقط عندما يكون جدول profiles فارغاً تماماً.
   useEffect(() => {
     const alreadyHashed = ls.get("nc_pw_hashed", false);
     if (alreadyHashed) return;
     getHashedDefaultUsers().then(hashed => {
       setUsersRaw(prev => {
-        // طبّق التشفير على المستخدمين الافتراضيين فقط
         const updated = prev.map(u => {
           const h = hashed.find(x => x.id === u.id);
           if (h && !/^[a-f0-9]{64}$/i.test(u.password)) return { ...u, password: h.password };
@@ -558,7 +560,6 @@ export const useStore = () => {
         });
         ls.set("nc_users", updated);
         ls.set("nc_pw_hashed", true);
-        if (SUPABASE_READY) updated.forEach(u => sbWrite.user(u));
         return updated;
       });
     });
@@ -605,7 +606,8 @@ export const useStore = () => {
           const old = p.find(x => x.id === o.id);
           return !old || old.status !== o.status || old.total !== o.total ||
                  old.paymentType !== o.paymentType || old.discount !== o.discount ||
-                 (old.tronAmount || 0) !== (o.tronAmount || 0);
+                 (old.tronAmount || 0) !== (o.tronAmount || 0) ||
+                 JSON.stringify(old.items) !== JSON.stringify(o.items);
         });
         changed.forEach(o => sbWrite.order(o));
         const nextIds = new Set(next.map(o => o.id));
@@ -899,6 +901,7 @@ export const useStore = () => {
       if (ord.data?.length)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
       if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
       if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
+      else { getHashedDefaultUsers().then(hu => hu.forEach(u => sbWrite.user(u))); }
       if (dbt.data?.length)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    ls.set("nc_debts",    d); }
       if (exp.data?.length)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); ls.set("nc_expenses", d); }
       if (cash.data?.length) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  ls.set("nc_cash",     d); }
