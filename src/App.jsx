@@ -56,6 +56,18 @@ const CAT_LABELS = {
 };
 const CAT_ORDER = ["hot_drinks","cold_drinks","food","hookah"];
 
+// ── محطات التحضير: حالة منفصلة لكل صنف عبر علم prepared ──────────
+// تحلّ المشكلتين 3 و4: كل محطة تُحضّر أصنافها فقط، والطلب يصبح
+// "جاهزاً" كلياً فقط عند اكتمال كل أصناف المحطات (البار + النرجيلة).
+const BAR_CATS = ["hot_drinks","cold_drinks"];
+const HOOKAH_CATS = ["hookah"];
+const STATION_CATS = [...BAR_CATS, ...HOOKAH_CATS];
+const catOf = (menu, itemId) => menu.find(m => m.id === itemId)?.category;
+const orderFullyPrepared = (order, menu) =>
+  (order.items || [])
+    .filter(i => STATION_CATS.includes(catOf(menu, i.itemId)))
+    .every(i => i.prepared);
+
 // ── Phase 1: عرض صورة الصنف مع fallback للإيموجي ──────────────
 function ItemVisual({ item, size = 40, round = 12 }) {
   const img = (item?.image || "").trim();
@@ -1987,7 +1999,12 @@ function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   }).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
 
   const updateStatus=(order,newStatus)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:newStatus}:o));
+    store.setOrders(p=>p.map(o=>{
+      if(o.id!==order.id) return o;
+      if(newStatus==="ready") return {...o,status:"ready",readyAt:new Date().toISOString(),items:o.items.map(i=>({...i,prepared:true}))};
+      if(newStatus==="preparing") return {...o,status:"preparing",preparingAt:o.preparingAt||new Date().toISOString()};
+      return {...o,status:newStatus};
+    }));
     if(newStatus==="ready") addNotification(`✅ طلب #${order.orderNum} جاهز`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
     showToast(`تم تحديث الطلب #${order.orderNum}`);
   };
@@ -3047,7 +3064,7 @@ function BarTab({store,user,showToast,addNotification,dm,settings}){
   const canDecrease=user.role===ROLES.ADMIN||(settings?.workerCanDecreaseStock??false);
   const barOrders=store.orders.filter(o=>
     ["pending","preparing"].includes(o.status)&&
-    o.items.some(i=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===i.itemId)?.category))
+    o.items.some(i=>BAR_CATS.includes(store.menu.find(m=>m.id===i.itemId)?.category)&&!i.prepared)
   ).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   const barItems=store.menu.filter(m=>["hot_drinks","cold_drinks"].includes(m.category));
 
@@ -3056,9 +3073,16 @@ function BarTab({store,user,showToast,addNotification,dm,settings}){
     store.setMenu(p=>p.map(m=>m.id===id?{...m,stock:Math.max(0,m.stock+delta)}:m));
   };
   const markReady=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"ready",readyAt:new Date().toISOString()}:o));
-    addNotification(`✅ طلب #${order.orderNum} جاهز من البار`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
-    showToast(`طلب #${order.orderNum} جاهز ✅`);
+    store.setOrders(p=>p.map(o=>{
+      if(o.id!==order.id) return o;
+      const items=o.items.map(i=>BAR_CATS.includes(store.menu.find(m=>m.id===i.itemId)?.category)?{...i,prepared:true}:i);
+      const fully=orderFullyPrepared({...o,items},store.menu);
+      return {...o,items,status:fully?"ready":"preparing",
+        readyAt:fully?new Date().toISOString():o.readyAt,
+        preparingAt:o.preparingAt||new Date().toISOString()};
+    }));
+    addNotification(`✅ مشروبات طلب #${order.orderNum} جاهزة من البار`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
+    showToast(`مشروبات طلب #${order.orderNum} جاهزة ✅`);
   };
 
   return(
@@ -3150,7 +3174,7 @@ function HookahTab({store,user,showToast,addNotification,dm,settings}){
   const canDecrease=user.role===ROLES.ADMIN||(settings?.workerCanDecreaseStock??false);
   const hookahOrders=store.orders.filter(o=>
     ["pending","preparing"].includes(o.status)&&
-    o.items.some(i=>store.menu.find(m=>m.id===i.itemId)?.category==="hookah")
+    o.items.some(i=>store.menu.find(m=>m.id===i.itemId)?.category==="hookah"&&!i.prepared)
   ).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   const hookahItems=store.menu.filter(m=>m.category==="hookah");
 
@@ -3159,9 +3183,16 @@ function HookahTab({store,user,showToast,addNotification,dm,settings}){
     store.setMenu(p=>p.map(m=>m.id===id?{...m,stock:Math.max(0,m.stock+delta)}:m));
   };
   const markReady=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"ready",readyAt:new Date().toISOString()}:o));
-    addNotification(`✅ طلب الأراكيل #${order.orderNum} جاهز`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
-    showToast(`طلب #${order.orderNum} جاهز ✅`);
+    store.setOrders(p=>p.map(o=>{
+      if(o.id!==order.id) return o;
+      const items=o.items.map(i=>store.menu.find(m=>m.id===i.itemId)?.category==="hookah"?{...i,prepared:true}:i);
+      const fully=orderFullyPrepared({...o,items},store.menu);
+      return {...o,items,status:fully?"ready":"preparing",
+        readyAt:fully?new Date().toISOString():o.readyAt,
+        preparingAt:o.preparingAt||new Date().toISOString()};
+    }));
+    addNotification(`✅ أراكيل طلب #${order.orderNum} جاهزة`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
+    showToast(`أراكيل طلب #${order.orderNum} جاهزة ✅`);
   };
 
   return(
