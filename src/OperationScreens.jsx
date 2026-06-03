@@ -138,7 +138,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       store.setTables(p=>p.map(t=>String(t.number)===String(tableNum.trim())?{...t,status:"occupied",openedAt:t.openedAt||new Date().toISOString()}:t));
       setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
       setSubmitting(false);
-      saveReceiptRecord(newOrder, settings, store, 0);
+      // ✅ الفاتورة تُحفظ فقط عند الدفع في CashierTab — لا تُحفظ هنا
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
       if(window.confirm(`🖨️ طباعة فاتورة الطلب #${orderNum}؟`)){
         printOrder(newOrder,store.menu,1,settings);
@@ -463,7 +463,6 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                   style={{background:"var(--card2)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:14}}>
                   🖨
                 </button>
-                {/* 12. واتساب الفاتورة */}
                 {["ready","paid"].includes(order.status)&&(
                   <button onClick={()=>sendReceiptWhatsApp(order, order.customerPhone||"", settings)}
                     style={{background:"rgba(37,211,102,.15)",border:"none",borderRadius:8,
@@ -472,7 +471,6 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                     💬
                   </button>
                 )}
-                {/* 14. طباعة تذكرة البار */}
                 {["pending","preparing"].includes(order.status)&&canManage&&(
                   <button onClick={()=>printKitchenTicket(order,"bar",settings)}
                     style={{background:"rgba(21,101,192,.1)",border:"none",borderRadius:8,
@@ -509,25 +507,23 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const tronToday = useMemo(() =>
     (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today).reduce((s, r) => s + r.tronAmount, 0)
     , [store.receipts, today]);
-  // الجرد = إيرادات − مصاريف + ترون
   const dailyInventory = todayRevenue - todayExpenses + tronToday;
 
-  const [customerFilter, setCustomerFilter] = useState(""); // فلتر الزبون
+  const [customerFilter, setCustomerFilter] = useState("");
   const [discounts, setDiscounts] = useState({});
   const [tronAmounts, setTronAmounts] = useState({});
   const [debtModal, setDebtModal] = useState(null);
   const [debtNameInput, setDebtNameInput] = useState("");
   const [debtNameError, setDebtNameError] = useState("");
-  const [debtMergeMode, setDebtMergeMode] = useState(false); // وضع الإضافة لدين سابق
-  const [debtMergeName, setDebtMergeName] = useState("");    // اسم الزبون للدمج
+  const [debtMergeMode, setDebtMergeMode] = useState(false);
+  const [debtMergeName, setDebtMergeName] = useState("");
   const [compModal, setCompModal] = useState(null);
   const [compItems, setCompItems] = useState([]);
   const [tronModal, setTronModal] = useState(null);
   const [tronInput, setTronInput] = useState("");
-  const [partialModal, setPartialModal] = useState(null); // دفع جزئي
+  const [partialModal, setPartialModal] = useState(null);
   const [partialInput, setPartialInput] = useState("");
 
-  // تطبيق فلتر الزبون
   const filteredReady = readyOrders.filter(o =>
     !customerFilter || (o.customerName || "").includes(customerFilter)
   );
@@ -550,7 +546,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
     const finalTotal = order.total - discAmt;
     const tronAmt = tronAmounts[order.id] || 0;
-    // ربط بالوردية المفتوحة (الفرع الرئيسي)
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
     const paid = {
       ...order, status: "paid", paymentStatus: "paid",
@@ -568,7 +563,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       branch: order.branch || "main", shiftId: openShift?.id || null,
     }, ...p]);
 
-    // 6. نظام الولاء — إضافة نقاط للزبون المسجَّل
     if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
       const cust = (store.customers || []).find(c => c.name === order.customerName);
       if (cust) {
@@ -588,10 +582,9 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       }
     }
 
-    // حفظ الفاتورة في السجل
+    // ✅ الفاتورة تُحفظ هنا فقط — عند الدفع
     saveReceiptRecord(paid, settings, store, tronAmt);
 
-    // PDF
     await generateReceiptPDF(paid, settings, tronAmt);
 
     showToast(`💰 تم الدفع — ${order.customerName || "زبون"} #${order.orderNum}`);
@@ -610,7 +603,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   };
 
   const confirmDebt = () => {
-    // التحقق من الاسم — إلزامي في كلا الوضعين
     const nameToUse = debtMergeMode ? debtMergeName.trim() : debtNameInput.trim();
     if (!nameToUse) {
       setDebtNameError("⚠️ يجب إدخال اسم الزبون لتسجيل الدين");
@@ -623,12 +615,10 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     store.setOrders(() => updated);
 
     if (debtMergeMode) {
-      // ── إضافة لدين سابق: ابحث عن دين غير مسوَّى بنفس الاسم ──
       const existingDebt = store.debts.find(
         d => !d.settled && d.customerName.trim() === nameToUse
       );
       if (existingDebt) {
-        // أضف المبلغ للدين الموجود
         store.setDebts(p => p.map(d =>
           d.id === existingDebt.id
             ? { ...d, amount: d.amount + order.total, remaining: d.remaining + order.total,
@@ -637,7 +627,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         ));
         showToast(`💳 تمت إضافة ${order.total.toLocaleString()} ${CUR} لدين ${nameToUse}`, "warn");
       } else {
-        // لا يوجد دين سابق — أنشئ واحداً جديداً
         store.setDebts(p => [{
           id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
           customerName: nameToUse, amount: order.total, remaining: order.total,
@@ -647,7 +636,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         showToast(`💳 تم إنشاء دين جديد لـ ${nameToUse} (لم يوجد دين سابق)`, "warn");
       }
     } else {
-      // ── دين عادي جديد ──
       store.setDebts(p => [{
         id: "d" + Date.now(), orderId: order.id, orderNum: order.orderNum,
         customerName: nameToUse, amount: order.total, remaining: order.total,
@@ -671,8 +659,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
   const confirmComp = (fullComp) => {
     const order = compModal;
-    // منع الضيافة المكررة — تحقق من عناصر الطلب التي أُعطيت ضيافة مسبقاً
-    const alreadyComp = (order.items || []).filter(it => it.complimentary || it.compQty > 0);
     let compAmt = 0;
     let updatedItems = [...order.items];
     if (fullComp) {
@@ -682,7 +668,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       updatedItems = order.items.map((it, i) => {
         const ci = compItems[i];
         if (!ci?.selected || !ci.qty) return it;
-        // منع ضيافة نفس الصنف مرتين
         if (it.complimentary || it.compQty >= it.qty) return it;
         compAmt += it.price * Math.min(ci.qty, it.qty - (it.compQty || 0));
         return { ...it, compQty: Math.min((it.compQty || 0) + ci.qty, it.qty), complimentary: (it.compQty || 0) + ci.qty >= it.qty };
@@ -698,7 +683,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
     } : o);
     store.setOrders(() => updated);
-    // تسجيل في سجل الضيافة فقط (لا في المصاريف)
     store.setCompLog(p => [{
       id: "comp" + Date.now(),
       customerName: order.customerName || "زبون",
@@ -788,7 +772,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
               <input type="number" min="0" max={isAdmin ? 100 : maxDiscount} value={disc}
                 onChange={e => setDiscounts(p => ({ ...p, [order.id]: Math.min(isAdmin ? 100 : maxDiscount, Math.max(0, +e.target.value)) }))}
                 style={{ width: 70, padding: "5px 8px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 13, background: "var(--card)", color: "var(--text)" }} />
-              {/* الترون */}
               <button onClick={() => openTron(order)}
                 style={{ background: tronAmt > 0 ? "rgba(106,27,154,.2)" : "rgba(106,27,154,.1)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.3)", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 💠 {tronAmt > 0 ? `ترون: ${tronAmt.toLocaleString()} ${CUR}` : "إضافة ترون"}
@@ -873,7 +856,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 if (paid <= 0) { showToast("أدخل مبلغاً صحيحاً", "error"); return; }
                 if (paid >= partialModal.total) { markPaid(partialModal, "cash"); setPartialModal(null); return; }
                 const remaining = partialModal.total - paid;
-                // دفع جزئي: الباقي يصبح دين
                 const updated = store.orders.map(o => o.id === partialModal.id ? {
                   ...o, status: "paid", paymentStatus: "partial",
                   paymentType: "cash", paidAt: new Date().toISOString(),
@@ -941,25 +923,20 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
               <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>تسجيل دين</h2>
               <p style={{ fontSize: 13, color: "var(--sub)" }}>طلب #{debtModal.orderNum} — {debtModal.total.toLocaleString()} {CUR}</p>
             </div>
-
-            {/* اختيار الوضع */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
-              <button
-                onClick={() => { setDebtMergeMode(false); setDebtNameError(""); }}
+              <button onClick={() => { setDebtMergeMode(false); setDebtNameError(""); }}
                 style={{ padding: "10px 8px", borderRadius: 10, border: `2px solid ${!debtMergeMode ? "#6a1b9a" : "var(--border)"}`,
                   background: !debtMergeMode ? "rgba(106,27,154,.15)" : "var(--card2)",
                   color: !debtMergeMode ? "#6a1b9a" : "var(--text)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 📋 دين جديد
               </button>
-              <button
-                onClick={() => { setDebtMergeMode(true); setDebtNameError(""); }}
+              <button onClick={() => { setDebtMergeMode(true); setDebtNameError(""); }}
                 style={{ padding: "10px 8px", borderRadius: 10, border: `2px solid ${debtMergeMode ? "#e65100" : "var(--border)"}`,
                   background: debtMergeMode ? "rgba(230,81,0,.15)" : "var(--card2)",
                   color: debtMergeMode ? "#e65100" : "var(--text)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 ➕ إضافة لدين سابق
               </button>
             </div>
-
             {!debtMergeMode ? (
               <>
                 <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
@@ -979,7 +956,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                   onChange={e => { setDebtMergeName(e.target.value); setDebtNameError(""); }}
                   onKeyDown={e => e.key === "Enter" && confirmDebt()}
                   style={{ marginBottom: 8, fontSize: 15, fontWeight: 700, borderColor: "#e65100" }} />
-                {/* اقتراحات أسماء من الديون الحالية */}
                 {debtMergeName.length >= 1 && (() => {
                   const matches = (store.debts || []).filter(d =>
                     !d.settled && d.customerName.includes(debtMergeName)
@@ -1006,13 +982,11 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 })()}
               </>
             )}
-
             {debtNameError && (
               <div style={{ background: "rgba(198,40,40,.15)", color: "#c62828", borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
                 {debtNameError}
               </div>
             )}
-
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => { setDebtModal(null); setDebtMergeMode(false); setDebtMergeName(""); setDebtNameInput(""); }}
                 style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
@@ -1062,14 +1036,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   );
 }
 
-
-
-
-// ═══════════════════════════════════
-// BAR TAB
-// ═══════════════════════════════════
-
-
 export function DebtsTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   const [filter,setFilter]=useState("unsettled");
@@ -1092,7 +1058,6 @@ export function DebtsTab({store,user,showToast,dm,settings}){
       return{...d,remaining:newRemaining,settled:newRemaining<=0,settledAt:newRemaining<=0?new Date().toISOString():null};
     }));
     store.setCashLog(p=>[{id:Date.now().toString(),orderId:"debt_"+id,orderNum:"دين",amount,at:new Date().toISOString(),by:user.name,type:"debt_payment"},...p]);
-    // ✅ إضافة الدين المستوفى إلى الإيرادات
     const revEntry={
       id:"debt_rev_"+id+"_"+Date.now(),
       orderNum:"D-"+(debt?.customerName||id).slice(0,6),
@@ -1125,7 +1090,6 @@ export function DebtsTab({store,user,showToast,dm,settings}){
         <h2 style={{fontSize:18,fontWeight:900}}>💳 سجل الديون</h2>
         <button className="btn btn-red" onClick={()=>setShowAdd(true)}>+ دين يدوي</button>
       </div>
-
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:18}}>
         <div className="card" style={{borderTop:"4px solid #c62828",textAlign:"center"}}>
           <div style={{fontSize:24,marginBottom:4}}>💳</div>
@@ -1143,7 +1107,6 @@ export function DebtsTab({store,user,showToast,dm,settings}){
           <div style={{fontSize:18,fontWeight:900,color:"#f9a825"}}>{debts.filter(d=>!d.settled).length}</div>
         </div>
       </div>
-
       <div style={{display:"flex",gap:8,marginBottom:14}}>
         {[["unsettled","معلقة"],["settled","مستوفاة"],["all","الكل"]].map(([v,l])=>(
           <button key={v} onClick={()=>setFilter(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
@@ -1152,7 +1115,6 @@ export function DebtsTab({store,user,showToast,dm,settings}){
           </button>
         ))}
       </div>
-
       {!filtered.length?(
         <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
           <div style={{fontSize:48}}>💳</div><div style={{marginTop:10}}>لا توجد ديون</div>
@@ -1209,7 +1171,6 @@ export function DebtsTab({store,user,showToast,dm,settings}){
           ))}
         </div>
       )}
-
       {showAdd&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:380}}>
@@ -1236,10 +1197,6 @@ export function DebtsTab({store,user,showToast,dm,settings}){
     </div>
   );
 }
-
-// ═══════════════════════════════════
-// EXPENSES TAB — المصاريف
-// ═══════════════════════════════════
 
 export function ExpensesTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
@@ -1287,7 +1244,6 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
         <h2 style={{fontSize:18,fontWeight:900}}>📒 المصاريف</h2>
         <button className="btn btn-red" onClick={()=>setShowAdd(true)}>+ مصروف جديد</button>
       </div>
-
       <div style={{display:"flex",gap:8,marginBottom:14}}>
         {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l])=>(
           <button key={v} onClick={()=>setPeriod(v)} style={{padding:"7px 14px",borderRadius:20,border:"none",
@@ -1296,14 +1252,12 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
           </button>
         ))}
       </div>
-
       <div className="card" style={{marginBottom:16,borderRight:"4px solid #e65100"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:13,color:"var(--sub)"}}>إجمالي المصاريف</div>
           <div style={{fontSize:22,fontWeight:900,color:"#e65100"}}>{total.toLocaleString()} {CUR}</div>
         </div>
       </div>
-
       {!filtered.length?(
         <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
           <div style={{fontSize:48}}>📒</div><div style={{marginTop:10}}>لا توجد مصاريف</div>
@@ -1328,7 +1282,6 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
           })}
         </div>
       )}
-
       {showAdd&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:380,maxHeight:"88vh",overflowY:"auto"}}>
@@ -1376,4 +1329,3 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
 // ═══════════════════════════════════
 // BAR TAB
 // ═══════════════════════════════════
-
