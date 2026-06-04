@@ -21,17 +21,14 @@ import {
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll,
 } from "./supabase";
 
-// ── تخزين: أونلاين فقط — لا حفظ محلي للبيانات ──────────────────
-// المصدر الوحيد للحقيقة هو Supabase. localStorage معطّل للبيانات
-// التجارية بناءً على طلب المستخدم. تبقى فقط أعلام واجهة صغيرة.
-const UI_KEYS = new Set(["nc_dark", "nc_pw_hashed", "nc_guest_id", "nc_session"]);
+// ── تخزين: offline-first — حفظ محلي + Supabase كمصدر حقيقة عند الاتصال ──
+// كل المجموعات تُحفظ محليًا (localStorage) ليعمل التطبيق دون إنترنت ويصمد
+// أمام التحديث/إعادة التشغيل. عند الاتصال يُحدّثها التحميل من Supabase.
 const ls = {
   get: (k, def) => {
-    if (!UI_KEYS.has(k)) return def; // البيانات التجارية تأتي من Supabase فقط
-    try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; }
+    try { const v = JSON.parse(localStorage.getItem(k)); return v ?? def; } catch { return def; }
   },
   set: (k, v) => {
-    if (!UI_KEYS.has(k)) return; // لا تحفظ البيانات التجارية محلياً
     try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
   },
 };

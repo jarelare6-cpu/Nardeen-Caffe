@@ -77,17 +77,51 @@ export const reportSyncError = (op, table, message) => {
   } catch {}
 };
 
+// ── الطابور الصادر (Outbox): يخزّن الكتابات الفاشلة (أوفلاين) ويرفعها
+//    تلقائيًا بالترتيب عند عودة الاتصال. الرفع idempotent (upsert بمعرّف). ──
+const OUTBOX_KEY = "nc_outbox";
+const readOutbox = () => { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY)) || []; } catch { return []; } };
+const writeOutbox = (q) => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(q)); } catch {} };
+const outboxKey = (e) => `${e.table}:${e.del || e.row?.id}`;
+const enqueue = (entry) => {
+  const q = readOutbox().filter(e => outboxKey(e) !== outboxKey(entry));
+  q.push(entry); writeOutbox(q);
+  try { window.dispatchEvent(new CustomEvent("nc-outbox", { detail: { count: q.length } })); } catch {}
+};
+export const outboxCount = () => readOutbox().length;
+export const flushOutbox = async () => {
+  if (!supabase) return;
+  const q = readOutbox();
+  if (!q.length) return;
+  const remaining = [];
+  for (const e of q) {
+    try {
+      const { error } = e.del
+        ? await supabase.from(e.table).delete().eq("id", e.del)
+        : await supabase.from(e.table).upsert(e.row, { onConflict: "id" });
+      if (error) remaining.push(e);
+    } catch { remaining.push(e); }
+  }
+  writeOutbox(remaining);
+  try { window.dispatchEvent(new CustomEvent("nc-outbox", { detail: { count: remaining.length } })); } catch {}
+};
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { flushOutbox(); });
+  // محاولة دورية خفيفة لتفريغ الطابور (شبكة قد تعود دون حدث online موثوق)
+  setInterval(() => { if (navigator.onLine) flushOutbox(); }, 30000);
+}
+
 export const sbUpsert = async (table, row, conflict = "id") => {
   if (!supabase) return;
   const { error } = await supabase.from(table).upsert(row, { onConflict: conflict });
-  if (error) reportSyncError("sbUpsert", table, error.message);
+  if (error) { reportSyncError("sbUpsert", table, error.message); enqueue({ table, row }); }
   return error || null;
 };
 
 export const sbDelete = async (table, id) => {
   if (!supabase) return;
   const { error } = await supabase.from(table).delete().eq("id", id);
-  if (error) reportSyncError("sbDelete", table, error.message);
+  if (error) { reportSyncError("sbDelete", table, error.message); enqueue({ table, del: id }); }
 };
 
 export const sbDeleteAll = async (table) => {
