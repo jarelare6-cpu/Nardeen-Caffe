@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, flushOutbox } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle } from "./uikit.jsx";
 import { ROLES } from "./constants.js";
@@ -24,7 +24,24 @@ export default function NardeenCaffe(){
   });
   const [toast,setToast]=useState(null);
   const [dm,setDm]=useState(()=>localStorage.getItem("nc_dark")==="1");
+  const [offline,setOffline]=useState(()=>typeof navigator!=="undefined"&&!navigator.onLine);
+  const [pending,setPending]=useState(()=>{try{return outboxCount();}catch{return 0;}});
   const prevLen=useRef(store.orders.length);
+
+  // ── offline-first: مؤشّر الاتصال + تفريغ الطابور الصادر عند العودة ──
+  useEffect(()=>{
+    const upd=()=>setOffline(!navigator.onLine);
+    const onOutbox=(e)=>setPending(e.detail?.count ?? 0);
+    window.addEventListener("online",upd);
+    window.addEventListener("offline",upd);
+    window.addEventListener("nc-outbox",onOutbox);
+    if(navigator.onLine) flushOutbox();
+    return()=>{
+      window.removeEventListener("online",upd);
+      window.removeEventListener("offline",upd);
+      window.removeEventListener("nc-outbox",onOutbox);
+    };
+  },[]);
 
   // ── Phase 4: مُسجّل أخطاء عام للتشخيص (لا يكسر الواجهة) ──
   useEffect(()=>{
@@ -105,6 +122,15 @@ export default function NardeenCaffe(){
       <GlobalStyle dm={dm} theme={store.settings?.appTheme||"default"}/>
       <Toast toast={toast}/>
       <PWABanner/>
+      {(offline||pending>0)&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,
+          background:offline?"#c62828":"#e65100",color:"#fff",textAlign:"center",
+          padding:"6px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
+          boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
+          {offline?"⚠ غير متصل — يعمل محليًا والبيانات محفوظة":"🔄 جارٍ المزامنة"}
+          {pending>0?` • ${pending} عملية بانتظار الرفع`:""}
+        </div>
+      )}
       {screen==="login"&&<LoginScreen store={store} onLogin={login} showToast={showToast} dm={dm}/>}
       {screen==="home"&&user&&(
         user.role===ROLES.CUSTOMER
