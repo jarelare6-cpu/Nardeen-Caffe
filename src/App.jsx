@@ -32,11 +32,21 @@ export default function NardeenCaffe(){
   const [syncing,setSyncing]=useState(false);
   const [syncOpen,setSyncOpen]=useState(false);
   const meshRef=useRef(null);
+  const bannerRef=useRef(null);
+  const [bannerH,setBannerH]=useState(0);
   const prevLen=useRef(store.orders.length);
 
   // ── mesh تجريبي: تزامن P2P لعدة مجموعات عبر LAN (مطفأ افتراضيًا) ──
   // المخزون (menu) مستثنى عمدًا حتى ننفّذ مخزون CRDT (تفادي ضياع الخصم).
   const meshOn=!!store.settings?.meshEnabled;
+  // قياس ارتفاع شريط المزامنة (يتغيّر حسب الحالة) لإزاحة الهيدر تحته بلا تغطية
+  useEffect(()=>{
+    const m=()=>setBannerH(bannerRef.current?bannerRef.current.offsetHeight:0);
+    m();
+    const t=setTimeout(m,60);
+    window.addEventListener("resize",m);
+    return ()=>{ clearTimeout(t); window.removeEventListener("resize",m); };
+  },[offline,pending,failed,meshOn,meshPeers,syncing]);
   const meshSettersRef=useRef(null);
   meshSettersRef.current={orders:store.setOrders,tables:store.setTables,debts:store.setDebts,expenses:store.setExpenses,receipts:store.setReceipts};
   useEffect(()=>{
@@ -158,7 +168,7 @@ export default function NardeenCaffe(){
       <Toast toast={toast}/>
       <PWABanner/>
       {(offline||pending>0||failed>0||meshOn)&&(
-        <div onClick={()=>setSyncOpen(true)} style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,cursor:"pointer",
+        <div onClick={()=>setSyncOpen(true)} ref={bannerRef} style={{position:"sticky",top:0,zIndex:9999,cursor:"pointer",
           background:offline?"#c62828":(failed>0?"#b71c1c":(pending>0?"#e65100":"#2e7d32")),color:"#fff",textAlign:"center",
           padding:"6px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
           boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
@@ -179,7 +189,7 @@ export default function NardeenCaffe(){
           : <HomeScreen user={user} store={store} onLogout={logout} showToast={showToast}
               addNotification={addNotification} unreadCount={unreadCount} dm={dm}
               toggleDark={()=>setDm(d=>{localStorage.setItem("nc_dark",d?"0":"1");return!d})}
-              settings={settings}/>
+              settings={settings} topOffset={bannerH}/>
       )}
     </div>
   );

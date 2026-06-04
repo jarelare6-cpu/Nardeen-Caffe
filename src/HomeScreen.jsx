@@ -48,7 +48,7 @@ class ErrorBoundary extends React.Component {
 }
 // ──────────────────────────────────────────────────────────────────────────────
 
-export function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,dm,toggleDark,settings}){
+export function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,dm,toggleDark,settings,topOffset=0}){
   const [tab,setTab]=useState(()=>{
     if(canAccess(user.role,"dashboard")) return "dashboard";
     if(canAccess(user.role,"order")) return "order";
@@ -108,7 +108,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
       {/* Header */}
       <header style={{background:"linear-gradient(135deg,#8e0000,#c62828)",color:"#fff",
         padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",
-        gap:8,position:"sticky",top:0,zIndex:100,boxShadow:"0 4px 20px rgba(198,40,40,.3)"}}>
+        gap:8,position:"sticky",top:topOffset,zIndex:100,boxShadow:"0 4px 20px rgba(198,40,40,.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:22}}>☕</span>
           <div>
