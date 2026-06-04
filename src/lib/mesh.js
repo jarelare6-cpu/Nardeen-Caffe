@@ -2,7 +2,7 @@
 // mesh.js — تزامن نظير-لنظير (P2P) تجريبي عبر LAN (عدة مجموعات)
 // ──────────────────────────────────────────────────────────────
 // • اختياري ومطفأ افتراضيًا (يُفعَّل من الإعدادات: meshEnabled).
-// • يحمّل المكتبات وقت التشغيل من esm.sh (لا يثقل الحزمة ولا يكسر البناء).
+// • يستورد المكتبات محليًا (مضمّنة في الحزمة) → تعمل أوفلاين بلا اعتماد خارجي.
 // • آمن الفشل: أي خطأ يُسجَّل ولا يؤثر على عمل التطبيق.
 // • كل مجموعة = Y.Map مفهرسة بالمعرّف. حلّ التعارض: الأحدث (updatedAt) يفوز،
 //   وإلا مقارنة القيمة (آمن من الحلقات).
@@ -13,9 +13,9 @@
 // ملاحظة: المخزون (menu) غير مشمول بعد لتفادي ضياع الخصم؛ يحتاج CRDT حركات.
 // ══════════════════════════════════════════════════════════════
 
-const YJS = "https://esm.sh/yjs@13";
-const YWEBRTC = "https://esm.sh/y-webrtc@10";
-const YIDB = "https://esm.sh/y-indexeddb@9";
+import * as Y from "yjs";
+import { WebrtcProvider } from "y-webrtc";
+import { IndexeddbPersistence } from "y-indexeddb";
 
 // هل يفوز a على b؟ (الأحدث زمنيًا، وإلا اختلاف فعلي)
 function shouldReplace(incoming, current) {
@@ -30,10 +30,6 @@ function shouldReplace(incoming, current) {
 export async function startMesh({ room = "nardeen-cafe", password = "nrd-mesh-2026",
   collections = ["orders"], onPeers, onData } = {}) {
   try {
-    const Y = await import(/* @vite-ignore */ YJS);
-    const { WebrtcProvider } = await import(/* @vite-ignore */ YWEBRTC);
-    const { IndexeddbPersistence } = await import(/* @vite-ignore */ YIDB);
-
     const doc = new Y.Doc();
     const idb = new IndexeddbPersistence(room, doc);
     const provider = new WebrtcProvider(room, doc, { password });

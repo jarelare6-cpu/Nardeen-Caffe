@@ -3,10 +3,31 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+
+// ضغط صورة مرفوعة إلى dataURL صغير (يعمل أوفلاين بلا Storage)
+async function compressImage(file, max = 320, quality = 0.72) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file);
+  });
+  return await new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w > h && w > max) { h = Math.round(h * max / w); w = max; }
+      else if (h >= w && h > max) { w = Math.round(w * max / h); h = max; }
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      c.getContext("2d").drawImage(img, 0, 0, w, h);
+      res(c.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => res(dataUrl);
+    img.src = dataUrl;
+  });
+}
 
 export function DashboardTab({store,dm,settings}){
   const CUR=settings?.currency||"ل.س";
@@ -28,6 +49,8 @@ export function DashboardTab({store,dm,settings}){
   const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
   const lowStock=store.menu.filter(m=>m.stock<=m.minStock);
+  const todayProfit=calcNetProfit(store.orders,store.menu,today);
+  const totalProfit=calcNetProfit(store.orders,store.menu);
   const topItems=store.menu.slice().sort((a,b)=>b.totalSold-a.totalSold).slice(0,5);
   const now=new Date();
 
@@ -70,6 +93,8 @@ export function DashboardTab({store,dm,settings}){
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:18}}>
         <Stat icon="💰" label="إجمالي الإيرادات" val={`${totalRevenue.toLocaleString()} ${CUR}`} sub="كل الوقت" color="#c62828"/>
         <Stat icon="📅" label="مبيعات اليوم"    val={`${todayRevenue.toLocaleString()} ${CUR}`} sub={`${todayPaidOrders.length} طلب مدفوع`} color="#2e7d32"/>
+        <Stat icon="📈" label="صافي ربح اليوم"  val={`${todayProfit.toLocaleString()} ${CUR}`} sub="المبيع − التكلفة" color="#00897b"/>
+        <Stat icon="💎" label="صافي الربح"      val={`${totalProfit.toLocaleString()} ${CUR}`} sub="كل الوقت" color="#6a1b9a"/>
         <Stat icon="⏳" label="طلبات معلقة"     val={pending}   sub="بحاجة معالجة" color="#f9a825"/>
         <Stat icon="👨‍🍳" label="قيد التحضير"    val={preparing} color="#1976d2"/>
         <Stat icon="💳" label="إجمالي الديون"   val={`${totalDebts.toLocaleString()} ${CUR}`} sub="غير مسدّدة" color="#6a1b9a"/>
@@ -364,7 +389,7 @@ export function InventoryTab({store,settings}){
 export function MenuTab({store,showToast,dm,settings}){
   const [showForm,setShowForm]=useState(false);
   const [editItem,setEditItem]=useState(null);
-  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕",image:""});
+  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:""});
   const [cat,setCat]=useState("all");
 
   const filtered=cat==="all"?store.menu:store.menu.filter(m=>m.category===cat);
@@ -372,18 +397,18 @@ export function MenuTab({store,showToast,dm,settings}){
   const save=()=>{
     if(!form.name||!form.price){showToast("يرجى ملء الحقول الأساسية","error");return}
     if(editItem){
-      store.setMenu(p=>p.map(m=>m.id===editItem.id?{...m,...form,price:+form.price,stock:+form.stock,minStock:+form.minStock}:m));
+      store.setMenu(p=>p.map(m=>m.id===editItem.id?{...m,...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,cost:+form.cost||0}:m));
       showToast("تم تعديل الصنف");
     } else {
-      store.setMenu(p=>[...p,{id:"m"+Date.now(),...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,totalSold:0}]);
+      store.setMenu(p=>[...p,{id:"m"+Date.now(),...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,cost:+form.cost||0,totalSold:0}]);
       showToast("تم إضافة الصنف");
     }
-    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",emoji:"☕",image:""});
+    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:""});
   };
 
   const openEdit=(item)=>{
     setEditItem(item);
-    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),emoji:item.emoji||"☕",image:item.image||""});
+    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),cost:item.cost!=null?String(item.cost):"",emoji:item.emoji||"☕",image:item.image||""});
     setShowForm(true);
   };
 
@@ -432,17 +457,23 @@ export function MenuTab({store,showToast,dm,settings}){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:400,maxHeight:"88vh",overflowY:"auto"}}>
             <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>{editItem?"✏ تعديل الصنف":"➕ إضافة صنف"}</div>
-            {[["الاسم بالعربية","name","text"],["الاسم بالإنجليزية","nameEn","text"],["السعر","price","number"],["المخزون","stock","number"],["الحد الأدنى","minStock","number"],["إيموجي","emoji","text"],["رابط الصورة (اختياري)","image","text"]].map(([label,key,type])=>(
+            {[["الاسم بالعربية","name","text"],["الاسم بالإنجليزية","nameEn","text"],["السعر","price","number"],["سعر التكلفة","cost","number"],["المخزون","stock","number"],["الحد الأدنى","minStock","number"],["إيموجي","emoji","text"],["رابط الصورة (اختياري)","image","text"]].map(([label,key,type])=>(
               <div key={key} style={{marginBottom:12}}>
                 <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>{label}</label>
                 <input className="input" type={type} value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))}/>
               </div>
             ))}
+            <div style={{marginBottom:10}}>
+              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>📷 رفع صورة من الجهاز</label>
+              <input className="input" type="file" accept="image/*" style={{padding:6}}
+                onChange={async e=>{const file=e.target.files&&e.target.files[0]; if(!file)return; try{const url=await compressImage(file); setForm(f=>({...f,image:url})); showToast("تم تحميل الصورة");}catch{showToast("تعذّر تحميل الصورة","error");} e.target.value="";}}/>
+              <div style={{fontSize:10,color:"var(--sub)",marginTop:4}}>تُضغط الصورة تلقائيًا وتُحفظ مع الصنف — تعمل أوفلاين.</div>
+            </div>
             {(form.image||"").trim() && (
               <div style={{marginBottom:12,textAlign:"center"}}>
                 <img src={form.image} alt="معاينة" style={{width:90,height:90,objectFit:"cover",borderRadius:14,border:"1px solid var(--border)"}}
                   onError={e=>{e.currentTarget.style.opacity=.25;}}/>
-                <div style={{fontSize:10,color:"var(--sub)",marginTop:4}}>معاينة الصورة</div>
+                <div style={{fontSize:10,color:"var(--sub)",marginTop:4}}>معاينة الصورة • <span style={{color:"#c62828",cursor:"pointer",fontWeight:700}} onClick={()=>setForm(f=>({...f,image:""}))}>إزالة</span></div>
               </div>
             )}
             <div style={{marginBottom:16}}>

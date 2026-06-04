@@ -10,6 +10,14 @@ import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "
 
 export function BarTab({store,user,showToast,addNotification,dm,settings}){
   const canDecrease=user.role===ROLES.ADMIN||(settings?.workerCanDecreaseStock??false);
+  const supplies = settings?.extraStock || [];
+  const [showSup,setShowSup]=useState(false);
+  const [supForm,setSupForm]=useState({name:"",unit:"",qty:"",minStock:""});
+  const lbl={fontSize:11,fontWeight:700,color:"var(--sub)",marginBottom:4,display:"block"};
+  const saveSupplies=(arr)=>store.setSettings(p=>({...p,extraStock:arr}));
+  const addSupply=()=>{ if(!supForm.name.trim()){showToast("أدخل اسم المادة","error");return;} saveSupplies([...supplies,{id:"sup"+Date.now(),name:supForm.name.trim(),unit:supForm.unit.trim(),qty:+supForm.qty||0,minStock:+supForm.minStock||0}]); setSupForm({name:"",unit:"",qty:"",minStock:""}); setShowSup(false); showToast("تمت إضافة المادة"); };
+  const adjustSupply=(id,d)=>saveSupplies(supplies.map(s=>s.id===id?{...s,qty:Math.max(0,(+s.qty||0)+d)}:s));
+  const removeSupply=(id)=>saveSupplies(supplies.filter(s=>s.id!==id));
   const barOrders=store.orders.filter(o=>
     ["pending","preparing"].includes(o.status)&&
     o.items.some(i=>BAR_CATS.includes(store.menu.find(m=>m.id===i.itemId)?.category)&&!i.prepared)
@@ -111,6 +119,44 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
           </div>
         ))}
       </div>
+
+      {/* مخزون إضافي: مواد لا تُقدَّم في المنيو (سكر/غاز/فحم...) */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:22,marginBottom:10}}>
+        <h3 style={{fontSize:14,fontWeight:800}}>🧂 مخزون إضافي</h3>
+        <button onClick={()=>setShowSup(s=>!s)} className="btn btn-red" style={{padding:"6px 12px",fontSize:12}}>{showSup?"إغلاق":"+ إضافة مادة"}</button>
+      </div>
+      {showSup&&(
+        <div className="card" style={{marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:8,alignItems:"end"}}>
+          <div><label style={lbl}>الاسم</label><input className="input" value={supForm.name} onChange={e=>setSupForm(f=>({...f,name:e.target.value}))} placeholder="سكر / غاز / فحم"/></div>
+          <div><label style={lbl}>الوحدة</label><input className="input" value={supForm.unit} onChange={e=>setSupForm(f=>({...f,unit:e.target.value}))} placeholder="كغ / قطعة"/></div>
+          <div><label style={lbl}>الكمية</label><input className="input" type="number" value={supForm.qty} onChange={e=>setSupForm(f=>({...f,qty:e.target.value}))}/></div>
+          <div><label style={lbl}>حد التنبيه</label><input className="input" type="number" value={supForm.minStock} onChange={e=>setSupForm(f=>({...f,minStock:e.target.value}))}/></div>
+          <button onClick={addSupply} className="btn btn-red" style={{height:40}}>حفظ</button>
+        </div>
+      )}
+      {supplies.length===0?(
+        <div style={{color:"var(--sub)",fontSize:13,textAlign:"center",padding:16}}>لا توجد مواد بعد</div>
+      ):(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+          {supplies.map(s=>{ const low=(+s.qty||0)<=(+s.minStock||0); return(
+            <div key={s.id} className="card">
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{fontSize:22}}>🧂</span>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:12}}>{s.name}</div>
+                  <div style={{fontSize:10,color:low?"#c62828":"var(--sub)"}}>{low?"⚠ منخفض":"✓ متوفر"}{s.unit?` — ${s.unit}`:""}</div>
+                </div>
+                <button onClick={()=>removeSupply(s.id)} style={{background:"rgba(198,40,40,.12)",color:"#c62828",border:"none",borderRadius:8,padding:"4px 8px",fontSize:12}}>🗑</button>
+              </div>
+              <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
+                <button onClick={()=>adjustSupply(s.id,-1)} style={{width:30,height:30,background:"rgba(198,40,40,.15)",color:"#c62828",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>−</button>
+                <span style={{fontWeight:900,fontSize:14,minWidth:44,textAlign:"center",color:low?"#c62828":"inherit"}}>{s.qty}{s.unit?` ${s.unit}`:""}</span>
+                <button onClick={()=>adjustSupply(s.id,1)} style={{width:30,height:30,background:"rgba(46,125,50,.15)",color:"#2e7d32",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>+</button>
+              </div>
+            </div>
+          );})}
+        </div>
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -509,6 +509,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today).reduce((s, r) => s + r.tronAmount, 0)
     , [store.receipts, today]);
   const dailyInventory = todayRevenue - todayExpenses + tronToday;
+  const todayProfit = useMemo(() => calcNetProfit(store.orders, store.menu, today), [store.orders, store.menu, today]);
 
   const [customerFilter, setCustomerFilter] = useState("");
   const [discounts, setDiscounts] = useState({});
@@ -708,6 +709,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 20 }}>
         {[
           ["💰", "إيرادات اليوم", todayRevenue, "#2e7d32"],
+          ["📈", "صافي ربح اليوم", todayProfit, "#00897b"],
           ["📋", "طلبات جاهزة", readyOrders.length, "#1565c0"],
           ["🧾", "الجرد اليومي", dailyInventory, dailyInventory>=0?"#6a1b9a":"#e65100"],
           ["💠", "الترون اليوم", tronToday, "#6a1b9a"],

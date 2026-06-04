@@ -530,3 +530,16 @@ export const pointsToValue = (points, settings) => {
   const ratio = settings?.loyaltyPointValue ?? 1; // 1 نقطة = 1 وحدة
   return Math.floor((points || 0) * ratio);
 };
+
+// ── صافي الربح = إجمالي المبيع (بعد الخصومات) − تكلفة البضاعة المباعة ──
+// يستخدم تكلفة الصنف الحالية من المنيو (الطلبات القديمة تقريبية).
+export const calcNetProfit = (orders, menu, since = null) => {
+  const costOf = (id) => { const m = (menu || []).find(x => x.id === id); return m && m.cost != null ? +m.cost : 0; };
+  let profit = 0;
+  (orders || []).filter(o => o.status === "paid").forEach(o => {
+    if (since && new Date(o.paidAt || o.createdAt) < since) return;
+    const cogs = (o.items || []).reduce((s, i) => s + costOf(i.itemId) * (+i.qty || 0), 0);
+    profit += (+o.total || 0) - cogs;
+  });
+  return profit;
+};
