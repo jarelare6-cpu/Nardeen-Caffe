@@ -34,6 +34,7 @@ export function DashboardTab({store,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   // مراقبة الأجهزة المتصلة (heartbeat سحابي)
   const [devices,setDevices]=useState([]);
+  const [showAllDev,setShowAllDev]=useState(false);
   useEffect(()=>{
     let active=true;
     const load=async()=>{ try{ const d=await sbFetchDevices(); if(active) setDevices(d||[]); }catch{} };
@@ -128,7 +129,7 @@ export function DashboardTab({store,dm,settings}){
         return (
           <div className="card" style={{marginBottom:16,borderTop:"3px solid #1565c0"}}>
             <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>📡 الأجهزة المتصلة ({onCount}/{list.length})</h3>
-            {list.map(d=>(
+            {(showAllDev?list:list.slice(0,5)).map(d=>(
               <div key={d.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
                 <span style={{fontWeight:600}}>
                   <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:d._on?"#2e7d32":"#999",marginInlineEnd:8}}/>
@@ -137,6 +138,12 @@ export function DashboardTab({store,dm,settings}){
                 <span style={{color:"var(--sub)",fontSize:12}}>{d._on?"متصل":`آخر ظهور: ${ago(d.last_seen)}`}</span>
               </div>
             ))}
+            {list.length>5&&(
+              <button onClick={()=>setShowAllDev(v=>!v)}
+                style={{width:"100%",marginTop:8,background:"rgba(21,101,192,.1)",color:"#1565c0",border:"none",borderRadius:8,padding:"8px",fontWeight:800,fontSize:13,cursor:"pointer"}}>
+                {showAllDev?"أقل ▲":`المزيد (${list.length-5}) ▼`}
+              </button>
+            )}
             <div style={{fontSize:11,color:"var(--sub)",marginTop:8}}>يُحدَّث كل 30 ثانية. "متصل" = ظهر خلال آخر دقيقتين.</div>
           </div>
         );
@@ -1183,6 +1190,8 @@ export function ReceiptsTab({ store, showToast, dm, settings }) {
 export function StaffTab({store,showToast,dm}){
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({name:"",username:"",password:"",email:"",role:ROLES.CASHIER,shift:""});
+  const [pwModal,setPwModal]=useState(null);
+  const [pwInput,setPwInput]=useState("");
 
   const roleGroups=Object.values(ROLES).filter(r=>r!==ROLES.CUSTOMER).map(r=>({
     role:r,label:ROLE_LABELS[r],color:ROLE_COLORS[r],
@@ -1197,9 +1206,11 @@ export function StaffTab({store,showToast,dm}){
     setShowAdd(false);setForm({name:"",username:"",password:"",email:"",role:ROLES.CASHIER,shift:""});
   };
   const toggleActive=(id)=>store.setUsers(p=>p.map(u=>u.id===id?{...u,active:!u.active}:u));
-  const resetPass=(id)=>{
-    const p=window.prompt("كلمة المرور الجديدة:");
-    if(p&&p.length>=4){store.setUsers(q=>q.map(u=>u.id===id?{...u,password:p}:u));showToast("تم تغيير كلمة المرور");}
+  const resetPass=(id)=>{ setPwInput(""); setPwModal(id); };
+  const savePass=()=>{
+    if(!pwInput||pwInput.length<4){showToast("4 أحرف على الأقل","error");return}
+    store.setUsers(q=>q.map(u=>u.id===pwModal?{...u,password:pwInput}:u));
+    setPwModal(null);setPwInput("");showToast("تم تغيير كلمة المرور");
   };
   const deleteUser=(id)=>{
     if(window.confirm("هل تريد حذف هذا الموظف؟")){store.setUsers(p=>p.filter(u=>u.id!==id));showToast("تم حذف الموظف");}
@@ -1248,6 +1259,21 @@ export function StaffTab({store,showToast,dm}){
           </div>
         </div>
       ))}
+
+      {pwModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:360}}>
+            <div style={{fontWeight:900,fontSize:16,marginBottom:6}}>🔑 تغيير كلمة المرور</div>
+            <div style={{fontSize:12,color:"var(--sub)",marginBottom:14}}>{store.users.find(u=>u.id===pwModal)?.name||""}</div>
+            <input className="input" type="text" autoFocus value={pwInput} onChange={e=>setPwInput(e.target.value)}
+              placeholder="كلمة المرور الجديدة (4 أحرف على الأقل)" style={{marginBottom:16}}/>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>{setPwModal(null);setPwInput("")}} style={{flex:1,padding:"10px",border:"1px solid var(--border)",borderRadius:10,background:"var(--card2)",color:"var(--text)",fontWeight:700}}>إلغاء</button>
+              <button onClick={savePass} className="btn btn-red" style={{flex:1}}>حفظ</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdd&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>

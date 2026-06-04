@@ -220,11 +220,8 @@ export const DEFAULT_MENU = [
 const sbWrite = {
   user: async (u) => {
     const pw = await hashPassword(u.password);
-    return sbUpsert("profiles", {
-      id: u.id, username: u.username, password: pw,
-      role: u.role, name: u.name, email: u.email || "",
-      active: u.active, shift: u.shift || null,
-    });
+    const core = { id: u.id, username: u.username, password: pw, role: u.role, name: u.name, active: u.active };
+    return sbUpsert("profiles", { ...core, email: u.email || "", shift: u.shift || null }, "id", core);
   },
   deleteUser: (id) => sbDelete("profiles", id),
 
