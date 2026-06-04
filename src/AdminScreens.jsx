@@ -84,6 +84,36 @@ export function DashboardTab({store,dm,settings}){
         </div>
       </div>
 
+      {/* قسم الترون اليوم (دفعات فوق الفاتورة) */}
+      {(() => {
+        const tr = (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today);
+        if (!tr.length) return null;
+        const tot = tr.reduce((s, r) => s + r.tronAmount, 0);
+        const cnt = tr.length;
+        const avg = Math.round(tot / cnt);
+        const byEmp = {}; tr.forEach(r => { const k = r.createdBy || "غير محدد"; byEmp[k] = (byEmp[k] || 0) + r.tronAmount; });
+        const empList = Object.entries(byEmp).sort((a, b) => b[1] - a[1]);
+        return (
+          <div className="card" style={{ marginBottom: 16, borderTop: "3px solid #6a1b9a" }}>
+            <h3 style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>💠 ترون اليوم (دفعات فوق الفاتورة)</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12 }}>
+              {[["الإجمالي", `${tot.toLocaleString()} ${CUR}`], ["عدد الدفعات", cnt], ["المتوسط", `${avg.toLocaleString()} ${CUR}`]].map(([l, v]) => (
+                <div key={l} style={{ background: "var(--card2)", borderRadius: 10, padding: 10, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--sub)" }}>{l}</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, color: "#6a1b9a" }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            {empList.map(([name, amt], i) => (
+              <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: i < empList.length - 1 ? "1px solid var(--border)" : "none", fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>👤 {name}</span>
+                <span style={{ fontWeight: 700, color: "#6a1b9a" }}>{amt.toLocaleString()} {CUR}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}} className="grid-2">
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>🏆 أكثر المبيعات</h3>
