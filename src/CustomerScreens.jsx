@@ -472,7 +472,7 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
               <>
                 {cart.map(item=>(
                   <div key={item.itemId} className="card" style={{marginBottom:10,display:"flex",alignItems:"center",gap:12}}>
-                    <span style={{fontSize:26}}>{item.emoji}</span>
+                    <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={46} round={12}/>
                     <div style={{flex:1}}>
                       <div style={{fontWeight:700,fontSize:14}}>{item.itemName}</div>
                       <div style={{fontSize:12,color:"#c62828",fontWeight:700}}>
@@ -529,7 +529,7 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
                 </div>
                 {order.items.map((i,idx)=>(
                   <div key={idx} style={{fontSize:13,padding:"2px 0"}}>
-                    {i.emoji} {i.itemName} ×{i.qty} — {(i.price*i.qty).toLocaleString()} {CUR}
+                    <ItemVisual item={store.menu.find(m=>m.id===i.itemId)||i} size={18} round={5}/> {i.itemName} ×{i.qty} — {(i.price*i.qty).toLocaleString()} {CUR}
                   </div>
                 ))}
                 <div style={{fontWeight:900,color:"#c62828",marginTop:8}}>
@@ -560,7 +560,7 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
                 <div key={i} style={{display:"flex",justifyContent:"space-between",
                   fontSize:12,padding:"3px 0",
                   borderBottom:i<cart.length-1?"1px solid var(--border)":"none"}}>
-                  <span>{c.emoji} {c.itemName} ×{c.qty}</span>
+                  <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===c.itemId)||c} size={20} round={6}/>{c.itemName} ×{c.qty}</span>
                   <span style={{fontWeight:700,color:"#c62828"}}>
                     {(c.price*c.qty).toLocaleString()} {CUR}
                   </span>

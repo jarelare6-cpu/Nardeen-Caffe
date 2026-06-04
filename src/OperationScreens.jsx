@@ -175,7 +175,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
                 style={{background:"var(--card)",borderRadius:12,padding:12,cursor:"pointer",
                   transition:"all .2s",boxShadow:inCart?"0 0 0 2px #c62828,var(--shadow)":"var(--shadow)",
                   transform:inCart?"scale(1.03)":"scale(1)",position:"relative",userSelect:"none"}}>
-                <div style={{fontSize:26,textAlign:"center",marginBottom:5}}>{item.emoji}</div>
+                <div style={{textAlign:"center",marginBottom:5}}><ItemVisual item={item} size={54} round={12}/></div>
                 <div style={{fontSize:11,fontWeight:700,textAlign:"center",marginBottom:3,lineHeight:1.3}}>{item.name}</div>
                 <div style={{fontSize:11,fontWeight:900,color:"#c62828",textAlign:"center"}}>{item.price.toLocaleString()} {CUR}</div>
                 <div style={{fontSize:9,color:item.stock<=item.minStock?"#ff9800":"var(--sub)",textAlign:"center",marginTop:2}}>
@@ -244,7 +244,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
             </div>
           ):cart.map(item=>(
             <div key={item.itemId} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
-              <span style={{fontSize:20}}>{item.emoji}</span>
+              <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={34} round={8}/>
               <div style={{flex:1}}>
                 <div style={{fontSize:12,fontWeight:600}}>{item.itemName}</div>
                 <div style={{fontSize:11,color:"#c62828",fontWeight:700}}>{(item.price*item.qty).toLocaleString()} {CUR}</div>
@@ -356,7 +356,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
           <textarea className="input" value={note} onChange={e=>setNote(e.target.value)} style={{height:60,resize:"none",marginBottom:14}} placeholder="ملاحظات"/>
           {items.map((item,idx)=>(
             <div key={idx} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"6px 10px",background:"var(--card2)",borderRadius:10}}>
-              <span style={{fontSize:18}}>{item.emoji}</span>
+              <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={30} round={8}/>
               <div style={{flex:1,fontSize:13,fontWeight:600}}>{item.itemName}</div>
               <div style={{display:"flex",alignItems:"center",gap:6}}>
                 <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:Math.max(1,it.qty-1)}:it))}
@@ -424,7 +424,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
               <div style={{borderTop:"1px dashed var(--border)",paddingTop:8,marginBottom:8}}>
                 {order.items.map((item,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 0"}}>
-                    <span>{item.emoji} {item.itemName} ×{item.qty}</span>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={22} round={6}/>{item.itemName} ×{item.qty}</span>
                     <span style={{color:"#c62828",fontWeight:600}}>{(item.price*item.qty).toLocaleString()}</span>
                   </div>
                 ))}
@@ -765,7 +765,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
             {(order.items || []).map((i, idx) => (
               <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0", borderBottom: "1px dashed var(--border)" }}>
-                <span>{i.emoji} {i.itemName} ×{i.qty}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===i.itemId)||i} size={22} round={6}/>{i.itemName} ×{i.qty}</span>
                 <span style={{ fontWeight: 700 }}>{(i.price * i.qty).toLocaleString()} {CUR}</span>
               </div>
             ))}
@@ -1016,7 +1016,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 <input type="checkbox" checked={!!compItems[i]?.selected}
                   onChange={e => setCompItems(p => p.map((c, ci) => ci === i ? { ...c, selected: e.target.checked, qty: e.target.checked ? it.qty : 0 } : c))}
                   style={{ width: 18, height: 18, accentColor: "#00897b" }} />
-                <span style={{ flex: 1, fontSize: 13 }}>{it.emoji} {it.itemName} ×{it.qty}</span>
+                <span style={{ flex: 1, fontSize: 13, display:"inline-flex", alignItems:"center", gap:6 }}><ItemVisual item={store.menu.find(m=>m.id===it.itemId)||it} size={22} round={6}/>{it.itemName} ×{it.qty}</span>
                 {compItems[i]?.selected && (
                   <input type="number" min="1" max={it.qty} value={compItems[i]?.qty || it.qty}
                     onChange={e => setCompItems(p => p.map((c, ci) => ci === i ? { ...c, qty: Math.min(it.qty, Math.max(1, +e.target.value)) } : c))}

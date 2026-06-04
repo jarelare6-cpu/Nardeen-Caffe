@@ -60,7 +60,7 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
                 {order.table&&<div style={{fontSize:12,color:"#1976d2",fontWeight:700,marginBottom:6}}>🪑 طاولة {order.table}</div>}
                 {drinkItems.map((i,idx)=>(
                   <div key={idx} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",fontSize:13}}>
-                    <span style={{fontSize:18}}>{i.emoji}</span>
+                    <ItemVisual item={store.menu.find(m=>m.id===i.itemId)||i} size={28} round={7}/>
                     <span style={{fontWeight:600}}>{i.itemName}</span>
                     <span style={{marginRight:"auto",fontWeight:900,color:"#c62828"}}>×{i.qty}</span>
                   </div>
@@ -91,7 +91,7 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
         {barItems.map(item=>(
           <div key={item.id} className="card">
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-              <span style={{fontSize:24}}>{item.emoji}</span>
+              <ItemVisual item={item} size={40} round={10}/>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,fontSize:12}}>{item.name}</div>
                 <div style={{fontSize:10,color:item.stock<=item.minStock?"#c62828":"var(--sub)"}}>
@@ -209,7 +209,7 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
                 {order.table&&<div style={{fontSize:12,color:"#1976d2",fontWeight:700,marginBottom:6}}>🪑 طاولة {order.table}</div>}
                 {hItems.map((i,idx)=>(
                   <div key={idx} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",fontSize:13}}>
-                    <span>💨</span><span style={{fontWeight:600}}>{i.itemName}</span>
+                    <ItemVisual item={store.menu.find(m=>m.id===i.itemId)||i} size={26} round={7}/><span style={{fontWeight:600}}>{i.itemName}</span>
                     <span style={{marginRight:"auto",fontWeight:900,color:"#c62828"}}>×{i.qty}</span>
                   </div>
                 ))}
@@ -237,7 +237,7 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
         {hookahItems.map(item=>(
           <div key={item.id} className="card">
-            <div style={{textAlign:"center",fontSize:30,marginBottom:6}}>💨</div>
+            <div style={{textAlign:"center",marginBottom:6}}><ItemVisual item={item} size={40} round={10}/></div>
             <div style={{fontWeight:700,fontSize:12,textAlign:"center",marginBottom:6}}>{item.name}</div>
             <div style={{height:5,background:"var(--border)",borderRadius:4,marginBottom:10}}>
               <div style={{height:"100%",width:`${Math.min(100,(item.stock/Math.max(item.minStock*2,1))*100)}%`,

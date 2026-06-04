@@ -29,7 +29,7 @@ export function ItemVisual({ item, size = 40, round = 12 }) {
       </span>
     );
   }
-  return <div style={{ fontSize: Math.round(size * 0.8) }}>{emoji}</div>;
+  return <span style={{ display: "inline-block", fontSize: Math.round(size * 0.8) }}>{emoji}</span>;
 }
 
 // ── Phase ب: شريط التنقّل السفلي اللمسي ──────────────────────

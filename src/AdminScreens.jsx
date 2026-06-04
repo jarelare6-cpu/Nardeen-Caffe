@@ -179,7 +179,7 @@ export function DashboardTab({store,dm,settings}){
           ):topItems.filter(i=>i.totalSold>0).map((item,i)=>(
             <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
               borderBottom:i<4?"1px solid var(--border)":"none"}}>
-              <span style={{fontSize:18,width:26}}>{item.emoji}</span>
+              <ItemVisual item={item} size={28} round={7}/>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:600}}>{item.name}</div>
                 <div style={{fontSize:11,color:"var(--sub)"}}>{item.totalSold} وحدة</div>
@@ -196,7 +196,7 @@ export function DashboardTab({store,dm,settings}){
           ):lowStock.map((item,i)=>(
             <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
               borderBottom:i<lowStock.length-1?"1px solid var(--border)":"none"}}>
-              <span style={{fontSize:18}}>{item.emoji}</span>
+              <ItemVisual item={item} size={28} round={7}/>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:600}}>{item.name}</div>
                 <div style={{height:4,background:"var(--border)",borderRadius:4,marginTop:4}}>
@@ -730,7 +730,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
                         </div>
                         {(o.items || []).slice(0, 2).map((it, ii) => (
                           <div key={ii} style={{ fontSize: 9, color: "var(--sub)", paddingRight: 6 }}>
-                            {it.emoji} {it.itemName} ×{it.qty}
+                            <ItemVisual item={store.menu.find(m=>m.id===it.itemId)||it} size={20} round={6}/> {it.itemName} ×{it.qty}
                           </div>
                         ))}
                       </div>
@@ -1017,7 +1017,7 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
             </div>
             {(o.items || []).map((it, i) => (
               <div key={i} style={{ fontSize: 12, color: "var(--sub)", display: "flex", justifyContent: "space-between" }}>
-                <span>{it.emoji} {it.itemName} ×{it.qty}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===it.itemId)||it} size={22} round={6}/>{it.itemName} ×{it.qty}</span>
                 <span>{(it.price * it.qty).toLocaleString()} {CUR}</span>
               </div>
             ))}
@@ -1397,7 +1397,7 @@ export function ReportsTab({store,dm,settings}){
             <div key={item.name} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
               borderBottom:i<topItems.length-1?"1px solid var(--border)":"none"}}>
               <span style={{fontSize:10,fontWeight:800,color:"var(--sub)",minWidth:18}}>#{i+1}</span>
-              <span style={{fontSize:20}}>{item.emoji}</span>
+              <ItemVisual item={item} size={32} round={8}/>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:600}}>{item.name}</div>
                 <div style={{fontSize:11,color:"var(--sub)"}}>{item.qty} وحدة مباعة</div>
@@ -2095,7 +2095,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings }) {
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
                     {(o.items || []).map((it, i) => (
                       <span key={i} style={{ fontSize: 11, background: "var(--card2)", borderRadius: 6, padding: "2px 8px" }}>
-                        {it.emoji} {it.itemName} ×{it.qty}
+                        <ItemVisual item={store.menu.find(m=>m.id===it.itemId)||it} size={20} round={6}/> {it.itemName} ×{it.qty}
                       </span>
                     ))}
                   </div>

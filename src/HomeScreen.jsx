@@ -139,11 +139,6 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
             color:"#fff",borderRadius:10,padding:"6px 10px",fontSize:14}}>
             {dm?"☀":"🌙"}
           </button>
-          <button onClick={()=>store.setSettings(p=>({...p,imageStyle:(p.imageStyle==="icon")?"real":"icon"}))}
-            title="تبديل نمط الصور (واقعي/أيقونة)"
-            style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:10,padding:"6px 10px",fontSize:14}}>
-            {(settings?.imageStyle==="icon")?"✏":"🖼"}
-          </button>
           {lowStockItems.length > 0 && (user.role==="admin"||user.role==="cashier") && (
             <button onClick={()=>setTab("bar")}
               style={{background:"rgba(255,152,0,.3)",border:"none",color:"#ffe082",
