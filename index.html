@@ -61,6 +61,33 @@
           const s = document.getElementById('splash');
           if (s) { s.classList.add('hide'); setTimeout(() => s.remove(), 500); }
         }, 1400);
+        // كاشف التعليق: إذا بقيت الصفحة بيضاء (لم يُركّب التطبيق) بعد 8 ثوانٍ → زر إصلاح ذاتي
+        setTimeout(() => {
+          var root = document.getElementById('root');
+          if (!root || root.children.length > 0) return;
+          var sp = document.getElementById('splash'); if (sp) sp.remove();
+          root.innerHTML =
+            '<div dir="rtl" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;font-family:Tajawal,Cairo,sans-serif;color:#fff;background:#0f0f1a">'
+            + '<div style="font-size:42px">\u2615</div>'
+            + '<h2 style="font-size:20px;font-weight:900">تعذّر تحميل التطبيق</h2>'
+            + '<p style="opacity:.7;font-size:14px;max-width:320px">قد يكون التخزين المؤقّت قديمًا. تأكّد من الاتصال بالإنترنت ثم اضغط الزر.</p>'
+            + '<button id="nc-fix" style="background:#c62828;color:#fff;border:none;border-radius:10px;padding:12px 24px;font-size:15px;font-weight:700;font-family:inherit">إصلاح وإعادة التحميل</button>'
+            + '</div>';
+          document.getElementById('nc-fix').onclick = async function () {
+            this.textContent = 'جارٍ الإصلاح…';
+            try {
+              if ('serviceWorker' in navigator) {
+                var regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map(function (r) { return r.unregister(); }));
+              }
+              if (window.caches) {
+                var keys = await caches.keys();
+                await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }
+            } catch (e) {}
+            location.reload();
+          };
+        }, 8000);
       });
     </script>
     <script type="module" src="/src/main.jsx"></script>
