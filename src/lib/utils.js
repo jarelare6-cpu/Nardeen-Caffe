@@ -11,6 +11,20 @@
 //  - مقارنة المبيعات (getSalesComparison)
 // ══════════════════════════════════════════════════════════════
 
+// ── تشفير كلمات المرور — SHA-256 (نقي، في الحزمة الرئيسية لعمل الدخول أوفلاين) ──
+export const hashPassword = async (plain) => {
+  if (!plain) return plain;
+  if (/^[a-f0-9]{64}$/i.test(plain)) return plain; // مشفّرة مسبقًا
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plain));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+};
+
+export const verifyPassword = async (plain, hashed) => {
+  if (plain === hashed) return true; // دعم القديم غير المشفّر
+  const h = await hashPassword(plain);
+  return h === hashed;
+};
+
 // ── صوت التنبيه ───────────────────────────────────────────────
 export const playOrderAlert = (tone = "bell") => {
   try {

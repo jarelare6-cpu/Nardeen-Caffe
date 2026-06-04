@@ -35,22 +35,9 @@ export const supabase = SUPABASE_READY
   : null;
 
 // ══════════════════════════════════════════════════════════════
-// تشفير كلمات المرور — SHA-256 (لا يحتاج مكتبة خارجية)
-// ══════════════════════════════════════════════════════════════
-export const hashPassword = async (plain) => {
-  if (!plain) return plain;
-  // إذا كانت مشفرة مسبقاً (64 حرف hex) لا تعيد تشفيرها
-  if (/^[a-f0-9]{64}$/i.test(plain)) return plain;
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plain));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-};
-
-export const verifyPassword = async (plain, hashed) => {
-  // دعم القديم: مطابقة مباشرة لكلمات المرور غير المشفرة (ترقية تدريجية)
-  if (plain === hashed) return true;
-  const h = await hashPassword(plain);
-  return h === hashed;
-};
+// تشفير كلمات المرور — SHA-256 (نُقل إلى utils.js ليكون في الحزمة الرئيسية).
+import { hashPassword, verifyPassword } from "./utils.js";
+export { hashPassword, verifyPassword };
 
 // ── Auth helper مع دعم التشفير ─────────────────────────────
 export const sbLogin = async (username, password) => {
