@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -1421,6 +1421,21 @@ export function ReportsTab({store,dm,settings}){
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const [form,setForm]=useState({...store.settings});
+  // إعادة مزامنة النموذج مرة واحدة عند وصول الإعدادات المحفوظة (تحميل غير متزامن) — يحفظ تعديلات المستخدم
+  const _hydrated=useRef(false);
+  useEffect(()=>{
+    if(!_hydrated.current && store.settings && Object.keys(store.settings).length){
+      setForm(f=>({...store.settings,...f})); _hydrated.current=true;
+    }
+  },[store.settings]);
+  // نغمة هذا الجهاز (محلية — لتمييزه)
+  const [devSound,setDevSound]=useState(()=>{
+    try{ const le=localStorage.getItem("nc_sound_enabled");
+      return { enabled: le!==null?le==="1":!!store.settings?.soundEnabled, tone: localStorage.getItem("nc_sound_tone")||store.settings?.soundTone||"bell" };
+    }catch{ return { enabled:false, tone:"bell" }; }
+  });
+  const setDevSoundEnabled=(v)=>{ try{localStorage.setItem("nc_sound_enabled",v?"1":"0");}catch{} setDevSound(s=>({...s,enabled:v})); };
+  const setDevTone=(t)=>{ try{localStorage.setItem("nc_sound_tone",t);}catch{} setDevSound(s=>({...s,tone:t})); try{playOrderAlert(t);}catch{} };
   const [permTab,setPermTab]=useState(false);
   // صلاحيات الأقسام القابلة للتعديل
   const [dynPerms,setDynPerms]=useState(()=>{
@@ -1499,6 +1514,24 @@ export function SettingsTab({store,showToast,dm,user}){
               onChange={e=>setForm(f=>({...f,cashierCode:e.target.value}))}
               style={{fontFamily:"monospace",letterSpacing:2}}/>
           </S>
+          <S label="🔔 نغمة هذا الجهاز (محلية — لتمييزه)">
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <input type="checkbox" checked={devSound.enabled} onChange={e=>setDevSoundEnabled(e.target.checked)} id="devsnd"/>
+              <label htmlFor="devsnd" style={{fontSize:13,fontWeight:600}}>تفعيل صوت التنبيه على هذا الجهاز</label>
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {SOUND_TONES.map(t=>(
+                <button key={t.id} onClick={()=>setDevTone(t.id)}
+                  style={{padding:"8px 12px",borderRadius:10,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",
+                    background:devSound.tone===t.id?"var(--red)":"var(--card2)",color:devSound.tone===t.id?"#fff":"var(--sub)"}}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:"var(--sub)",marginTop:8,lineHeight:1.7}}>
+              تُحفظ محليًا على هذا الجهاز فقط — كل جهاز يختار نغمة مختلفة فتميّزون مصدر التنبيه. اضغط أي نغمة لتجربتها فورًا.
+            </div>
+          </S>
           {/* 10. نظام الولاء */}
           <S label="⭐ نظام الولاء">
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
@@ -1510,12 +1543,12 @@ export function SettingsTab({store,showToast,dm,user}){
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                 <div>
                   <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>عدد الزيارات للمكافأة</label>
-                  <input className="input" type="number" min="1" max="100" value={form.loyaltyVisitsForReward||10}
+                  <input className="input" type="number" min="1" max="100" value={form.loyaltyVisitsForReward??10}
                     onChange={e=>setForm(f=>({...f,loyaltyVisitsForReward:+e.target.value}))}/>
                 </div>
                 <div>
                   <label style={{fontSize:11,color:"var(--sub)",display:"block",marginBottom:4}}>نسبة الخصم عند المكافأة %</label>
-                  <input className="input" type="number" min="1" max="100" value={form.loyaltyDiscountPercent||10}
+                  <input className="input" type="number" min="1" max="100" value={form.loyaltyDiscountPercent??10}
                     onChange={e=>setForm(f=>({...f,loyaltyDiscountPercent:+e.target.value}))}/>
                 </div>
                 <div>
@@ -1616,7 +1649,7 @@ export function SettingsTab({store,showToast,dm,user}){
           ))}
           {form.tableTimerAlert&&(
             <S label="⏱ وقت التنبيه (بالدقائق)">
-              <input className="input" type="number" min="10" max="240" value={form.tableAlertMinutes||60}
+              <input className="input" type="number" min="10" max="240" value={form.tableAlertMinutes??60}
                 onChange={e=>setForm(f=>({...f,tableAlertMinutes:+e.target.value}))}/>
             </S>
           )}

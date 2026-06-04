@@ -81,7 +81,13 @@ export default function NardeenCaffe(){
   },[]);
 
   useEffect(()=>{
-    if(store.orders.length>prevLen.current&&user) playOrderAlert();
+    if(store.orders.length>prevLen.current&&user){
+      try{
+        const le=localStorage.getItem("nc_sound_enabled");
+        const on = le!==null ? le==="1" : !!store.settings?.soundEnabled;
+        if(on) playOrderAlert(localStorage.getItem("nc_sound_tone")||store.settings?.soundTone||"bell");
+      }catch{}
+    }
     prevLen.current=store.orders.length;
   },[store.orders.length,user]);
 
@@ -115,23 +121,12 @@ export default function NardeenCaffe(){
       id:Date.now().toString(),msg,targetRoles,orderId,
       createdAt:new Date().toISOString(),read:[]
     },...p.slice(0,49)]);
-    // صوت الإشعار
-    if(store.settings?.soundEnabled){
-      try{
-        const tone=store.settings?.soundTone||"bell";
-        const ctx=new(window.AudioContext||window.webkitAudioContext)();
-        const osc=ctx.createOscillator();
-        const gain=ctx.createGain();
-        osc.connect(gain);gain.connect(ctx.destination);
-        if(tone==="bell"){osc.frequency.setValueAtTime(880,ctx.currentTime);osc.frequency.setValueAtTime(660,ctx.currentTime+0.1);}
-        else if(tone==="chime"){osc.frequency.setValueAtTime(1046,ctx.currentTime);osc.frequency.setValueAtTime(784,ctx.currentTime+0.15);}
-        else if(tone==="ping"){osc.frequency.setValueAtTime(1200,ctx.currentTime);}
-        else{osc.frequency.setValueAtTime(440,ctx.currentTime);}
-        gain.gain.setValueAtTime(0.3,ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.4);
-        osc.start(ctx.currentTime);osc.stop(ctx.currentTime+0.4);
-      }catch{}
-    }
+    // صوت الإشعار — نغمة لكل جهاز (محلية) لتمييزه
+    try{
+      const le=localStorage.getItem("nc_sound_enabled");
+      const soundOn = le!==null ? le==="1" : !!store.settings?.soundEnabled;
+      if(soundOn) playOrderAlert(localStorage.getItem("nc_sound_tone")||store.settings?.soundTone||"bell");
+    }catch{}
     // إشعار المتصفح
     if(store.settings?.notifyBrowser&&Notification?.permission==="granted"){
       new Notification("☕ ناردين كافيه",{body:msg,icon:"/favicon.ico"}).catch(()=>{});

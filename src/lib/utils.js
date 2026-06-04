@@ -15,25 +15,36 @@
 export const playOrderAlert = (tone = "bell") => {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    if (tone === "bell") {
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.setValueAtTime(660, ctx.currentTime + 0.1);
-    } else if (tone === "chime") {
-      osc.frequency.setValueAtTime(1046, ctx.currentTime);
-      osc.frequency.setValueAtTime(784, ctx.currentTime + 0.15);
-    } else if (tone === "ping") {
-      osc.frequency.setValueAtTime(1200, ctx.currentTime);
-    } else {
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-    }
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
+    const beep = (freq, start, dur = 0.18, vol = 0.3) => {
+      const osc = ctx.createOscillator(); const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+      gain.gain.setValueAtTime(vol, ctx.currentTime + start);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      osc.start(ctx.currentTime + start); osc.stop(ctx.currentTime + start + dur);
+    };
+    // أنماط نغمات مميّزة — ليختار كل جهاز نغمته الخاصة
+    const patterns = {
+      bell:  [[880, 0], [660, 0.12]],
+      chime: [[1046, 0], [784, 0.15], [1318, 0.3]],
+      ping:  [[1200, 0]],
+      beep:  [[440, 0]],
+      alarm: [[988, 0], [988, 0.2], [988, 0.4]],
+      drop:  [[1318, 0], [988, 0.12], [659, 0.24]],
+      rise:  [[523, 0], [784, 0.12], [1046, 0.24]],
+      trill: [[1046, 0], [1318, 0.08], [1046, 0.16], [1318, 0.24]],
+    };
+    (patterns[tone] || patterns.bell).forEach(([f, t]) => beep(f, t));
   } catch {}
 };
+
+// قائمة النغمات المتاحة (للاختيار في الإعدادات)
+export const SOUND_TONES = [
+  { id: "bell", label: "🔔 جرس" }, { id: "chime", label: "🎐 رنين" },
+  { id: "ping", label: "📍 بِنغ" }, { id: "beep", label: "🔉 بيب" },
+  { id: "alarm", label: "🚨 إنذار" }, { id: "drop", label: "💧 هابطة" },
+  { id: "rise", label: "📈 صاعدة" }, { id: "trill", label: "🎵 تموّج" },
+];
 
 // ══════════════════════════════════════════════════════════════
 // 5. تنبيه نفاد المخزون
