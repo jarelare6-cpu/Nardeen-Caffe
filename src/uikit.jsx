@@ -1,9 +1,15 @@
 // مكوّنات واجهة صغيرة مشتركة — مفصولة من App.jsx
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo, useContext, createContext } from "react";
 import { THEMES, ROLES } from "./constants.js";
 
+// النمط العام للصور: "real" (افتراضي) أو "icon" — يتحكّم به زر التبديل
+export const ImageStyleContext = createContext("real");
+
 export function ItemVisual({ item, size = 40, round = 12 }) {
-  const img = (item?.image || "").trim();
+  const style = useContext(ImageStyleContext);
+  const real = (item?.image || "").trim();
+  const icon = (item?.imageIcon || "").trim();
+  const img = style === "icon" ? (icon || real) : (real || icon);
   const emoji = item?.emoji || "🍽";
   if (img) {
     return (

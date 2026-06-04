@@ -7,6 +7,7 @@ import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notif
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+import { IMAGE_LIBRARY } from "./lib/imageLibrary.js";
 
 // ضغط صورة مرفوعة إلى dataURL صغير (يعمل أوفلاين بلا Storage)
 async function compressImage(file, max = 320, quality = 0.72) {
@@ -388,8 +389,14 @@ export function InventoryTab({store,settings}){
 
 export function MenuTab({store,showToast,dm,settings}){
   const [showForm,setShowForm]=useState(false);
+  const [showLib,setShowLib]=useState(false);
+  const [libG,setLibG]=useState(0);
+  const [libStyle,setLibStyle]=useState("real");
+  const lbl2={fontSize:11,fontWeight:700,color:"var(--sub)",marginBottom:4,display:"block"};
+  const imgPrev={width:68,height:68,objectFit:"cover",borderRadius:12,border:"1px solid var(--border)"};
+  const rmv={fontSize:10,color:"#c62828",cursor:"pointer",fontWeight:700,marginTop:2};
   const [editItem,setEditItem]=useState(null);
-  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:""});
+  const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:"",imageIcon:""});
   const [cat,setCat]=useState("all");
 
   const filtered=cat==="all"?store.menu:store.menu.filter(m=>m.category===cat);
@@ -403,12 +410,12 @@ export function MenuTab({store,showToast,dm,settings}){
       store.setMenu(p=>[...p,{id:"m"+Date.now(),...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,cost:+form.cost||0,totalSold:0}]);
       showToast("تم إضافة الصنف");
     }
-    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:""});
+    setShowForm(false);setEditItem(null);setForm({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:"",imageIcon:""});
   };
 
   const openEdit=(item)=>{
     setEditItem(item);
-    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),cost:item.cost!=null?String(item.cost):"",emoji:item.emoji||"☕",image:item.image||""});
+    setForm({name:item.name,nameEn:item.nameEn||"",price:String(item.price),category:item.category,stock:String(item.stock),minStock:String(item.minStock),cost:item.cost!=null?String(item.cost):"",emoji:item.emoji||"☕",image:item.image||"",imageIcon:item.imageIcon||""});
     setShowForm(true);
   };
 
@@ -463,19 +470,23 @@ export function MenuTab({store,showToast,dm,settings}){
                 <input className="input" type={type} value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))}/>
               </div>
             ))}
-            <div style={{marginBottom:10}}>
-              <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>📷 رفع صورة من الجهاز</label>
-              <input className="input" type="file" accept="image/*" style={{padding:6}}
-                onChange={async e=>{const file=e.target.files&&e.target.files[0]; if(!file)return; try{const url=await compressImage(file); setForm(f=>({...f,image:url})); showToast("تم تحميل الصورة");}catch{showToast("تعذّر تحميل الصورة","error");} e.target.value="";}}/>
-              <div style={{fontSize:10,color:"var(--sub)",marginTop:4}}>تُضغط الصورة تلقائيًا وتُحفظ مع الصنف — تعمل أوفلاين.</div>
-            </div>
-            {(form.image||"").trim() && (
-              <div style={{marginBottom:12,textAlign:"center"}}>
-                <img src={form.image} alt="معاينة" style={{width:90,height:90,objectFit:"cover",borderRadius:14,border:"1px solid var(--border)"}}
-                  onError={e=>{e.currentTarget.style.opacity=.25;}}/>
-                <div style={{fontSize:10,color:"var(--sub)",marginTop:4}}>معاينة الصورة • <span style={{color:"#c62828",cursor:"pointer",fontWeight:700}} onClick={()=>setForm(f=>({...f,image:""}))}>إزالة</span></div>
+            {/* صور الصنف: مكتبة جاهزة + رفع واقعي/أيقونة */}
+            <button type="button" onClick={()=>setShowLib(true)} style={{width:"100%",marginBottom:10,background:"rgba(21,101,192,.12)",color:"#1565c0",border:"1px solid #1565c033",borderRadius:10,padding:"9px",fontWeight:800,fontSize:13,cursor:"pointer"}}>🖼 اختر من مكتبة الصور</button>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:6}}>
+              <div>
+                <label style={lbl2}>📷 صورة واقعية</label>
+                <input className="input" type="file" accept="image/*" style={{padding:6,fontSize:11}}
+                  onChange={async e=>{const file=e.target.files&&e.target.files[0]; if(!file)return; try{const url=await compressImage(file); setForm(f=>({...f,image:url})); showToast("تم تحميل الصورة");}catch{showToast("تعذّر","error");} e.target.value="";}}/>
+                {(form.image||"").trim() && <div style={{textAlign:"center",marginTop:6}}><img src={form.image} style={imgPrev} onError={e=>{e.currentTarget.style.opacity=.25}}/><div style={rmv} onClick={()=>setForm(f=>({...f,image:""}))}>إزالة</div></div>}
               </div>
-            )}
+              <div>
+                <label style={lbl2}>✏ صورة أيقونة</label>
+                <input className="input" type="file" accept="image/*" style={{padding:6,fontSize:11}}
+                  onChange={async e=>{const file=e.target.files&&e.target.files[0]; if(!file)return; try{const url=await compressImage(file); setForm(f=>({...f,imageIcon:url})); showToast("تم تحميل الأيقونة");}catch{showToast("تعذّر","error");} e.target.value="";}}/>
+                {(form.imageIcon||"").trim() && <div style={{textAlign:"center",marginTop:6}}><img src={form.imageIcon} style={imgPrev} onError={e=>{e.currentTarget.style.opacity=.25}}/><div style={rmv} onClick={()=>setForm(f=>({...f,imageIcon:""}))}>إزالة</div></div>}
+              </div>
+            </div>
+            <div style={{fontSize:10,color:"var(--sub)",marginBottom:12}}>الافتراضي يعرض «الواقعي»؛ زر التبديل أعلى الصفحة يحوّل الكل لأيقونات.</div>
             <div style={{marginBottom:16}}>
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>الفئة</label>
               <select className="input" value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}>
@@ -486,6 +497,39 @@ export function MenuTab({store,showToast,dm,settings}){
               <button className="btn btn-red" style={{flex:1}} onClick={save}>حفظ</button>
               <button className="btn btn-ghost" style={{flex:1}} onClick={()=>{setShowForm(false);setEditItem(null)}}>إلغاء</button>
             </div>
+          </div>
+        </div>
+      )}
+      {showLib&&(
+        <div onClick={()=>setShowLib(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:600,padding:16}}>
+          <div onClick={e=>e.stopPropagation()} className="card fade-in" style={{width:"100%",maxWidth:520,maxHeight:"86vh",overflowY:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontWeight:900,fontSize:15}}>🖼 مكتبة الصور</div>
+              <button onClick={()=>setShowLib(false)} style={{background:"none",border:"none",fontSize:18,color:"var(--sub)",cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{display:"flex",gap:6,marginBottom:8}}>
+              {[["real","واقعي"],["icon","أيقونة"]].map(([st,la])=>(
+                <button key={st} onClick={()=>setLibStyle(st)} style={{flex:1,padding:"6px",borderRadius:8,border:"none",fontWeight:700,fontSize:12,cursor:"pointer",background:libStyle===st?"#c62828":"var(--card2)",color:libStyle===st?"#fff":"var(--sub)"}}>{la}</button>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:10}} className="scroll-hide">
+              {IMAGE_LIBRARY.map((g,i)=>(
+                <button key={i} onClick={()=>setLibG(i)} style={{padding:"5px 10px",borderRadius:16,border:"none",whiteSpace:"nowrap",fontSize:11,fontWeight:700,cursor:"pointer",background:libG===i?"#1565c0":"var(--card2)",color:libG===i?"#fff":"var(--sub)"}}>{g.label}</button>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(74px,1fr))",gap:8}}>
+              {(IMAGE_LIBRARY[libG]?.[libStyle]||[]).map((p,i)=>{
+                const sel=(libStyle==="real"?form.image:form.imageIcon)===p;
+                return(
+                  <div key={i} onClick={()=>{setForm(f=>libStyle==="real"?({...f,image:p}):({...f,imageIcon:p})); showToast(libStyle==="real"?"تم تعيين الصورة الواقعية":"تم تعيين الأيقونة");}}
+                    style={{cursor:"pointer",borderRadius:10,padding:4,background:"var(--card2)",border:sel?"2px solid #2e7d32":"1px solid var(--border)"}}>
+                    <img src={p} style={{width:"100%",height:62,objectFit:"contain"}} loading="lazy"/>
+                  </div>
+                );
+              })}
+              {(IMAGE_LIBRARY[libG]?.[libStyle]||[]).length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",color:"var(--sub)",fontSize:12,padding:16}}>لا توجد صور بهذا النمط لهذه الفئة</div>}
+            </div>
+            <div style={{fontSize:10,color:"var(--sub)",marginTop:10,textAlign:"center"}}>اختر صورة واقعية وأخرى أيقونة لنفس الصنف.</div>
           </div>
         </div>
       )}

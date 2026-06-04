@@ -8,7 +8,7 @@ import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox, sbHeartbeat } from "./lib/supabase.js";
 import { startMesh, mergeById } from "./lib/mesh.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { Toast, PWABanner, GlobalStyle } from "./uikit.jsx";
+import { Toast, PWABanner, GlobalStyle, ImageStyleContext } from "./uikit.jsx";
 import { ROLES } from "./constants.js";
 import { LoginScreen, CustomerPortal } from "./CustomerScreens.jsx";
 import { HomeScreen } from "./HomeScreen.jsx";
@@ -162,6 +162,7 @@ export default function NardeenCaffe(){
   const settings = store.settings || {};
 
   return(
+    <ImageStyleContext.Provider value={settings?.imageStyle||"real"}>
     <div style={{fontFamily:"'Tajawal',sans-serif",direction:"rtl",minHeight:"100vh",
       background:"var(--bg)",color:"var(--text)",transition:"background .3s,color .3s"}}>
       <GlobalStyle dm={dm} theme={store.settings?.appTheme||"default"}/>
@@ -192,6 +193,7 @@ export default function NardeenCaffe(){
               settings={settings} topOffset={bannerH}/>
       )}
     </div>
+    </ImageStyleContext.Provider>
   );
 }
 

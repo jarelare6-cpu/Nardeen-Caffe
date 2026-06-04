@@ -11,7 +11,7 @@ export default defineConfig({
       includeAssets: ["icon-192.png", "icon-192.svg", "icon-512.png", "icon-512.svg"],
       manifest: false, // نستخدم public/manifest.json الموجود
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,json,woff,woff2}"],
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,json,woff,woff2,webp}"],
         navigateFallback: "index.html",
         navigateFallbackDenylist: [/^\/api/],
         cleanupOutdatedCaches: true,
