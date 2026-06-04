@@ -1532,6 +1532,19 @@ export function SettingsTab({store,showToast,dm,user}){
               </div>
             )}
           </S>
+          {/* 11. المزامنة المباشرة P2P (تجريبي) */}
+          <S label="🔗 المزامنة المباشرة بين الأجهزة (تجريبي)">
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+              <input type="checkbox" checked={form.meshEnabled||false}
+                onChange={e=>setForm(f=>({...f,meshEnabled:e.target.checked}))} id="mesh"/>
+              <label htmlFor="mesh" style={{fontSize:13,fontWeight:600}}>تفعيل التزامن المباشر عبر الشبكة المحلية</label>
+            </div>
+            <div style={{fontSize:11,color:"var(--sub)",lineHeight:1.7}}>
+              تجريبي: يزامن الطلبات مباشرةً بين الأجهزة على نفس الراوتر (P2P)، ويستمر أثناء انقطاع الإنترنت
+              للأجهزة المتصلة مسبقًا. فعّله على كل الأجهزة واختبره. عطّل "AP/Client Isolation" في الراوتر.
+              عند الإطفاء يعمل التطبيق عبر السحابة كالمعتاد.
+            </div>
+          </S>
           <S label="لغة الواجهة">
             <div style={{display:"flex",gap:10}}>
               {[["ar","🇸🇦 عربي"],["en","🇬🇧 English"]].map(([v,l])=>(

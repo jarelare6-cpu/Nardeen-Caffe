@@ -26,7 +26,32 @@ export default function NardeenCaffe(){
   const [dm,setDm]=useState(()=>localStorage.getItem("nc_dark")==="1");
   const [offline,setOffline]=useState(()=>typeof navigator!=="undefined"&&!navigator.onLine);
   const [pending,setPending]=useState(()=>{try{return outboxCount();}catch{return 0;}});
+  const [meshPeers,setMeshPeers]=useState(0);
+  const meshRef=useRef(null);
   const prevLen=useRef(store.orders.length);
+
+  // ── mesh تجريبي: تزامن P2P للطلبات عبر LAN (مطفأ افتراضيًا) ──
+  const meshOn=!!store.settings?.meshEnabled;
+  useEffect(()=>{
+    if(!meshOn){ try{meshRef.current?.stop?.();}catch{} meshRef.current=null; setMeshPeers(0); return; }
+    let active=true;
+    import("./lib/mesh.js").then(({startMesh})=>startMesh({
+      onPeers:(n)=>{ if(active) setMeshPeers(n); },
+      onOrders:(remote)=>{
+        try{
+          store.setOrders(prev=>{
+            const map=new Map(prev.map(o=>[o.id,o]));
+            let changed=false;
+            (remote||[]).forEach(ro=>{ if(!ro||!ro.id) return; const cur=map.get(ro.id); if(!cur||JSON.stringify(cur)!==JSON.stringify(ro)){ map.set(ro.id,ro); changed=true; } });
+            return changed?[...map.values()]:prev;
+          });
+        }catch{}
+      }
+    }).then(m=>{ if(active) meshRef.current=m; else m.stop(); }).catch(e=>console.warn("[mesh] init failed",e)));
+    return()=>{ active=false; try{meshRef.current?.stop?.();}catch{} meshRef.current=null; };
+  },[meshOn]);
+  // دفع الطلبات المحلية للأقران عند تغيّرها
+  useEffect(()=>{ if(meshOn){ try{meshRef.current?.pushOrders?.(store.orders);}catch{} } },[store.orders,meshOn]);
 
   // ── offline-first: مؤشّر الاتصال + تفريغ الطابور الصادر عند العودة ──
   useEffect(()=>{
@@ -122,13 +147,14 @@ export default function NardeenCaffe(){
       <GlobalStyle dm={dm} theme={store.settings?.appTheme||"default"}/>
       <Toast toast={toast}/>
       <PWABanner/>
-      {(offline||pending>0)&&(
+      {(offline||pending>0||meshOn)&&(
         <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,
-          background:offline?"#c62828":"#e65100",color:"#fff",textAlign:"center",
+          background:offline?"#c62828":(pending>0?"#e65100":"#2e7d32"),color:"#fff",textAlign:"center",
           padding:"6px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
           boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
-          {offline?"⚠ غير متصل — يعمل محليًا والبيانات محفوظة":"🔄 جارٍ المزامنة"}
-          {pending>0?` • ${pending} عملية بانتظار الرفع`:""}
+          {offline?"⚠ غير متصل — يعمل محليًا والبيانات محفوظة":(pending>0?"🔄 جارٍ المزامنة":"🔗 المزامنة المباشرة فعّالة")}
+          {pending>0?` • ${pending} بانتظار الرفع`:""}
+          {meshOn?` • 🔗 ${meshPeers} جهاز متصل`:""}
         </div>
       )}
       {screen==="login"&&<LoginScreen store={store} onLogin={login} showToast={showToast} dm={dm}/>}
