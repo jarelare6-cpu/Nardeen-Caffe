@@ -7,7 +7,7 @@ import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notif
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
-import { IMAGE_LIBRARY } from "./lib/imageLibrary.js";
+import { IMAGE_LIBRARY, AUTO_MAP } from "./lib/imageLibrary.js";
 
 // ضغط صورة مرفوعة إلى dataURL صغير (يعمل أوفلاين بلا Storage)
 async function compressImage(file, max = 320, quality = 0.72) {
@@ -419,13 +419,31 @@ export function MenuTab({store,showToast,dm,settings}){
     setShowForm(true);
   };
 
+  const nrm=x=>(x||"").toString().replace(/[\u064B-\u065F\u0670]/g,"").replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/\s+/g,"").toLowerCase();
+  const autoLink=()=>{
+    let n=0;
+    store.setMenu(p=>p.map(it=>{
+      const ni=nrm(it.name); if(!ni) return it;
+      let best=null,score=0;
+      for(const e of AUTO_MAP){ const ne=nrm(e.name);
+        let sc = ne===ni?100 : (ni.includes(ne)?ne.length : (ne.includes(ni)?ni.length*0.8:0));
+        if(sc>score && sc>=4){score=sc;best=e;} }
+      if(best){ n++; return {...it,image:best.real||it.image,imageIcon:best.icon||it.imageIcon}; }
+      return it;
+    }));
+    showToast(n>0?`تم ربط ${n} صنف بالصور — راجعها وعدّل الباقي من المعرض`:"لم يُطابق أي صنف — استخدم المعرض يدويًا", n>0?"success":"error");
+  };
+
   const CUR=settings?.currency||"ل.س";
 
   return(
     <div className="fade-in">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <h2 style={{fontSize:18,fontWeight:900}}>🍽 إدارة المنيو</h2>
-        <button className="btn btn-red" onClick={()=>{setEditItem(null);setShowForm(true)}}>+ إضافة صنف</button>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={autoLink} title="ربط الصور بالأصناف تلقائيًا حسب الاسم" style={{background:"rgba(21,101,192,.12)",color:"#1565c0",border:"1px solid #1565c033",borderRadius:10,padding:"8px 12px",fontWeight:800,fontSize:13,cursor:"pointer"}}>🔗 ربط تلقائي</button>
+          <button className="btn btn-red" onClick={()=>{setEditItem(null);setShowForm(true)}}>+ إضافة صنف</button>
+        </div>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:14,overflowX:"auto"}} className="scroll-hide">
         <button onClick={()=>setCat("all")} style={{padding:"7px 14px",borderRadius:20,border:"none",
