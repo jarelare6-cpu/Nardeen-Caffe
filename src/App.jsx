@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox, sbHeartbeat } from "./lib/supabase.js";
 import { startMesh, mergeById } from "./lib/mesh.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle } from "./uikit.jsx";
@@ -55,6 +55,18 @@ export default function NardeenCaffe(){
   useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("debts",store.debts);}catch{} },[store.debts,meshOn]);
   useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("expenses",store.expenses);}catch{} },[store.expenses,meshOn]);
   useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("receipts",store.receipts);}catch{} },[store.receipts,meshOn]);
+
+  // ── نبض الجهاز للمراقبة عن بُعد (آمن الفشل) ──
+  useEffect(()=>{
+    if(!SUPABASE_READY) return;
+    const devId=(()=>{try{let i=localStorage.getItem("nc_dev_id");if(!i){i="d"+Math.random().toString(36).slice(2,9);localStorage.setItem("nc_dev_id",i);}return i;}catch{return "d0";}})();
+    const tag=(()=>{try{return localStorage.getItem("nc_dev_tag")||"?";}catch{return "?";}})();
+    const beat=()=>{ try{ if(navigator.onLine&&user) sbHeartbeat({id:devId,label:`${tag} • ${user.name||user.role||"?"}`,role:user.role||""}); }catch{} };
+    beat();
+    const iv=setInterval(beat,45000);
+    window.addEventListener("online",beat);
+    return ()=>{ clearInterval(iv); window.removeEventListener("online",beat); };
+  },[user]);
 
   // ── offline-first: مؤشّر الاتصال + تفريغ الطابور الصادر عند العودة ──
   useEffect(()=>{

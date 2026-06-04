@@ -1,7 +1,7 @@
 // شاشات الإدارة — مفصولة من App.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
@@ -10,6 +10,14 @@ import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "
 
 export function DashboardTab({store,dm,settings}){
   const CUR=settings?.currency||"ل.س";
+  // مراقبة الأجهزة المتصلة (heartbeat سحابي)
+  const [devices,setDevices]=useState([]);
+  useEffect(()=>{
+    let active=true;
+    const load=async()=>{ try{ const d=await sbFetchDevices(); if(active) setDevices(d||[]); }catch{} };
+    load(); const iv=setInterval(load,30000);
+    return ()=>{ active=false; clearInterval(iv); };
+  },[]);
   const today=new Date();today.setHours(0,0,0,0);
   const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
   const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+o.total,0);
@@ -84,6 +92,29 @@ export function DashboardTab({store,dm,settings}){
         </div>
       </div>
 
+      {/* الأجهزة المتصلة (مراقبة سحابية) */}
+      {devices.length>0&&(()=>{
+        const now=Date.now();
+        const list=[...devices].map(d=>({...d,_on:d.last_seen&&(now-new Date(d.last_seen).getTime())<120000}))
+          .sort((a,b)=>(b._on-a._on)||(new Date(b.last_seen||0)-new Date(a.last_seen||0)));
+        const onCount=list.filter(d=>d._on).length;
+        const ago=(ts)=>{ if(!ts)return"—"; const s=Math.floor((now-new Date(ts).getTime())/1000); if(s<60)return"الآن"; if(s<3600)return`${Math.floor(s/60)} د`; if(s<86400)return`${Math.floor(s/3600)} س`; return`${Math.floor(s/86400)} ي`; };
+        return (
+          <div className="card" style={{marginBottom:16,borderTop:"3px solid #1565c0"}}>
+            <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>📡 الأجهزة المتصلة ({onCount}/{list.length})</h3>
+            {list.map(d=>(
+              <div key={d.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
+                <span style={{fontWeight:600}}>
+                  <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:d._on?"#2e7d32":"#999",marginInlineEnd:8}}/>
+                  {d.label||d.id}
+                </span>
+                <span style={{color:"var(--sub)",fontSize:12}}>{d._on?"متصل":`آخر ظهور: ${ago(d.last_seen)}`}</span>
+              </div>
+            ))}
+            <div style={{fontSize:11,color:"var(--sub)",marginTop:8}}>يُحدَّث كل 30 ثانية. "متصل" = ظهر خلال آخر دقيقتين.</div>
+          </div>
+        );
+      })()}
       {/* قسم الترون اليوم (دفعات فوق الفاتورة) */}
       {(() => {
         const tr = (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today);

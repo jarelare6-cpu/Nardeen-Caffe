@@ -163,6 +163,19 @@ export const sbDeleteAll = async (table) => {
   if (error) console.warn(`sbDeleteAll(${table}):`, error.message);
 };
 
+// ── نبض الجهاز (heartbeat) للمراقبة عن بُعد ──
+// كتابة آمنة الفشل: لا تدخل الطابور الصادر ولا ترمي خطأ (إن لم توجد الجدول
+// تُتجاهَل بصمت). تتطلب جدول device_status (انظر db/heartbeat.sql).
+export const sbHeartbeat = async (row) => {
+  if (!supabase) return;
+  try { await supabase.from("device_status").upsert({ ...row, last_seen: new Date().toISOString() }, { onConflict: "id" }); } catch {}
+};
+
+export const sbFetchDevices = async () => {
+  if (!supabase) return [];
+  try { const { data } = await supabase.from("device_status").select("*"); return data || []; } catch { return []; }
+};
+
 export const sbSaveSettings = async (settings) => {
   if (!supabase) return;
   const { error } = await supabase.from("app_settings").upsert(
