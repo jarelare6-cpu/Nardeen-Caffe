@@ -1418,6 +1418,16 @@ export function ReportsTab({store,dm,settings}){
 // SETTINGS TAB (Admin) — محدّث
 // ═══════════════════════════════════
 
+// غلاف قسم الإعدادات — معرّف على مستوى الوحدة (هوية ثابتة) لتفادي فقدان التركيز
+function S({label,children}){
+  return (
+    <div style={{marginBottom:18}}>
+      <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:7,display:"block"}}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const [form,setForm]=useState({...store.settings});
@@ -1436,6 +1446,13 @@ export function SettingsTab({store,showToast,dm,user}){
   });
   const setDevSoundEnabled=(v)=>{ try{localStorage.setItem("nc_sound_enabled",v?"1":"0");}catch{} setDevSound(s=>({...s,enabled:v})); };
   const setDevTone=(t)=>{ try{localStorage.setItem("nc_sound_tone",t);}catch{} setDevSound(s=>({...s,tone:t})); try{playOrderAlert(t);}catch{} };
+  const onCustomTone=(file)=>{
+    if(!file) return;
+    if(file.size>1024*1024){ showToast?.("الملف كبير — اختر نغمة أقصر (~1MB)","warn"); return; }
+    const r=new FileReader();
+    r.onload=()=>{ try{ localStorage.setItem("nc_sound_custom",r.result); setDevTone("custom"); showToast?.("تم حفظ نغمتك المخصّصة ✓"); }catch{ showToast?.("تعذّر الحفظ — الحجم كبير","warn"); } };
+    r.readAsDataURL(file);
+  };
   const [permTab,setPermTab]=useState(false);
   // صلاحيات الأقسام القابلة للتعديل
   const [dynPerms,setDynPerms]=useState(()=>{
@@ -1460,13 +1477,6 @@ export function SettingsTab({store,showToast,dm,user}){
       return {...p,[section]:next};
     });
   };
-
-  const S=({label,children})=>(
-    <div style={{marginBottom:18}}>
-      <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:7,display:"block"}}>{label}</label>
-      {children}
-    </div>
-  );
 
   const sectionLabels={
     dashboard:"لوحة التحكم",order:"طلب جديد",orders:"الطلبات",
@@ -1527,9 +1537,16 @@ export function SettingsTab({store,showToast,dm,user}){
                   {t.label}
                 </button>
               ))}
+              <label htmlFor="customtone"
+                style={{padding:"8px 12px",borderRadius:10,fontWeight:700,fontSize:12,cursor:"pointer",
+                  background:devSound.tone==="custom"?"var(--red)":"var(--card2)",color:devSound.tone==="custom"?"#fff":"var(--sub)"}}>
+                🎵 من جهازي
+              </label>
+              <input id="customtone" type="file" accept="audio/*" style={{display:"none"}}
+                onChange={e=>onCustomTone(e.target.files&&e.target.files[0])}/>
             </div>
             <div style={{fontSize:11,color:"var(--sub)",marginTop:8,lineHeight:1.7}}>
-              تُحفظ محليًا على هذا الجهاز فقط — كل جهاز يختار نغمة مختلفة فتميّزون مصدر التنبيه. اضغط أي نغمة لتجربتها فورًا.
+              تُحفظ محليًا على هذا الجهاز فقط — كل جهاز يختار نغمة مختلفة فتميّزون مصدر التنبيه. اضغط أي نغمة لتجربتها، أو "🎵 من جهازي" لاختيار نغمة من ملفاتك (حتى ~1MB).
             </div>
           </S>
           {/* 10. نظام الولاء */}

@@ -14,6 +14,11 @@
 // ── صوت التنبيه ───────────────────────────────────────────────
 export const playOrderAlert = (tone = "bell") => {
   try {
+    if (tone === "custom") {
+      let d = null; try { d = localStorage.getItem("nc_sound_custom"); } catch {}
+      if (d) { const a = new Audio(d); a.play().catch(() => {}); return; }
+      tone = "bell"; // لا توجد نغمة مخصّصة محفوظة → افتراضي
+    }
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const beep = (freq, start, dur = 0.18, vol = 0.3) => {
       const osc = ctx.createOscillator(); const gain = ctx.createGain();
