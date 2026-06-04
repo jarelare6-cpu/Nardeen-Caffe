@@ -1254,6 +1254,57 @@ export function ReportsTab({store,dm,settings}){
         </div>
       )}
 
+      {/* قسم الترون التفصيلي (دفعات فوق الفاتورة) */}
+      {(() => {
+        const tronReceipts = (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= start);
+        if (!tronReceipts.length) return null;
+        const tTotal = tronReceipts.reduce((s, r) => s + r.tronAmount, 0);
+        const tCount = tronReceipts.length;
+        const tAvg = Math.round(tTotal / tCount);
+        const byEmp = {}; tronReceipts.forEach(r => { const k = r.createdBy || "غير محدد"; byEmp[k] = (byEmp[k] || 0) + r.tronAmount; });
+        const byBranch = {}; tronReceipts.forEach(r => { const k = r.branch === "outdoor" ? "خارجي" : "رئيسي"; byBranch[k] = (byBranch[k] || 0) + r.tronAmount; });
+        const empList = Object.entries(byEmp).sort((a, b) => b[1] - a[1]);
+        const exportTron = () => {
+          const rows = [["رقم الطلب", "التاريخ", "الموظف", "الفرع", "الترون"]];
+          tronReceipts.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            .forEach(r => rows.push([r.orderNum || "", new Date(r.createdAt).toLocaleString("ar-SY"), r.createdBy || "", r.branch === "outdoor" ? "خارجي" : "رئيسي", r.tronAmount]));
+          const csv = "\uFEFF" + rows.map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob); const a = document.createElement("a");
+          a.href = url; a.download = `tron-${period}.csv`; a.click(); URL.revokeObjectURL(url);
+        };
+        return (
+          <div className="card" style={{ marginBottom: 16, borderTop: "3px solid #6a1b9a" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 800 }}>💠 الترون (دفعات فوق الفاتورة)</h3>
+              <button className="btn btn-ghost" onClick={exportTron} style={{ fontSize: 11, padding: "6px 10px" }}>📄 CSV</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 14 }}>
+              {[["الإجمالي", `${tTotal.toLocaleString()} ${CUR}`], ["عدد الدفعات", tCount], ["المتوسط", `${tAvg.toLocaleString()} ${CUR}`]].map(([l, v]) => (
+                <div key={l} style={{ background: "var(--card2)", borderRadius: 10, padding: 10, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--sub)" }}>{l}</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, color: "#6a1b9a" }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--sub)" }}>حسب الموظف</div>
+            {empList.map(([name, amt], i) => (
+              <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: i < empList.length - 1 ? "1px solid var(--border)" : "none", fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>👤 {name}</span>
+                <span style={{ fontWeight: 700, color: "#6a1b9a" }}>{amt.toLocaleString()} {CUR}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: 12, fontWeight: 700, margin: "12px 0 6px", color: "var(--sub)" }}>حسب الفرع</div>
+            {Object.entries(byBranch).map(([b, amt]) => (
+              <div key={b} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>🏠 {b}</span>
+                <span style={{ fontWeight: 700, color: "#6a1b9a" }}>{amt.toLocaleString()} {CUR}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* 7. مقارنة المبيعات */}
       {period !== "all" && (() => {
         const now = new Date();

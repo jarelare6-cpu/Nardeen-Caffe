@@ -86,7 +86,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
     setTimeout(()=>{
       const orderNum=(store.orders.length+1).toString().padStart(4,"0");
       const newOrder={
-        id:Date.now().toString(),orderNum,
+        id:(Date.now().toString(36)+Math.random().toString(36).slice(2,7)),orderNum,
         customerId:user.id,customerName:customerName||user.name,
         workerName:user.name,table:tableNum.trim(),notes,items:cart,
         total:finalTotal,originalTotal:cartTotal,discount,

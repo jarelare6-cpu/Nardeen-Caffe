@@ -337,7 +337,7 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
     setTimeout(()=>{
       const orderNum=(store.orders.length+1).toString().padStart(4,"0");
       const newOrder={
-        id:Date.now().toString(),orderNum,
+        id:(Date.now().toString(36)+Math.random().toString(36).slice(2,7)),orderNum,
         customerId:user.id,customerName:user.name,
         table:tableInput.trim(),notes,items:cart,total:cartTotal,discount:0,
         status:ORDER_STATUS.PENDING,createdAt:new Date().toISOString(),paymentStatus:"pending"
