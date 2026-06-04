@@ -131,9 +131,15 @@ if (typeof window !== "undefined") {
   setInterval(() => { if (navigator.onLine) flushOutbox(); }, 30000);
 }
 
-export const sbUpsert = async (table, row, conflict = "id") => {
+export const sbUpsert = async (table, row, conflict = "id", fallbackRow = null) => {
   if (!supabase) return;
-  const { error } = await supabase.from(table).upsert(row, { onConflict: conflict });
+  let { error } = await supabase.from(table).upsert(row, { onConflict: conflict });
+  if (error && fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(error.message || "")) {
+    // عمود جديد غير موجود بعد (قبل تشغيل الترحيل) → احفظ النسخة الأساسية بدل كسر الحفظ
+    const r2 = await supabase.from(table).upsert(fallbackRow, { onConflict: conflict });
+    if (!r2.error) return null;
+    error = r2.error; row = fallbackRow;
+  }
   if (error) { reportSyncError("sbUpsert", table, error.message); enqueue({ table, row }); }
   return error || null;
 };

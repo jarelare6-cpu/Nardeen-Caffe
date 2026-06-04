@@ -228,15 +228,18 @@ const sbWrite = {
   },
   deleteUser: (id) => sbDelete("profiles", id),
 
-  menuItem: (m) => sbUpsert("menu_items", {
-    id: m.id, name: m.name, name_en: m.nameEn || "",
-    price: m.price, category: m.category,
-    stock: m.stock, min_stock: m.minStock || 5,
-    total_sold: m.totalSold || 0, emoji: m.emoji || "",
-    active: m.active !== false,
-    outdoor_price: m.outdoorPrice ?? null,
-    image_url: m.image || m.imageUrl || "",
-  }),
+  menuItem: (m) => {
+    const core = {
+      id: m.id, name: m.name, name_en: m.nameEn || "",
+      price: m.price, category: m.category,
+      stock: m.stock, min_stock: m.minStock || 5,
+      total_sold: m.totalSold || 0, emoji: m.emoji || "",
+      active: m.active !== false,
+      outdoor_price: m.outdoorPrice ?? null,
+      image_url: m.image || m.imageUrl || "",
+    };
+    return sbUpsert("menu_items", { ...core, image_icon: m.imageIcon || "", cost: m.cost ?? 0 }, "id", core);
+  },
   deleteMenuItem: (id) => sbDelete("menu_items", id),
 
   order: (o) => sbUpsert("orders", {
@@ -407,6 +410,8 @@ const mapMenu = m => ({
   totalSold:    m.total_sold   ?? m.totalSold    ?? 0,
   outdoorPrice: m.outdoor_price ?? m.outdoorPrice ?? null,
   image:        m.image_url    ?? m.image       ?? "",
+  imageIcon:    m.image_icon   ?? m.imageIcon   ?? "",
+  cost:         m.cost         ?? 0,
 });
 const mapDebt = d => ({
   ...d,
