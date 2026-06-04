@@ -212,6 +212,9 @@ export const DEFAULT_MENU = [
   { id:"hk4",  name:"أركيلة علكة",              nameEn:"Gum Hookah",               price:130, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
   { id:"hk5",  name:"أركيلة عنب",               nameEn:"Grape Hookah",             price:130, category:"hookah",      stock:50,  minStock:5,  totalSold:0, emoji:"💨", active:true },
   { id:"hk6",  name:"أركيلة خارجية",            nameEn:"External Hookah",          price:200, category:"hookah",      stock:20,  minStock:3,  totalSold:0, emoji:"💨", active:true },
+  { id:"hkx1", name:"أركيلة خارجية - تفاحتين",  nameEn:"External Hookah - Apple",  price:200, category:"hookah",      stock:20,  minStock:3,  totalSold:0, emoji:"💨", active:true },
+  { id:"hkx2", name:"أركيلة خارجية - عنب",      nameEn:"External Hookah - Grape",  price:200, category:"hookah",      stock:20,  minStock:3,  totalSold:0, emoji:"💨", active:true },
+  { id:"hkx3", name:"أركيلة خارجية - نعناع",    nameEn:"External Hookah - Mint",   price:200, category:"hookah",      stock:20,  minStock:3,  totalSold:0, emoji:"💨", active:true },
 ];
 
 // ══════════════════════════════════════════════════════════════
