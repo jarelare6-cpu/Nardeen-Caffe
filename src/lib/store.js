@@ -599,7 +599,17 @@ export const useStore = () => {
 
   const setOrders = useCallback((v) => {
     setOrdersRaw(p => {
-      const next = typeof v === "function" ? v(p) : v;
+      const raw = typeof v === "function" ? v(p) : v;
+      // وسم updatedAt على الطلبات المتغيّرة → حلّ التعارض بالطابع الزمني (mesh/محلي).
+      // ملاحظة: sbWrite.order يرسل أعمدة محددة فقط، فلا يصل updatedAt لقاعدة البيانات.
+      const next = raw.map(o => {
+        const old = p.find(x => x.id === o.id);
+        const isChanged = !old || old.status !== o.status || old.total !== o.total ||
+               old.paymentType !== o.paymentType || old.discount !== o.discount ||
+               (old.tronAmount || 0) !== (o.tronAmount || 0) ||
+               JSON.stringify(old.items) !== JSON.stringify(o.items);
+        return isChanged ? { ...o, updatedAt: new Date().toISOString() } : o;
+      });
       ls.set("nc_orders", next); broadcast("nc_orders", next);
       if (SUPABASE_READY) {
         const changed = next.filter(o => {

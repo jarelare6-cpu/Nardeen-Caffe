@@ -77,37 +77,70 @@ export const reportSyncError = (op, table, message) => {
   } catch {}
 };
 
-// ── الطابور الصادر (Outbox): يخزّن الكتابات الفاشلة (أوفلاين) ويرفعها
-//    تلقائيًا بالترتيب عند عودة الاتصال. الرفع idempotent (upsert بمعرّف). ──
+// ── الطابور الصادر (Outbox): يخزّن الكتابات الفاشلة ويعيد رفعها تلقائيًا.
+//    مع سقف محاولات + عزل العناصر الفاشلة دائمًا (dead-letter) + وقت آخر مزامنة. ──
 const OUTBOX_KEY = "nc_outbox";
-const readOutbox = () => { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY)) || []; } catch { return []; } };
-const writeOutbox = (q) => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(q)); } catch {} };
+const FAILED_KEY = "nc_outbox_failed";
+const LASTSYNC_KEY = "nc_last_sync";
+const MAX_TRIES = 5;
+let _flushing = false;
+
+const readQ = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch { return []; } };
+const writeQ = (k, q) => { try { localStorage.setItem(k, JSON.stringify(q)); } catch {} };
 const outboxKey = (e) => `${e.table}:${e.del || e.row?.id}`;
-const enqueue = (entry) => {
-  const q = readOutbox().filter(e => outboxKey(e) !== outboxKey(entry));
-  q.push(entry); writeOutbox(q);
-  try { window.dispatchEvent(new CustomEvent("nc-outbox", { detail: { count: q.length } })); } catch {}
+const notifyOutbox = () => {
+  try {
+    window.dispatchEvent(new CustomEvent("nc-outbox", { detail: {
+      count: readQ(OUTBOX_KEY).length, failed: readQ(FAILED_KEY).length, inProgress: _flushing,
+    }}));
+  } catch {}
 };
-export const outboxCount = () => readOutbox().length;
+const enqueue = (entry) => {
+  const q = readQ(OUTBOX_KEY).filter(e => outboxKey(e) !== outboxKey(entry));
+  q.push({ ...entry, tries: 0, ts: Date.now() });
+  writeQ(OUTBOX_KEY, q); notifyOutbox();
+};
+
+export const outboxCount = () => readQ(OUTBOX_KEY).length;
+export const outboxFailedCount = () => readQ(FAILED_KEY).length;
+export const outboxList = () => readQ(OUTBOX_KEY);
+export const outboxFailed = () => readQ(FAILED_KEY);
+export const outboxInProgress = () => _flushing;
+export const lastSyncAt = () => { try { return localStorage.getItem(LASTSYNC_KEY); } catch { return null; } };
+export const retryFailed = () => {
+  const failed = readQ(FAILED_KEY); if (!failed.length) return;
+  const q = readQ(OUTBOX_KEY);
+  failed.forEach(e => q.push({ ...e, tries: 0 }));
+  writeQ(OUTBOX_KEY, q); writeQ(FAILED_KEY, []); notifyOutbox(); flushOutbox();
+};
+
 export const flushOutbox = async () => {
-  if (!supabase) return;
-  const q = readOutbox();
+  if (!supabase || _flushing) return;
+  const q = readQ(OUTBOX_KEY);
   if (!q.length) return;
-  const remaining = [];
+  _flushing = true; notifyOutbox();
+  const remaining = []; const dead = readQ(FAILED_KEY); let anyOk = false;
   for (const e of q) {
     try {
       const { error } = e.del
         ? await supabase.from(e.table).delete().eq("id", e.del)
         : await supabase.from(e.table).upsert(e.row, { onConflict: "id" });
-      if (error) remaining.push(e);
-    } catch { remaining.push(e); }
+      if (error) {
+        const tries = (e.tries || 0) + 1;
+        (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: error.message });
+      } else anyOk = true;
+    } catch (err) {
+      const tries = (e.tries || 0) + 1;
+      (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: String((err && err.message) || err) });
+    }
   }
-  writeOutbox(remaining);
-  try { window.dispatchEvent(new CustomEvent("nc-outbox", { detail: { count: remaining.length } })); } catch {}
+  writeQ(OUTBOX_KEY, remaining); writeQ(FAILED_KEY, dead);
+  if (anyOk) { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch {} }
+  _flushing = false; notifyOutbox();
 };
+
 if (typeof window !== "undefined") {
   window.addEventListener("online", () => { flushOutbox(); });
-  // محاولة دورية خفيفة لتفريغ الطابور (شبكة قد تعود دون حدث online موثوق)
   setInterval(() => { if (navigator.onLine) flushOutbox(); }, 30000);
 }
 

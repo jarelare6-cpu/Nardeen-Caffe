@@ -1,39 +1,52 @@
 // ══════════════════════════════════════════════════════════════
-// mesh.js — تزامن نظير-لنظير (P2P) تجريبي عبر LAN
+// mesh.js — تزامن نظير-لنظير (P2P) تجريبي عبر LAN (عدة مجموعات)
 // ──────────────────────────────────────────────────────────────
 // • اختياري ومطفأ افتراضيًا (يُفعَّل من الإعدادات: meshEnabled).
 // • يحمّل المكتبات وقت التشغيل من esm.sh (لا يثقل الحزمة ولا يكسر البناء).
 // • آمن الفشل: أي خطأ يُسجَّل ولا يؤثر على عمل التطبيق.
-// • يزامن الطلبات عبر Y.Map مفهرسة بالمعرّف (آمن من الحلقات عبر مقارنة القيمة).
+// • كل مجموعة = Y.Map مفهرسة بالمعرّف. حلّ التعارض: الأحدث (updatedAt) يفوز،
+//   وإلا مقارنة القيمة (آمن من الحلقات).
 //
 // حدود صادقة: الإشارة (signaling) تحتاج اتصالًا للتعارف الأولي؛ الأجهزة
-// المتشابكة قبل الانقطاع تبقى متزامنة عبر LAN أثناءه. جهاز يُقلَع/يعيد
-// التحميل أثناء انقطاع كامل قد لا يجد أقرانه حتى عودة الاتصال — والطبقة
-// المحلية (المرحلة 1) تضمن عدم فقدان البيانات في تلك الحالة.
+// المتشابكة قبل الانقطاع تبقى متزامنة عبر LAN أثناءه. جهاز يُقلَع أثناء
+// انقطاع كامل قد لا يجد أقرانه حتى عودة الاتصال — والطبقة المحلية تمنع الفقدان.
+// ملاحظة: المخزون (menu) غير مشمول بعد لتفادي ضياع الخصم؛ يحتاج CRDT حركات.
 // ══════════════════════════════════════════════════════════════
 
 const YJS = "https://esm.sh/yjs@13";
 const YWEBRTC = "https://esm.sh/y-webrtc@10";
 const YIDB = "https://esm.sh/y-indexeddb@9";
 
-export async function startMesh({ room = "nardeen-cafe", password = "nrd-mesh-2026", onPeers, onOrders } = {}) {
+// هل يفوز a على b؟ (الأحدث زمنيًا، وإلا اختلاف فعلي)
+function shouldReplace(incoming, current) {
+  if (!current) return true;
+  const a = incoming && incoming.updatedAt, b = current.updatedAt;
+  if (a && b) return a > b;
+  if (a && !b) return true;
+  if (!a && b) return false;
+  return JSON.stringify(current) !== JSON.stringify(incoming);
+}
+
+export async function startMesh({ room = "nardeen-cafe", password = "nrd-mesh-2026",
+  collections = ["orders"], onPeers, onData } = {}) {
   try {
     const Y = await import(/* @vite-ignore */ YJS);
     const { WebrtcProvider } = await import(/* @vite-ignore */ YWEBRTC);
     const { IndexeddbPersistence } = await import(/* @vite-ignore */ YIDB);
 
     const doc = new Y.Doc();
-    // دوام محلي لحالة الـ mesh (يصمد أمام إعادة التحميل)
     const idb = new IndexeddbPersistence(room, doc);
     const provider = new WebrtcProvider(room, doc, { password });
-    const yorders = doc.getMap("orders");
 
-    // مستقبِل تغييرات الأقران → دمج في الحالة المحلية
-    const emit = () => { try { onOrders && onOrders([...yorders.values()]); } catch {} };
-    yorders.observe(emit);
-    emit(); // الحالة المحفوظة محليًا فور التحميل
+    const maps = {};
+    collections.forEach((name) => {
+      const m = doc.getMap(name);
+      maps[name] = m;
+      const emit = () => { try { onData && onData(name, [...m.values()]); } catch {} };
+      m.observe(emit);
+      emit(); // الحالة المحفوظة محليًا فور التحميل
+    });
 
-    // عدّاد الأقران
     let peerTimer = null;
     try {
       peerTimer = setInterval(() => {
@@ -42,13 +55,13 @@ export async function startMesh({ room = "nardeen-cafe", password = "nrd-mesh-20
     } catch {}
 
     return {
-      // دفع الطلبات المحلية للأقران (آمن من الحلقات: لا يكتب إلا عند اختلاف فعلي)
-      pushOrders(orders) {
+      // دفع مجموعة محلية للأقران (الأحدث يفوز، آمن من الحلقات)
+      push(name, items) {
         try {
-          (orders || []).forEach(o => {
+          const m = maps[name]; if (!m) return;
+          (items || []).forEach((o) => {
             if (!o || !o.id) return;
-            const cur = yorders.get(o.id);
-            if (JSON.stringify(cur) !== JSON.stringify(o)) yorders.set(o.id, o);
+            if (shouldReplace(o, m.get(o.id))) m.set(o.id, o);
           });
         } catch {}
       },
@@ -61,6 +74,17 @@ export async function startMesh({ room = "nardeen-cafe", password = "nrd-mesh-20
     };
   } catch (e) {
     console.warn("[mesh] تعذّر بدء الـ mesh (آمن — التطبيق يعمل عبر السحابة):", e);
-    return { pushOrders() {}, stop() {} };
+    return { push() {}, stop() {} };
   }
+}
+
+// دمج عناصر واردة في مصفوفة محلية (حسب المعرّف + الأحدث يفوز)
+export function mergeById(prev, incoming) {
+  const map = new Map((prev || []).map((o) => [o.id, o]));
+  let changed = false;
+  (incoming || []).forEach((ro) => {
+    if (!ro || !ro.id) return;
+    if (shouldReplace(ro, map.get(ro.id))) { map.set(ro.id, ro); changed = true; }
+  });
+  return changed ? [...map.values()] : prev;
 }
