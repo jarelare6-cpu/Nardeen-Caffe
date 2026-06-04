@@ -62,9 +62,6 @@
           if (s) { s.classList.add('hide'); setTimeout(() => s.remove(), 500); }
         }, 1400);
       });
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
-      }
     </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
