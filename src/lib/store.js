@@ -706,9 +706,10 @@ export const useStore = () => {
   const setSettings = useCallback((v) => {
     setSettingsRaw(p => {
       const d = typeof v === "function" ? v(p) : v;
-      ls.set("nc_settings", d); broadcast("nc_settings", d);
-      if (SUPABASE_READY) sbSaveSettings(d);
-      return d;
+      const stamped = { ...d, _savedAt: new Date().toISOString() };
+      ls.set("nc_settings", stamped); broadcast("nc_settings", stamped);
+      if (SUPABASE_READY) sbSaveSettings(stamped);
+      return stamped;
     });
   }, []);
 
@@ -931,14 +932,26 @@ export const useStore = () => {
         const cloudData = sett.data?.data || {};
         const hasCloud = Object.keys(cloudData).length > 0;
         if (hasCloud) {
-          // السحابة فيها بيانات → استخدمها كاملةً (لا دمج)
-          const n = { ...DEFAULT_SETTINGS, ...cloudData };
-          setSettingsRaw(n); ls.set("nc_settings", n);
+          // مقارنة الطوابع الزمنية: من هو الأحدث — السحابة أم المحلي؟
+          const localRaw = ls.get("nc_settings", {});
+          const localTs = localRaw._savedAt ? new Date(localRaw._savedAt).getTime() : 0;
+          const cloudTs = cloudData._savedAt ? new Date(cloudData._savedAt).getTime() : 0;
+          if (localTs > cloudTs) {
+            // المحلي أحدث (مثلاً: تم تغيير إعدادات بعد آخر حفظ سحابي) → المحلي يفوز
+            const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
+            setSettingsRaw(localFull); ls.set("nc_settings", localFull);
+            sbSaveSettings(localFull); // نرفع المحلي للسحابة ليتزامنا
+          } else {
+            // السحابة أحدث أو متساويان → السحابة تفوز
+            const n = { ...DEFAULT_SETTINGS, ...cloudData };
+            setSettingsRaw(n); ls.set("nc_settings", n);
+          }
         } else {
           // السحابة فارغة → نزرع القيم المحلية فيها الآن
           const localFull = { ...DEFAULT_SETTINGS, ...ls.get("nc_settings", {}) };
-          setSettingsRaw(localFull); ls.set("nc_settings", localFull);
-          sbSaveSettings(localFull);
+          const stamped = { ...localFull, _savedAt: localFull._savedAt || new Date().toISOString() };
+          setSettingsRaw(stamped); ls.set("nc_settings", stamped);
+          sbSaveSettings(stamped);
         }
       }
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
