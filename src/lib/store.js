@@ -18,7 +18,7 @@ import {
   subscribeReceipts, subscribeCompLog, subscribeCustomers,
   subscribeSettings, subscribePermOverrides,
   subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
-  sbSaveSettings, sbSavePermOverrides, sbDeleteAll,
+  sbSaveSettings, sbSavePermOverrides, sbDeleteAll, flushOutbox,
 } from "./supabase";
 
 // ── تخزين: offline-first — حفظ محلي + Supabase كمصدر حقيقة عند الاتصال ──
@@ -892,27 +892,48 @@ export const useStore = () => {
   // ══════════════════════════════════════════════════════════
   // تحميل من Supabase عند الفتح
   // ══════════════════════════════════════════════════════════
+  // fix(sync): Promise.allSettled بدل Promise.all — كل جدول مستقل
+  // fix(sync): timeout 12s لكل طلب — لا تجمّد في شبكة بطيئة
+  // fix(sync): flushOutbox فور اكتمال التحميل — لا انتظار لـ online event
   useEffect(() => {
     if (!SUPABASE_READY) return;
     setSyncing(true);
-    Promise.all([
-      supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(500),
-      supabase.from("menu_items").select("*").order("category"),
-      supabase.from("profiles").select("*"),
-      supabase.from("debts").select("*").order("date", { ascending: false }),
-      supabase.from("expenses").select("*").order("date", { ascending: false }),
-      supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(200),
-      supabase.from("tables").select("*").eq("branch","main").order("number"),
-      supabase.from("tables").select("*").eq("branch","outdoor").order("number"),
-      supabase.from("receipts").select("*").order("created_at", { ascending: false }).limit(200),
-      supabase.from("comp_log").select("*").order("created_at", { ascending: false }).limit(200),
-      supabase.from("customers").select("*").order("created_at", { ascending: false }),
-      supabase.from("app_settings").select("*").eq("id", "main").single(),
-      supabase.from("perm_overrides").select("*").eq("id", "main").single(),
-      supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(200),
-      supabase.from("loyalty_log").select("*").order("created_at", { ascending: false }).limit(300),
-    ]).then(([ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy]) => {
-      if (ord.data)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); } // fix: reset works when empty
+
+    // timeout wrapper: يرفع خطأ بعد 12 ثانية إن لم يستجب الجدول
+    const withTimeout = (promise, label) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`timeout: ${label}`)), 12000)
+        ),
+      ]).catch(err => {
+        console.warn(`[sync] ${label} فشل:`, err.message);
+        return { data: null, error: err }; // يُعامَل كنتيجة فارغة آمنة
+      });
+
+    Promise.allSettled([
+      withTimeout(supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(500), "orders"),
+      withTimeout(supabase.from("menu_items").select("*").order("category"), "menu_items"),
+      withTimeout(supabase.from("profiles").select("*"), "profiles"),
+      withTimeout(supabase.from("debts").select("*").order("date", { ascending: false }), "debts"),
+      withTimeout(supabase.from("expenses").select("*").order("date", { ascending: false }), "expenses"),
+      withTimeout(supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(200), "cash_log"),
+      withTimeout(supabase.from("tables").select("*").eq("branch","main").order("number"), "tables_main"),
+      withTimeout(supabase.from("tables").select("*").eq("branch","outdoor").order("number"), "tables_outdoor"),
+      withTimeout(supabase.from("receipts").select("*").order("created_at", { ascending: false }).limit(200), "receipts"),
+      withTimeout(supabase.from("comp_log").select("*").order("created_at", { ascending: false }).limit(200), "comp_log"),
+      withTimeout(supabase.from("customers").select("*").order("created_at", { ascending: false }), "customers"),
+      withTimeout(supabase.from("app_settings").select("*").eq("id", "main").single(), "app_settings"),
+      withTimeout(supabase.from("perm_overrides").select("*").eq("id", "main").single(), "perm_overrides"),
+      withTimeout(supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(200), "shifts"),
+      withTimeout(supabase.from("loyalty_log").select("*").order("created_at", { ascending: false }).limit(300), "loyalty_log"),
+    ]).then((results) => {
+      // allSettled: كل نتيجة إما { status:"fulfilled", value } أو { status:"rejected", reason }
+      // withTimeout يُحوّل الأخطاء لـ { data: null } — لذا كلها fulfilled هنا
+      const [ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy] =
+        results.map(r => r.status === "fulfilled" ? r.value : { data: null, error: r.reason });
+
+      if (ord.data)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
       if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
       if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
       else { getHashedDefaultUsers().then(hu => hu.forEach(u => sbWrite.user(u))); }
@@ -928,8 +949,6 @@ export const useStore = () => {
       if (cmp.data)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
       if (cust.data) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
       // ══ إعدادات: التحكيم بالطابع الزمني (_savedAt) ══
-      // من هو الأحدث — المحلي أم السحابة — هو مصدر الحقيقة.
-      // هذا يمنع السحابة من إعادة الكتابة فوق تغييرات حديثة بعد refresh.
       if (sett.data != null) {
         const cloudData = sett.data?.data || {};
         const hasCloud = Object.keys(cloudData).length > 0;
@@ -937,16 +956,13 @@ export const useStore = () => {
         const localTs   = localRaw._savedAt  ? new Date(localRaw._savedAt).getTime()  : 0;
         const cloudTs   = cloudData._savedAt ? new Date(cloudData._savedAt).getTime() : 0;
         if (hasCloud && cloudTs >= localTs) {
-          // السحابة أحدث أو متساويان → السحابة تفوز (مزامنة بين أجهزة)
           const n = { ...DEFAULT_SETTINGS, ...cloudData };
           setSettingsRaw(n); ls.set("nc_settings", n);
         } else if (hasCloud && localTs > cloudTs) {
-          // المحلي أحدث (تغيير محلي لم يُرفع بعد) → المحلي يفوز ويُرفع
           const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
           setSettingsRaw(localFull); ls.set("nc_settings", localFull);
           sbSaveSettings(localFull);
         } else {
-          // السحابة فارغة → نزرع القيم المحلية فيها
           const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
           const stamped = { ...localFull, _savedAt: localFull._savedAt || new Date().toISOString() };
           setSettingsRaw(stamped); ls.set("nc_settings", stamped);
@@ -956,9 +972,11 @@ export const useStore = () => {
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
       if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   ls.set("nc_shifts",   d); }
       if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);ls.set("nc_loyalty",  d); }
+
       setCloudReady(true);
-    }).catch(err => {
-      console.error("Supabase load error:", err);
+      // fix(sync): فرّغ الـ outbox فوراً بعد اكتمال التحميل إن كان الجهاز متصلاً
+      // هذا يضمن رفع الطلبات المتراكمة دون انتظار online event (الذي لا يُطلَق إن كان الجهاز متصلاً أصلاً)
+      if (navigator.onLine) { try { flushOutbox(); } catch {} }
     }).finally(() => setSyncing(false));
   }, []);
 
