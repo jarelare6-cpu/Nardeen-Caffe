@@ -1,6 +1,7 @@
 // مكوّنات واجهة صغيرة مشتركة — مفصولة من App.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo, useContext, createContext } from "react";
 import { THEMES, ROLES } from "./constants.js";
+import { NAV_ICONS } from "./NardeenIcons.jsx";
 
 // النمط العام للصور: "real" (افتراضي) أو "icon" — يتحكّم به زر التبديل
 export const ImageStyleContext = createContext("real");
@@ -48,20 +49,34 @@ export function BottomNav({ navItems, tab, setTab, role }) {
   }
   const go = (t) => { setTab(t); setShowMore(false); };
   const moreActive = rest.some(([t]) => t === tab);
+
+  // دالة تعرض أيقونة SVG أو الإيموجي الاحتياطي
+  const renderIcon = (tabKey, size = 22) => {
+    const isActive = tab === tabKey;
+    const color = isActive ? "#ffffff" : "var(--sub)";
+    if (NAV_ICONS[tabKey]) return NAV_ICONS[tabKey](size, color);
+    return null;
+  };
+
   return (
     <>
       {showMore && (
         <div className="bn-sheet-overlay" onClick={e => { if (e.target === e.currentTarget) setShowMore(false); }}>
           <div className="bn-sheet">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 800 }}>كل الأقسام</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 3, height: 18, background: "linear-gradient(#8B0E1A,#D4A017)", borderRadius: 4 }} />
+                <h3 style={{ fontSize: 15, fontWeight: 800 }}>كل الأقسام</h3>
+              </div>
               <button onClick={() => setShowMore(false)}
                 style={{ border: "none", background: "var(--card2)", borderRadius: 10, width: 34, height: 34, fontSize: 16, cursor: "pointer", color: "var(--text)" }}>✕</button>
             </div>
             <div className="bn-grid">
-              {navItems.map(([t, icon, label]) => (
+              {navItems.map(([t, _emoji, label]) => (
                 <button key={t} className={tab === t ? "active" : ""} onClick={() => go(t)}>
-                  <span className="bn-ic">{icon}</span>
+                  <span className="bn-ic" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 28 }}>
+                    {NAV_ICONS[t] ? NAV_ICONS[t](24, tab === t ? "#ffffff" : "var(--sub)") : _emoji}
+                  </span>
                   <span className="bn-lb">{label}</span>
                 </button>
               ))}
@@ -70,15 +85,23 @@ export function BottomNav({ navItems, tab, setTab, role }) {
         </div>
       )}
       <div className="bottom-nav" role="navigation">
-        {primary.map(([t, icon, label]) => (
+        {primary.map(([t, _emoji, label]) => (
           <button key={t} className={"bn-cell" + (tab === t ? " active" : "")} onClick={() => go(t)}>
-            <span className="bn-ic">{icon}</span>
+            <span className="bn-ic" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 24 }}>
+              {NAV_ICONS[t] ? NAV_ICONS[t](22, tab === t ? "#ffffff" : "var(--sub)") : _emoji}
+            </span>
             <span className="bn-lb">{label}</span>
           </button>
         ))}
         {rest.length > 0 && (
           <button className={"bn-cell" + (moreActive ? " active" : "")} onClick={() => setShowMore(true)}>
-            <span className="bn-ic">⋯</span>
+            <span className="bn-ic" style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 24 }}>
+              <svg viewBox="0 0 24 24" width={22} height={22} fill="none" stroke={moreActive ? "#ffffff" : "var(--sub)"} strokeWidth={2} strokeLinecap="round">
+                <circle cx="5" cy="12" r="1.5" fill={moreActive ? "#ffffff" : "var(--sub)"} stroke="none" />
+                <circle cx="12" cy="12" r="1.5" fill={moreActive ? "#ffffff" : "var(--sub)"} stroke="none" />
+                <circle cx="19" cy="12" r="1.5" fill={moreActive ? "#ffffff" : "var(--sub)"} stroke="none" />
+              </svg>
+            </span>
             <span className="bn-lb">المزيد</span>
           </button>
         )}

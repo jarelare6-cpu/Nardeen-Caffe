@@ -7,6 +7,7 @@ import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notif
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+import { NardeenLogoIcon } from "./NardeenIcons.jsx";
 
 import { BarTab, HookahTab } from "./StationScreens.jsx";
 import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./OperationScreens.jsx";
@@ -110,11 +111,15 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",
         gap:8,position:"sticky",top:topOffset,zIndex:100,boxShadow:"0 4px 20px rgba(198,40,40,.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:22}}>☕</span>
+          <div style={{width:36,height:36,borderRadius:"50%",
+            background:"rgba(0,0,0,0.2)",border:"1.5px solid rgba(212,160,23,0.4)",
+            display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <NardeenLogoIcon size={24} gold="#D4A017" />
+          </div>
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#fff",color:"#c62828",borderRadius:6,padding:"1px 5px"}}>v8.4</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v8.4</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>

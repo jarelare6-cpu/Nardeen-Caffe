@@ -7,9 +7,10 @@ import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notif
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+import { NardeenLogoIcon, CustomerIcon, StaffIcon } from "./NardeenIcons.jsx";
 
 export function LoginScreen({store,onLogin,showToast,dm}){
-  const [mode,setMode]=useState("choose"); // "choose" | "staff" | "customer"
+  const [mode,setMode]=useState("choose");
   const [username,setUsername]=useState("");
   const [password,setPassword]=useState("");
   const [showPass,setShowPass]=useState(false);
@@ -18,7 +19,6 @@ export function LoginScreen({store,onLogin,showToast,dm}){
 
   const doLogin=async()=>{
     setError("");
-    // التحقق من النسخة المحلية للمستخدمين (يعمل أوفلاين) — verifyPassword من الحزمة الرئيسية
     const candidates = store.users.filter(x=>x.username===username&&x.active);
     let u = null;
     for(const c of candidates){
@@ -35,61 +35,184 @@ export function LoginScreen({store,onLogin,showToast,dm}){
     onLogin({id:guestId,username:"guest",name:"زبون",role:"customer",active:true});
   };
 
-  const cafeName=store.settings?.cafeName||"Nardeen Caffe";
+  const cafeName=store.settings?.cafeName||"Nardeen Café";
   const sig=store.settings?.signature||"بإدارة يحيى داؤود";
 
   return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:20,
-      background:dm?"#0d0d18":"linear-gradient(135deg,#1a0000 0%,#8e0000 50%,#c62828 100%)"}}>
+      background:dm?"#0d0d18":"linear-gradient(160deg,#1a0000 0%,#6b0000 40%,#8B0E1A 70%,#c62828 100%)",
+      position:"relative",overflow:"hidden"}}>
+
+      {/* خلفية زخرفية */}
+      <div style={{position:"absolute",inset:0,pointerEvents:"none",overflow:"hidden"}}>
+        {/* دوائر خلفية */}
+        <div style={{position:"absolute",top:-120,right:-80,width:380,height:380,
+          borderRadius:"50%",border:"1px solid rgba(212,160,23,0.08)",opacity:0.6}}/>
+        <div style={{position:"absolute",top:-60,right:-30,width:220,height:220,
+          borderRadius:"50%",border:"1px solid rgba(212,160,23,0.12)"}}/>
+        <div style={{position:"absolute",bottom:-100,left:-60,width:300,height:300,
+          borderRadius:"50%",border:"1px solid rgba(212,160,23,0.06)"}}/>
+        {/* نقاط ذهبية صغيرة */}
+        {[...Array(6)].map((_,i)=>(
+          <div key={i} style={{
+            position:"absolute",
+            top:`${15+i*14}%`, left:`${8+i*13}%`,
+            width:3, height:3, borderRadius:"50%",
+            background:"rgba(212,160,23,0.3)",
+            animation:`twinkle ${2+i*0.4}s ease-in-out infinite alternate`
+          }}/>
+        ))}
+        {/* زخرفة ورق */}
+        <svg style={{position:"absolute",bottom:0,left:0,opacity:0.05}} viewBox="0 0 200 200" width={200} height={200}>
+          <path d="M100 10 Q130 50 100 90 Q70 130 100 170 Q130 130 100 90 Q70 50 100 10Z" fill="#D4A017"/>
+          <path d="M50 50 Q90 80 50 110 Q10 80 50 50Z" fill="#D4A017"/>
+          <path d="M150 50 Q110 80 150 110 Q190 80 150 50Z" fill="#D4A017"/>
+        </svg>
+        <svg style={{position:"absolute",top:20,right:20,opacity:0.06}} viewBox="0 0 120 120" width={120} height={120}>
+          <path d="M60 5 Q75 30 60 55 Q45 80 60 105 Q75 80 60 55 Q45 30 60 5Z" fill="#D4A017"/>
+          <path d="M20 35 Q45 50 20 65 Q5 50 20 35Z" fill="#D4A017"/>
+          <path d="M100 35 Q75 50 100 65 Q115 50 100 35Z" fill="#D4A017"/>
+        </svg>
+      </div>
+
       <style>{`
         @keyframes shakeX{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-10px)}40%,80%{transform:translateX(10px)}}
         @keyframes floatUp{0%{opacity:0;transform:translateY(30px)}100%{opacity:1;transform:translateY(0)}}
-        .role-card{background:rgba(255,255,255,0.08);border:2px solid rgba(255,255,255,0.15);
-          border-radius:20px;padding:28px 20px;cursor:pointer;transition:all .3s;text-align:center;
-          backdrop-filter:blur(10px);}
-        .role-card:hover{background:rgba(255,255,255,0.18);border-color:rgba(255,255,255,0.5);
-          transform:translateY(-4px);box-shadow:0 16px 40px rgba(0,0,0,.4)}
+        @keyframes logoFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+        @keyframes twinkle{0%{opacity:0.2}100%{opacity:0.8}}
+        @keyframes goldShimmer{0%{background-position:0% 50%}100%{background-position:200% 50%}}
+        .nd-role-card{
+          background:rgba(255,255,255,0.06);
+          border:1.5px solid rgba(212,160,23,0.2);
+          border-radius:20px;padding:28px 16px;cursor:pointer;
+          transition:all .35s cubic-bezier(0.4,0,0.2,1);text-align:center;
+          backdrop-filter:blur(12px);position:relative;overflow:hidden;
+        }
+        .nd-role-card::before{
+          content:"";position:absolute;inset:0;
+          background:linear-gradient(135deg,rgba(212,160,23,0.0),rgba(212,160,23,0.08));
+          opacity:0;transition:opacity .3s;
+        }
+        .nd-role-card:hover{
+          background:rgba(255,255,255,0.12);
+          border-color:rgba(212,160,23,0.6);
+          transform:translateY(-5px);
+          box-shadow:0 16px 40px rgba(0,0,0,.5),0 0 20px rgba(212,160,23,0.15);
+        }
+        .nd-role-card:hover::before{opacity:1}
+        .nd-divider{
+          display:flex;align-items:center;gap:10;margin:20px 0;
+        }
+        .nd-divider::before,.nd-divider::after{
+          content:"";flex:1;height:1px;background:rgba(212,160,23,0.2);
+        }
+        .nd-input{
+          width:100%;padding:12px 16px;border-radius:12px;font-size:14px;
+          font-family:inherit;outline:none;transition:all .2s;
+          background:rgba(255,255,255,0.08);
+          color:#fff;
+          border:1.5px solid rgba(212,160,23,0.25);
+        }
+        .nd-input:focus{
+          border-color:rgba(212,160,23,0.7);
+          background:rgba(255,255,255,0.12);
+          box-shadow:0 0 0 3px rgba(212,160,23,0.1);
+        }
+        .nd-input::placeholder{color:rgba(255,255,255,0.35)}
+        .nd-btn-gold{
+          background:linear-gradient(135deg,#D4A017,#b8860b,#D4A017);
+          background-size:200% 100%;
+          border:none;border-radius:12px;padding:13px;
+          font-size:15px;font-weight:800;color:#1a0a00;
+          cursor:pointer;width:100%;font-family:inherit;
+          transition:all .3s;
+          box-shadow:0 4px 20px rgba(212,160,23,0.4);
+          animation:goldShimmer 3s linear infinite;
+        }
+        .nd-btn-gold:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(212,160,23,0.6)}
       `}</style>
-      <div style={{width:"100%",maxWidth:440,animation:"floatUp .5s ease"}}>
-        {/* Logo */}
-        <div style={{textAlign:"center",marginBottom:36}}>
-          <div style={{width:100,height:100,background:"rgba(255,255,255,0.15)",
-            border:"3px solid rgba(255,255,255,0.3)",
-            borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
-            fontSize:52,margin:"0 auto 16px",boxShadow:"0 12px 40px rgba(0,0,0,.5)",
-            backdropFilter:"blur(10px)"}}>☕</div>
-          <h1 style={{fontSize:32,fontWeight:900,color:"#fff",marginBottom:4,
-            textShadow:"0 2px 12px rgba(0,0,0,.5)"}}>
+
+      <div style={{width:"100%",maxWidth:420,animation:"floatUp .5s ease",position:"relative",zIndex:1}}>
+
+        {/* ── شعار ناردين ── */}
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{
+            width:110,height:110,
+            background:"linear-gradient(135deg,rgba(139,14,26,0.6),rgba(26,0,0,0.8))",
+            border:"2px solid rgba(212,160,23,0.5)",
+            borderRadius:"50%",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            margin:"0 auto 18px",
+            boxShadow:"0 12px 40px rgba(0,0,0,.6),0 0 30px rgba(212,160,23,0.15)",
+            backdropFilter:"blur(10px)",
+            animation:"logoFloat 3s ease-in-out infinite"
+          }}>
+            <NardeenLogoIcon size={72} gold="#D4A017" glow={true} />
+          </div>
+          {/* اسم الكافيه بخط عريض */}
+          <div style={{
+            fontSize:30,fontWeight:900,color:"#fff",
+            marginBottom:3,letterSpacing:"0.5px",
+            textShadow:"0 2px 20px rgba(0,0,0,.6)"
+          }}>
             {cafeName}
-          </h1>
-          <p style={{fontSize:13,color:"rgba(255,255,255,0.7)"}}>{sig}</p>
+          </div>
+          {/* الخط الذهبي الفاصل */}
+          <div style={{
+            display:"flex",alignItems:"center",justifyContent:"center",
+            gap:8,margin:"8px auto",width:200
+          }}>
+            <div style={{flex:1,height:1,background:"linear-gradient(to right,transparent,rgba(212,160,23,0.6))"}}/>
+            <svg viewBox="0 0 16 16" width={14} height={14}>
+              <path d="M8 1 L9.5 6 L15 6 L10.5 9.5 L12 15 L8 11.5 L4 15 L5.5 9.5 L1 6 L6.5 6 Z" fill="#D4A017" opacity="0.8"/>
+            </svg>
+            <div style={{flex:1,height:1,background:"linear-gradient(to left,transparent,rgba(212,160,23,0.6))"}}/>
+          </div>
+          <p style={{fontSize:13,color:"rgba(255,255,255,0.6)",letterSpacing:"0.3px"}}>{sig}</p>
         </div>
 
         {/* ── شاشة الاختيار ── */}
         {mode==="choose"&&(
           <div style={{animation:"floatUp .4s ease"}}>
-            <p style={{textAlign:"center",color:"rgba(255,255,255,0.85)",fontSize:15,
-              fontWeight:700,marginBottom:20}}>
+            <p style={{textAlign:"center",color:"rgba(255,255,255,0.75)",fontSize:14,
+              fontWeight:700,marginBottom:18,letterSpacing:"0.3px"}}>
               كيف تريد الدخول؟
             </p>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:20}}>
               {/* زبون */}
-              <div className="role-card" onClick={enterAsCustomer}>
-                <div style={{fontSize:52,marginBottom:12}}>🧑‍💼</div>
-                <div style={{color:"#fff",fontWeight:900,fontSize:18,marginBottom:6}}>زبون</div>
-                <div style={{color:"rgba(255,255,255,0.65)",fontSize:12}}>تصفح القائمة وأطلب مباشرة</div>
-                <div style={{marginTop:14,background:"rgba(255,255,255,0.2)",borderRadius:10,
-                  padding:"8px 0",color:"#fff",fontWeight:700,fontSize:13}}>
+              <div className="nd-role-card" onClick={enterAsCustomer}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
+                  <CustomerIcon size={56} />
+                </div>
+                <div style={{color:"#fff",fontWeight:900,fontSize:17,marginBottom:5}}>زبون</div>
+                <div style={{color:"rgba(255,255,255,0.55)",fontSize:11,lineHeight:1.5,marginBottom:14}}>
+                  تصفح القائمة وأطلب مباشرة
+                </div>
+                <div style={{
+                  background:"linear-gradient(135deg,rgba(212,160,23,0.2),rgba(212,160,23,0.1))",
+                  border:"1px solid rgba(212,160,23,0.35)",
+                  borderRadius:10,padding:"8px 0",
+                  color:"#D4A017",fontWeight:800,fontSize:13
+                }}>
                   دخول فوري ←
                 </div>
               </div>
-              {/* عامل / موظف */}
-              <div className="role-card" onClick={()=>setMode("staff")}>
-                <div style={{fontSize:52,marginBottom:12}}>👨‍🍳</div>
-                <div style={{color:"#fff",fontWeight:900,fontSize:18,marginBottom:6}}>موظف</div>
-                <div style={{color:"rgba(255,255,255,0.65)",fontSize:12}}>إدارة الطلبات والعمليات</div>
-                <div style={{marginTop:14,background:"rgba(255,255,255,0.2)",borderRadius:10,
-                  padding:"8px 0",color:"#fff",fontWeight:700,fontSize:13}}>
+
+              {/* موظف */}
+              <div className="nd-role-card" onClick={()=>setMode("staff")}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
+                  <StaffIcon size={56} />
+                </div>
+                <div style={{color:"#fff",fontWeight:900,fontSize:17,marginBottom:5}}>موظف</div>
+                <div style={{color:"rgba(255,255,255,0.55)",fontSize:11,lineHeight:1.5,marginBottom:14}}>
+                  إدارة الطلبات والعمليات
+                </div>
+                <div style={{
+                  background:"linear-gradient(135deg,rgba(139,14,26,0.4),rgba(139,14,26,0.2))",
+                  border:"1px solid rgba(198,40,40,0.4)",
+                  borderRadius:10,padding:"8px 0",
+                  color:"#ff8a80",fontWeight:800,fontSize:13
+                }}>
                   تسجيل دخول ←
                 </div>
               </div>
@@ -100,52 +223,129 @@ export function LoginScreen({store,onLogin,showToast,dm}){
         {/* ── شاشة دخول الموظف ── */}
         {mode==="staff"&&(
           <div style={{animation:"floatUp .3s ease"}}>
-            <button onClick={()=>setMode("choose")}
-              style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",
-                color:"#fff",borderRadius:10,padding:"6px 16px",fontSize:13,fontWeight:700,
-                marginBottom:16,cursor:"pointer"}}>
+            <button onClick={()=>setMode("choose")} style={{
+              background:"rgba(212,160,23,0.1)",
+              border:"1px solid rgba(212,160,23,0.3)",
+              color:"#D4A017",borderRadius:10,padding:"7px 16px",
+              fontSize:13,fontWeight:700,marginBottom:16,cursor:"pointer",
+              fontFamily:"inherit",transition:"all .2s"
+            }}>
               ← رجوع
             </button>
-            <div style={{background:"rgba(255,255,255,0.07)",backdropFilter:"blur(14px)",
-              border:"1.5px solid rgba(255,255,255,0.15)",borderRadius:20,padding:28,
-              animation:shake?"shakeX .5s":"none"}}>
-              <h2 style={{fontSize:18,fontWeight:900,marginBottom:20,textAlign:"center",color:"#fff"}}>
-                دخول الموظفين
-              </h2>
+
+            <div style={{
+              background:"rgba(255,255,255,0.05)",
+              backdropFilter:"blur(16px)",
+              border:"1.5px solid rgba(212,160,23,0.2)",
+              borderRadius:20,padding:28,
+              animation:shake?"shakeX .5s":"none",
+              boxShadow:"0 20px 60px rgba(0,0,0,.4)"
+            }}>
+              {/* رأس النموذج */}
+              <div style={{textAlign:"center",marginBottom:22}}>
+                <div style={{
+                  width:50,height:50,
+                  background:"linear-gradient(135deg,#8B0E1A,#c62828)",
+                  borderRadius:"50%",
+                  display:"inline-flex",alignItems:"center",justifyContent:"center",
+                  marginBottom:10,
+                  boxShadow:"0 6px 20px rgba(139,14,26,0.5)"
+                }}>
+                  <svg viewBox="0 0 24 24" width={24} height={24} fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    <circle cx="12" cy="16" r="1.5" fill="#fff"/>
+                  </svg>
+                </div>
+                <h2 style={{fontSize:17,fontWeight:900,color:"#fff",marginBottom:4}}>
+                  دخول الموظفين
+                </h2>
+                <div style={{width:40,height:2,background:"linear-gradient(to right,transparent,#D4A017,transparent)",margin:"0 auto"}}/>
+              </div>
+
               <div style={{marginBottom:14}}>
-                <label style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,0.7)",marginBottom:6,display:"block"}}>
+                <label style={{fontSize:12,fontWeight:700,color:"rgba(212,160,23,0.8)",marginBottom:7,display:"block"}}>
                   اسم المستخدم
                 </label>
-                <input className="input" type="text" value={username}
-                  onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()}
-                  placeholder="أدخل اسم المستخدم" autoComplete="username"
-                  style={{background:"rgba(255,255,255,0.1)",color:"#fff",border:"1.5px solid rgba(255,255,255,0.2)"}}/>
+                <input
+                  className="nd-input"
+                  type="text" value={username}
+                  onChange={e=>setUsername(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&doLogin()}
+                  placeholder="أدخل اسم المستخدم"
+                  autoComplete="username"
+                />
               </div>
+
               <div style={{marginBottom:20}}>
-                <label style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,0.7)",marginBottom:6,display:"block"}}>
+                <label style={{fontSize:12,fontWeight:700,color:"rgba(212,160,23,0.8)",marginBottom:7,display:"block"}}>
                   كلمة المرور
                 </label>
                 <div style={{position:"relative"}}>
-                  <input className="input" type={showPass?"text":"password"} value={password}
-                    onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doLogin()}
-                    placeholder="أدخل كلمة المرور" autoComplete="current-password"
-                    style={{background:"rgba(255,255,255,0.1)",color:"#fff",border:"1.5px solid rgba(255,255,255,0.2)"}}/>
-                  <button onClick={()=>setShowPass(p=>!p)}
-                    style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
-                      background:"none",border:"none",fontSize:16,color:"rgba(255,255,255,0.6)",padding:0}}>
-                    {showPass?"🙈":"👁"}
+                  <input
+                    className="nd-input"
+                    type={showPass?"text":"password"} value={password}
+                    onChange={e=>setPassword(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&doLogin()}
+                    placeholder="أدخل كلمة المرور"
+                    autoComplete="current-password"
+                    style={{paddingLeft:44}}
+                  />
+                  <button onClick={()=>setShowPass(p=>!p)} style={{
+                    position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
+                    background:"none",border:"none",cursor:"pointer",
+                    color:"rgba(212,160,23,0.6)",padding:0,
+                    display:"flex",alignItems:"center"
+                  }}>
+                    {showPass?(
+                      <svg viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                        <line x1="1" y1="1" x2="23" y2="23"/>
+                      </svg>
+                    ):(
+                      <svg viewBox="0 0 24 24" width={18} height={18} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    )}
                   </button>
                 </div>
               </div>
-              {error&&<div style={{background:"rgba(198,40,40,0.4)",color:"#ffcdd2",borderRadius:10,
-                padding:"10px 14px",fontSize:13,marginBottom:14,fontWeight:600,
-                border:"1px solid rgba(198,40,40,0.5)"}}>⚠ {error}</div>}
-              <button className="btn btn-red" onClick={doLogin} style={{width:"100%",padding:13,fontSize:15}}>
-                دخول ☕
+
+              {error&&(
+                <div style={{
+                  background:"rgba(139,14,26,0.3)",color:"#ffcdd2",
+                  borderRadius:10,padding:"10px 14px",fontSize:13,
+                  marginBottom:14,fontWeight:600,
+                  border:"1px solid rgba(198,40,40,0.4)",
+                  display:"flex",alignItems:"center",gap:8
+                }}>
+                  <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="#ffcdd2" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <circle cx="12" cy="16" r="1" fill="#ffcdd2"/>
+                  </svg>
+                  {error}
+                </div>
+              )}
+
+              <button className="nd-btn-gold" onClick={doLogin}>
+                دخول إلى النظام
               </button>
             </div>
           </div>
         )}
+
+        {/* تذييل */}
+        <div style={{textAlign:"center",marginTop:24}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+            color:"rgba(212,160,23,0.4)",fontSize:11}}>
+            <div style={{width:20,height:1,background:"rgba(212,160,23,0.3)"}}/>
+            <span>Nardeen Café System</span>
+            <div style={{width:20,height:1,background:"rgba(212,160,23,0.3)"}}/>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -162,10 +362,18 @@ export function CustomerLanding({store,onEnter,onLogout,dm}){
   const [activeSlide,setActiveSlide]=useState(0);
 
   const showcaseCategories=[
-    {key:"hot_drinks",  label:"مشروبات ساخنة",  emoji:"☕", grad:"linear-gradient(135deg,#4e1a00,#8b3a00,#c8692a)", tag:"دفء وراحة"},
-    {key:"cold_drinks", label:"مشروبات باردة",   emoji:"🧊", grad:"linear-gradient(135deg,#003366,#0066cc,#00aaff)", tag:"منعش ولذيذ"},
-    {key:"food",        label:"أكل ووجبات خفيفة",emoji:"🍔", grad:"linear-gradient(135deg,#1a3300,#2e7d32,#66bb6a)", tag:"شهي وطازج"},
-    {key:"hookah",      label:"نرجيلة وأراكيل",  emoji:"💨", grad:"linear-gradient(135deg,#2d0057,#6a1b9a,#ab47bc)", tag:"تجربة استثنائية"},
+    {key:"hot_drinks",  label:"مشروبات ساخنة",
+      icon:<svg viewBox="0 0 24 24" width={28} height={28} fill="none" stroke="#D4A017" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M8 2h8l1.5 4H6.5L8 2z"/><path d="M7 6 Q6 13 8 17 Q10 21 12 21 Q14 21 16 17 Q18 13 17 6"/><line x1="9" y1="11" x2="15" y2="11"/><path d="M16 9 Q19 9 19 7" strokeLinecap="round"/></svg>,
+      grad:"linear-gradient(135deg,#3d1000,#7a2800,#b85520)", tag:"دفء وراحة"},
+    {key:"cold_drinks", label:"مشروبات باردة",
+      icon:<svg viewBox="0 0 24 24" width={28} height={28} fill="none" stroke="#60b8e0" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M8 2h8l1.5 4H6.5L8 2z"/><path d="M7 6 Q6 13 8 17 Q10 21 12 21 Q14 21 16 17 Q18 13 17 6"/><line x1="9" y1="11" x2="15" y2="11"/><path d="M14 6 L14 3" strokeLinecap="round"/><path d="M14 3 L16 1" strokeLinecap="round"/></svg>,
+      grad:"linear-gradient(135deg,#003366,#0055aa,#0088cc)", tag:"منعش ولذيذ"},
+    {key:"food",        label:"أكل ووجبات خفيفة",
+      icon:<svg viewBox="0 0 24 24" width={28} height={28} fill="none" stroke="#6abf69" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 2 Q3 8 5 9 Q7 10 9 9 Q11 8 11 2"/><line x1="7" y1="9" x2="7" y2="22"/><path d="M13 2 Q13 6 15 8 L15 22"/><path d="M13 7 Q14.5 7.5 15 7"/><path d="M19 4 Q21 6 21 9 Q21 13 18 15 Q20 18 20 22"/></svg>,
+      grad:"linear-gradient(135deg,#1a3300,#2e7d32,#4caf50)", tag:"شهي وطازج"},
+    {key:"hookah",      label:"نرجيلة وأراكيل",
+      icon:<svg viewBox="0 0 24 24" width={28} height={28} fill="none" stroke="#ce93d8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="17" rx="5" ry="3"/><line x1="12" y1="14" x2="12" y2="9"/><ellipse cx="12" cy="8" rx="3.5" ry="2.5"/><path d="M12 5.5 Q13 3 15 2 Q12.5 1.5 11 3 Q11.5 4 12 5.5" strokeLinecap="round"/><path d="M7 17 Q4 17 3.5 20" strokeLinecap="round"/><circle cx="3.5" cy="21" r="1" fill="#ce93d8"/></svg>,
+      grad:"linear-gradient(135deg,#2d0057,#6a1b9a,#9c27b0)", tag:"تجربة استثنائية"},
   ];
 
   const topItems=(catKey)=>store.menu.filter(m=>m.category===catKey&&m.stock>0).slice(0,4);
@@ -188,7 +396,16 @@ export function CustomerLanding({store,onEnter,onLogout,dm}){
           background:"rgba(255,255,255,0.05)",borderRadius:"50%"}}/>
         <div style={{position:"absolute",bottom:-80,left:-40,width:200,height:200,
           background:"rgba(255,255,255,0.04)",borderRadius:"50%"}}/>
-        <div style={{fontSize:72,animation:"landFloat 3s ease-in-out infinite",marginBottom:12}}>☕</div>
+        <div style={{fontSize:72,animation:"landFloat 3s ease-in-out infinite",marginBottom:12,
+          display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{width:90,height:90,borderRadius:"50%",
+            background:"linear-gradient(135deg,rgba(139,14,26,0.5),rgba(26,0,0,0.7))",
+            border:"2px solid rgba(212,160,23,0.4)",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            boxShadow:"0 8px 30px rgba(0,0,0,.5),0 0 20px rgba(212,160,23,0.1)"}}>
+            <NardeenLogoIcon size={60} gold="#D4A017" glow={true} />
+          </div>
+        </div>
         <h1 style={{color:"#fff",fontSize:30,fontWeight:900,marginBottom:6,animation:"landFadeIn .6s ease"}}>
           {settings.cafeName||"Nardeen Caffe"}
         </h1>
@@ -205,7 +422,7 @@ export function CustomerLanding({store,onEnter,onLogout,dm}){
                 border:activeSlide===i?"2px solid rgba(255,255,255,0.5)":"2px solid rgba(255,255,255,0.1)",
                 color:"#fff",borderRadius:50,padding:"10px 18px",fontSize:13,fontWeight:700,
                 cursor:"pointer",transition:"all .3s",whiteSpace:"nowrap",fontFamily:"inherit"}}>
-              {c.emoji} {c.label}
+              <span style={{display:"inline-flex",alignItems:"center",gap:6}}>{c.icon} {c.label}</span>
             </button>
           ))}
         </div>
@@ -216,7 +433,7 @@ export function CustomerLanding({store,onEnter,onLogout,dm}){
                 marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between",
                 boxShadow:"0 8px 30px rgba(0,0,0,.4)"}}>
                 <div>
-                  <div style={{fontSize:40,marginBottom:4}}>{cat.emoji}</div>
+                  <div style={{fontSize:40,marginBottom:4,display:"flex",alignItems:"center",justifyContent:"center"}}>{cat.icon}</div>
                   <div style={{color:"#fff",fontWeight:900,fontSize:20}}>{cat.label}</div>
                   <div style={{color:"rgba(255,255,255,0.75)",fontSize:12,marginTop:2}}>✦ {cat.tag}</div>
                 </div>
@@ -369,9 +586,13 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
         padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",
         position:"sticky",top:0,zIndex:100,boxShadow:"0 4px 20px rgba(198,40,40,.3)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:24}}>☕</span>
+          <div style={{width:36,height:36,borderRadius:"50%",
+            background:"rgba(0,0,0,0.2)",border:"1.5px solid rgba(212,160,23,0.35)",
+            display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <NardeenLogoIcon size={24} gold="#D4A017" />
+          </div>
           <div>
-            <div style={{fontWeight:900,fontSize:16}}>{settings.cafeName||"Nardeen Caffe"}</div>
+            <div style={{fontWeight:900,fontSize:16}}>{settings.cafeName||"Nardeen Café"}</div>
             <div style={{fontSize:10,opacity:.8}}>مرحباً {user.name} 👋</div>
           </div>
         </div>
@@ -384,11 +605,19 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
       {/* Customer Nav */}
       <nav style={{background:"var(--card)",borderBottom:"2px solid var(--border)",
         display:"flex",padding:"0 16px"}} className="scroll-hide">
-        {[["menu","🍽","قائمة الطعام"],["cart","🛒",`السلة${cartCount>0?` (${cartCount})`:""}`,],["myorders","📦","طلباتي"]].map(([t,icon,label])=>(
-          <button key={t} onClick={()=>setTab(t)} style={{padding:"14px 16px",border:"none",
-            background:"none",fontWeight:tab===t?800:500,color:tab===t?"#c62828":"var(--sub)",
-            fontSize:13,borderBottom:tab===t?"3px solid #c62828":"3px solid transparent",
-            whiteSpace:"nowrap",transition:"all .2s"}}>
+        {[
+          ["menu", <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 2 Q3 8 5 9 Q7 10 9 9 Q11 8 11 2"/><line x1="7" y1="9" x2="7" y2="22"/><path d="M13 2 Q13 6 15 8 L15 22"/></svg>, "قائمة الطعام"],
+          ["cart", <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1" fill="currentColor"/><circle cx="20" cy="21" r="1" fill="currentColor"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>, `السلة${cartCount>0?` (${cartCount})`:""}` ],
+          ["myorders", <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>, "طلباتي"],
+        ].map(([t,icon,label])=>(
+          <button key={t} onClick={()=>setTab(t)} style={{
+            padding:"14px 14px",border:"none",
+            background:"none",fontWeight:tab===t?800:500,
+            color:tab===t?"#8B0E1A":"var(--sub)",
+            fontSize:13,borderBottom:tab===t?"3px solid #8B0E1A":"3px solid transparent",
+            whiteSpace:"nowrap",transition:"all .2s",
+            display:"flex",alignItems:"center",gap:6
+          }}>
             {icon} {label}
           </button>
         ))}
@@ -402,9 +631,10 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
               <input className="input" placeholder="🔍 ابحث عن صنف..." value={search} onChange={e=>setSearch(e.target.value)} style={{marginBottom:12}}/>
               <div style={{display:"flex",gap:8,overflowX:"auto"}} className="scroll-hide">
                 <button onClick={()=>setCat("all")} style={{padding:"7px 16px",borderRadius:20,border:"none",
-                  background:cat==="all"?"#c62828":"var(--card2)",color:cat==="all"?"#fff":"var(--sub)",
-                  fontWeight:700,fontSize:12,whiteSpace:"nowrap",boxShadow:"var(--shadow)"}}>
-                  🍽 الكل
+                  background:cat==="all"?"#8B0E1A":"var(--card2)",color:cat==="all"?"#fff":"var(--sub)",
+                  fontWeight:700,fontSize:12,whiteSpace:"nowrap",boxShadow:"var(--shadow)",
+                  display:"inline-flex",alignItems:"center",gap:5}}>
+                  <svg viewBox="0 0 24 24" width={13} height={13} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> الكل
                 </button>
                 {CAT_ORDER.map(c=>(
                   <button key={c} onClick={()=>setCat(c)} style={{padding:"7px 16px",borderRadius:20,border:"none",
