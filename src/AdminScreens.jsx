@@ -1580,14 +1580,15 @@ function S({label,children}){
 
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
-  const [form,setForm]=useState({...store.settings});
-  // مزامنة مرة واحدة فقط بعد اكتمال جلب السحابة — لا نعيد الضبط بعدها أبداً
-  const _cloudSynced=useRef(false);
+  const [_formRaw,_setFormRaw]=useState({...store.settings});
+  const _dirty=useRef(false);
+  // wrapper: أي تغيير من المستخدم يضع _dirty=true
+  const setForm=(v)=>{ _dirty.current=true; _setFormRaw(v); };
+  const form=_formRaw;
+  // نتابع store.settings: نُحدِّث form فقط إذا لم يكن المستخدم يعدّل
   useEffect(()=>{
-    if(!_cloudSynced.current && store.cloudReady){
-      setForm({...store.settings}); _cloudSynced.current=true;
-    }
-  },[store.cloudReady]); // ⚠️ store.settings مُحذوف عمداً — يمنع إعادة الكتابة فوق تعديلات المستخدم
+    if(!_dirty.current){ _setFormRaw(s=>({...s,...store.settings})); }
+  },[store.settings]);
   // نغمة هذا الجهاز (محلية — لتمييزه)
   const [devSound,setDevSound]=useState(()=>{
     try{ const le=localStorage.getItem("nc_sound_enabled");
@@ -1615,6 +1616,7 @@ export function SettingsTab({store,showToast,dm,user}){
   });
 
   const save=()=>{
+    _dirty.current=false; // بعد الحفظ نسمح لـ store.settings بالتحديث
     store.setSettings(form);
     store.setPermOverrides(dynPerms);
     showToast("تم حفظ الإعدادات ✓");
