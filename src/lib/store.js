@@ -705,11 +705,12 @@ export const useStore = () => {
 
   const setSettings = useCallback((v) => {
     setSettingsRaw(p => {
-      const d = typeof v === "function" ? v(p) : v;
-      const stamped = { ...d, _savedAt: new Date().toISOString() };
-      ls.set("nc_settings", stamped); broadcast("nc_settings", stamped);
-      if (SUPABASE_READY) sbSaveSettings(stamped);
-      return stamped;
+      const raw = typeof v === "function" ? v(p) : v;
+      // نضيف طابع زمني عند كل حفظ — يُستخدم للتحكيم مع السحابة
+      const d = { ...raw, _savedAt: new Date().toISOString() };
+      ls.set("nc_settings", d); broadcast("nc_settings", d);
+      if (SUPABASE_READY) sbSaveSettings(d);
+      return d;
     });
   }, []);
 
@@ -926,29 +927,27 @@ export const useStore = () => {
       }
       if (cmp.data)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
       if (cust.data) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
-      // ✅ fix: إعدادات السحابة تحلّ محلّ المحلية تماماً عند وجودها.
-      //         إن كانت السحابة فارغة ({}) نزرع فيها القيم المحلية الحالية.
+      // ══ إعدادات: التحكيم بالطابع الزمني (_savedAt) ══
+      // من هو الأحدث — المحلي أم السحابة — هو مصدر الحقيقة.
+      // هذا يمنع السحابة من إعادة الكتابة فوق تغييرات حديثة بعد refresh.
       if (sett.data != null) {
         const cloudData = sett.data?.data || {};
         const hasCloud = Object.keys(cloudData).length > 0;
-        if (hasCloud) {
-          // مقارنة الطوابع الزمنية: من هو الأحدث — السحابة أم المحلي؟
-          const localRaw = ls.get("nc_settings", {});
-          const localTs = localRaw._savedAt ? new Date(localRaw._savedAt).getTime() : 0;
-          const cloudTs = cloudData._savedAt ? new Date(cloudData._savedAt).getTime() : 0;
-          if (localTs > cloudTs) {
-            // المحلي أحدث (مثلاً: تم تغيير إعدادات بعد آخر حفظ سحابي) → المحلي يفوز
-            const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
-            setSettingsRaw(localFull); ls.set("nc_settings", localFull);
-            sbSaveSettings(localFull); // نرفع المحلي للسحابة ليتزامنا
-          } else {
-            // السحابة أحدث أو متساويان → السحابة تفوز
-            const n = { ...DEFAULT_SETTINGS, ...cloudData };
-            setSettingsRaw(n); ls.set("nc_settings", n);
-          }
+        const localRaw  = ls.get("nc_settings", {});
+        const localTs   = localRaw._savedAt  ? new Date(localRaw._savedAt).getTime()  : 0;
+        const cloudTs   = cloudData._savedAt ? new Date(cloudData._savedAt).getTime() : 0;
+        if (hasCloud && cloudTs >= localTs) {
+          // السحابة أحدث أو متساويان → السحابة تفوز (مزامنة بين أجهزة)
+          const n = { ...DEFAULT_SETTINGS, ...cloudData };
+          setSettingsRaw(n); ls.set("nc_settings", n);
+        } else if (hasCloud && localTs > cloudTs) {
+          // المحلي أحدث (تغيير محلي لم يُرفع بعد) → المحلي يفوز ويُرفع
+          const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
+          setSettingsRaw(localFull); ls.set("nc_settings", localFull);
+          sbSaveSettings(localFull);
         } else {
-          // السحابة فارغة → نزرع القيم المحلية فيها الآن
-          const localFull = { ...DEFAULT_SETTINGS, ...ls.get("nc_settings", {}) };
+          // السحابة فارغة → نزرع القيم المحلية فيها
+          const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
           const stamped = { ...localFull, _savedAt: localFull._savedAt || new Date().toISOString() };
           setSettingsRaw(stamped); ls.set("nc_settings", stamped);
           sbSaveSettings(stamped);
@@ -1062,7 +1061,14 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribeSettings((row) => {
       if (row?.data) {
-        const n = { ...DEFAULT_SETTINGS, ...row.data }; setSettingsRaw(n); ls.set("nc_settings", n); broadcast("nc_settings", n);
+        // تحكيم: نقبل تحديث realtime فقط إن كان أحدث من المحلي
+        const localRaw = ls.get("nc_settings", {});
+        const localTs  = localRaw._savedAt  ? new Date(localRaw._savedAt).getTime()  : 0;
+        const cloudTs  = row.data._savedAt  ? new Date(row.data._savedAt).getTime()  : 0;
+        if (cloudTs >= localTs) {
+          const n = { ...DEFAULT_SETTINGS, ...row.data };
+          setSettingsRaw(n); ls.set("nc_settings", n); broadcast("nc_settings", n);
+        }
       }
     });
   }, []);
