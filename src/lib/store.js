@@ -925,7 +925,22 @@ export const useStore = () => {
       }
       if (cmp.data)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
       if (cust.data) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
-      if (sett.data?.data)   { setSettingsRaw(s => { const n = { ...s, ...sett.data.data }; ls.set("nc_settings", n); return n; }); }
+      // ✅ fix: إعدادات السحابة تحلّ محلّ المحلية تماماً عند وجودها.
+      //         إن كانت السحابة فارغة ({}) نزرع فيها القيم المحلية الحالية.
+      if (sett.data != null) {
+        const cloudData = sett.data?.data || {};
+        const hasCloud = Object.keys(cloudData).length > 0;
+        if (hasCloud) {
+          // السحابة فيها بيانات → استخدمها كاملةً (لا دمج)
+          const n = { ...DEFAULT_SETTINGS, ...cloudData };
+          setSettingsRaw(n); ls.set("nc_settings", n);
+        } else {
+          // السحابة فارغة → نزرع القيم المحلية فيها الآن
+          const localFull = { ...DEFAULT_SETTINGS, ...ls.get("nc_settings", {}) };
+          setSettingsRaw(localFull); ls.set("nc_settings", localFull);
+          sbSaveSettings(localFull);
+        }
+      }
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
       if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   ls.set("nc_shifts",   d); }
       if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);ls.set("nc_loyalty",  d); }
@@ -1034,7 +1049,7 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribeSettings((row) => {
       if (row?.data) {
-        setSettingsRaw(s => { const n = { ...s, ...row.data }; ls.set("nc_settings", n); broadcast("nc_settings", n); return n; });
+        const n = { ...DEFAULT_SETTINGS, ...row.data }; setSettingsRaw(n); ls.set("nc_settings", n); broadcast("nc_settings", n);
       }
     });
   }, []);
