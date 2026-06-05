@@ -1585,7 +1585,7 @@ export function SettingsTab({store,showToast,dm,user}){
   const _hydrated=useRef(false);
   useEffect(()=>{
     if(!_hydrated.current && store.settings && Object.keys(store.settings).length){
-      setForm(f=>({...store.settings,...f})); _hydrated.current=true;
+      setForm({...store.settings}); _hydrated.current=true;
     }
   },[store.settings]);
   // نغمة هذا الجهاز (محلية — لتمييزه)
