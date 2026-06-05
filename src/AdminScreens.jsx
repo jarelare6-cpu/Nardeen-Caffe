@@ -1581,13 +1581,13 @@ function S({label,children}){
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const [form,setForm]=useState({...store.settings});
-  // إعادة مزامنة النموذج مرة واحدة عند وصول الإعدادات المحفوظة (تحميل غير متزامن) — يحفظ تعديلات المستخدم
-  const _hydrated=useRef(false);
+  // ✅ fix: نتابع cloudReady بدل _hydrated — نضمن تحميل إعدادات Supabase بعد اكتمال الجلب
+  const _cloudSynced=useRef(false);
   useEffect(()=>{
-    if(!_hydrated.current && store.settings && Object.keys(store.settings).length){
-      setForm({...store.settings}); _hydrated.current=true;
+    if(!_cloudSynced.current && store.cloudReady){
+      setForm({...store.settings}); _cloudSynced.current=true;
     }
-  },[store.settings]);
+  },[store.cloudReady, store.settings]);
   // نغمة هذا الجهاز (محلية — لتمييزه)
   const [devSound,setDevSound]=useState(()=>{
     try{ const le=localStorage.getItem("nc_sound_enabled");
