@@ -171,11 +171,11 @@ export const sbFetchDevices = async () => {
 
 export const sbSaveSettings = async (settings) => {
   if (!supabase) return;
-  const { error } = await supabase.from("app_settings").upsert(
+  // ✅ fix: نستخدم sbUpsert بدل الاستدعاء المباشر → يدخل الطابور الصادر عند الفشل
+  return sbUpsert("app_settings",
     { id: "main", data: settings, updated_at: new Date().toISOString() },
-    { onConflict: "id" }
+    "id"
   );
-  if (error) console.warn("sbSaveSettings:", error.message);
 };
 
 export const sbSavePermOverrides = async (perms) => {
