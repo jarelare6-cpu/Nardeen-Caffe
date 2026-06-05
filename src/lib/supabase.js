@@ -127,8 +127,13 @@ export const flushOutbox = async () => {
 };
 
 if (typeof window !== "undefined") {
-  window.addEventListener("online", () => { flushOutbox(); });
-  setInterval(() => { if (navigator.onLine) flushOutbox(); }, 30000);
+  window.addEventListener("online", () => {
+    // fix(sync): عند عودة الاتصال — انتظر 800ms ثم فرّغ الـ outbox
+    // (الشبكة تحتاج لحظة لتستقر قبل نجاح الطلبات)
+    setTimeout(() => { flushOutbox(); }, 800);
+  });
+  // fix(sync): interval 10s بدل 30s — اكتشاف أسرع للطلبات المتراكمة
+  setInterval(() => { if (navigator.onLine) flushOutbox(); }, 10000);
 }
 
 export const sbUpsert = async (table, row, conflict = "id", fallbackRow = null) => {
