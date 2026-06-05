@@ -910,21 +910,21 @@ export const useStore = () => {
       supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(200),
       supabase.from("loyalty_log").select("*").order("created_at", { ascending: false }).limit(300),
     ]).then(([ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy]) => {
-      if (ord.data?.length)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
+      if (ord.data)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); } // fix: reset works when empty
       if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
       if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
       else { getHashedDefaultUsers().then(hu => hu.forEach(u => sbWrite.user(u))); }
-      if (dbt.data?.length)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    ls.set("nc_debts",    d); }
-      if (exp.data?.length)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); ls.set("nc_expenses", d); }
-      if (cash.data?.length) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  ls.set("nc_cash",     d); }
-      if (rct.data?.length)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); ls.set("nc_receipts", d); }
+      if (dbt.data)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    ls.set("nc_debts",    d); }
+      if (exp.data)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); ls.set("nc_expenses", d); }
+      if (cash.data) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  ls.set("nc_cash",     d); }
+      if (rct.data)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); ls.set("nc_receipts", d); }
       if (tbl.data?.length)  { const d = tbl.data.map(mapTable);    setTablesRaw(d);   ls.set("nc_tables",   d); }
       if (outdoorTbl.data?.length) {
         const d = outdoorTbl.data.map(mapTable);
         setOutdoorTablesRaw(d); ls.set("nc_outdoor_tables", d);
       }
-      if (cmp.data?.length)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
-      if (cust.data?.length) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
+      if (cmp.data)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
+      if (cust.data) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
       if (sett.data?.data)   { setSettingsRaw(s => { const n = { ...s, ...sett.data.data }; ls.set("nc_settings", n); return n; }); }
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
       if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   ls.set("nc_shifts",   d); }
