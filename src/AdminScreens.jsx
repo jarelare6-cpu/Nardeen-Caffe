@@ -1,6 +1,6 @@
 // شاشات الإدارة — مفصولة من App.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
+import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit } from "./lib/utils.js";
@@ -1581,13 +1581,13 @@ function S({label,children}){
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const [form,setForm]=useState({...store.settings});
-  // ✅ fix: نتابع cloudReady بدل _hydrated — نضمن تحميل إعدادات Supabase بعد اكتمال الجلب
+  // مزامنة مرة واحدة فقط بعد اكتمال جلب السحابة — لا نعيد الضبط بعدها أبداً
   const _cloudSynced=useRef(false);
   useEffect(()=>{
     if(!_cloudSynced.current && store.cloudReady){
       setForm({...store.settings}); _cloudSynced.current=true;
     }
-  },[store.cloudReady, store.settings]);
+  },[store.cloudReady]); // ⚠️ store.settings مُحذوف عمداً — يمنع إعادة الكتابة فوق تعديلات المستخدم
   // نغمة هذا الجهاز (محلية — لتمييزه)
   const [devSound,setDevSound]=useState(()=>{
     try{ const le=localStorage.getItem("nc_sound_enabled");
@@ -1929,6 +1929,22 @@ export function SettingsTab({store,showToast,dm,user}){
               <button onClick={async()=>{if(window.confirm("تصفير سجل الفواتير؟ لا يمكن التراجع!")){store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}showToast("تم تصفير الفواتير","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#37474f",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الفواتير
+              </button>
+              <button onClick={async()=>{
+                if(!window.confirm("إعادة تعيين الإعدادات للافتراضية وحذف بيانات السحابة القديمة؟")) return;
+                // 1. احذف إعدادات السحابة القديمة
+                if(SUPABASE_READY){
+                  try{ await sbUpsert("app_settings",{id:"main",data:{},updated_at:new Date().toISOString()},"id"); }catch(e){ console.warn(e); }
+                }
+                // 2. امسح المحلي
+                try{ localStorage.removeItem("nc_settings"); }catch{}
+                // 3. احفظ القيم الافتراضية مع طابع زمني جديد
+                const fresh={...DEFAULT_SETTINGS,_savedAt:new Date().toISOString()};
+                store.setSettings(fresh);
+                setForm({...fresh});
+                showToast("✅ تم تصفير الإعدادات وحذف البيانات القديمة","warn");
+              }} style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#004d40",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🔄 تصفير الإعدادات
               </button>
             </div>
           </div>
