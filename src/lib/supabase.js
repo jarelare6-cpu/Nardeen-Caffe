@@ -102,6 +102,11 @@ export const retryFailed = () => {
   writeQ(OUTBOX_KEY, q); writeQ(FAILED_KEY, []); notifyOutbox(); flushOutbox();
 };
 
+// إلغاء/مسح كل الطابور (المعلّق + الفاشل) — لإيقاف محاولات رفع عالقة
+export const clearOutbox = () => {
+  writeQ(OUTBOX_KEY, []); writeQ(FAILED_KEY, []); notifyOutbox();
+};
+
 export const flushOutbox = async () => {
   if (!supabase) return;
   if (_flushing) return _flushPromise;

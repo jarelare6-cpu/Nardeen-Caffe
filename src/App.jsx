@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox, sbHeartbeat } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox, clearOutbox, sbHeartbeat } from "./lib/supabase.js";
 import { startMesh, mergeById } from "./lib/mesh.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle, ImageStyleContext } from "./uikit.jsx";
@@ -242,6 +242,12 @@ function SyncPanel({onClose}){
           <button onClick={()=>{try{flushOutbox();}catch{}}} style={{flex:1,background:"#2e7d32",color:"#fff",border:"none",borderRadius:9,padding:"10px",fontWeight:700,cursor:"pointer"}}>محاولة الرفع الآن</button>
           {fail.length>0&&<button onClick={()=>{try{retryFailed();}catch{}}} style={{flex:1,background:"#e65100",color:"#fff",border:"none",borderRadius:9,padding:"10px",fontWeight:700,cursor:"pointer"}}>إعادة الفاشلة</button>}
         </div>
+        {(pend.length>0||fail.length>0)&&(
+          <button onClick={()=>{ if(window.confirm("مسح كل عمليات الرفع المعلّقة والفاشلة؟ (لن تُرفع هذه التغييرات للسحابة)")){ try{clearOutbox();}catch{} } }}
+            style={{width:"100%",marginTop:8,background:"transparent",color:"#ff6b6b",border:"1px solid #ff6b6b55",borderRadius:9,padding:"9px",fontWeight:700,cursor:"pointer"}}>
+            🗑 إلغاء/مسح الطابور
+          </button>
+        )}
       </div>
     </div>
   );
