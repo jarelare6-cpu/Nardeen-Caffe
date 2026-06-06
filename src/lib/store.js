@@ -989,7 +989,24 @@ export const useStore = () => {
   const lastPullRef = useRef(0);
   useEffect(() => {
     if (!SUPABASE_READY) return;
-    const onReconnect = () => { lastPullRef.current = Date.now(); flushOutbox().then(() => pullAll()); };
+    const onReconnect = async () => {
+      lastPullRef.current = Date.now();
+      await flushOutbox();
+      // إن كانت المزامنة المحلية مفعّلة: ارفع للسحابة العملَ المُدمَج محليًّا
+      // (طلبات آخر ٢٤ ساعة + الطاولات) حتى يرفع أيُّ جهاز يتصل بالإنترنت
+      // ما استقبله من بقية الأجهزة عبر LAN — الرفع idempotent فلا تكرار.
+      try {
+        if (ls.get("nc_settings", {})?.lan?.enabled) {
+          const DAY = 86400000, now = Date.now();
+          (ls.get("nc_orders", []) || []).forEach(o => {
+            const ut = new Date(o?.updatedAt || o?.createdAt || 0).getTime();
+            if (now - ut < DAY) sbWrite.order(o);
+          });
+          (ls.get("nc_tables", []) || []).forEach(t => sbWrite.table(t));
+        }
+      } catch {}
+      await pullAll();
+    };
     const onVis = () => {
       if (document.visibilityState === "visible" && navigator.onLine && Date.now() - lastPullRef.current > 10000) onReconnect();
     };
