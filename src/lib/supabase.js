@@ -71,6 +71,7 @@ const FAILED_KEY = "nc_outbox_failed";
 const LASTSYNC_KEY = "nc_last_sync";
 const MAX_TRIES = 5;
 let _flushing = false;
+let _flushPromise = null;
 
 const readQ = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch { return []; } };
 const writeQ = (k, q) => { try { localStorage.setItem(k, JSON.stringify(q)); } catch {} };
@@ -102,28 +103,31 @@ export const retryFailed = () => {
 };
 
 export const flushOutbox = async () => {
-  if (!supabase || _flushing) return;
+  if (!supabase) return;
+  if (_flushing) return _flushPromise;
   const q = readQ(OUTBOX_KEY);
   if (!q.length) return;
   _flushing = true; notifyOutbox();
-  const remaining = []; const dead = readQ(FAILED_KEY); let anyOk = false;
-  for (const e of q) {
-    try {
-      const { error } = e.del
-        ? await supabase.from(e.table).delete().eq("id", e.del)
-        : await supabase.from(e.table).upsert(e.row, { onConflict: "id" });
-      if (error) {
+  _flushPromise = (async () => {
+    const remaining = []; const dead = readQ(FAILED_KEY); let anyOk = false;
+    for (const e of q) {
+      try {
+        const { error } = e.del
+          ? await supabase.from(e.table).delete().eq("id", e.del)
+          : await supabase.from(e.table).upsert(e.row, { onConflict: "id" });
+        if (error) {
+          const tries = (e.tries || 0) + 1;
+          (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: error.message });
+        } else anyOk = true;
+      } catch (err) {
         const tries = (e.tries || 0) + 1;
-        (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: error.message });
-      } else anyOk = true;
-    } catch (err) {
-      const tries = (e.tries || 0) + 1;
-      (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: String((err && err.message) || err) });
+        (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: String((err && err.message) || err) });
+      }
     }
-  }
-  writeQ(OUTBOX_KEY, remaining); writeQ(FAILED_KEY, dead);
-  if (anyOk) { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch {} }
-  _flushing = false; notifyOutbox();
+    writeQ(OUTBOX_KEY, remaining); writeQ(FAILED_KEY, dead);
+    if (anyOk) { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch {} }
+  })();
+  try { await _flushPromise; } finally { _flushing = false; _flushPromise = null; notifyOutbox(); }
 };
 
 if (typeof window !== "undefined") {
@@ -138,6 +142,7 @@ if (typeof window !== "undefined") {
 
 export const sbUpsert = async (table, row, conflict = "id", fallbackRow = null) => {
   if (!supabase) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { enqueue({ table, row }); return null; }
   let { error } = await supabase.from(table).upsert(row, { onConflict: conflict });
   if (error && fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(error.message || "")) {
     // عمود جديد غير موجود بعد (قبل تشغيل الترحيل) → احفظ النسخة الأساسية بدل كسر الحفظ
@@ -151,6 +156,7 @@ export const sbUpsert = async (table, row, conflict = "id", fallbackRow = null) 
 
 export const sbDelete = async (table, id) => {
   if (!supabase) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { enqueue({ table, del: id }); return; }
   const { error } = await supabase.from(table).delete().eq("id", id);
   if (error) { reportSyncError("sbDelete", table, error.message); enqueue({ table, del: id }); }
 };

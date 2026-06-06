@@ -8,7 +8,7 @@
 //  5. تنبيه نفاد المخزون عند الوصول لـ minStock
 //  6. subscribeReceipts مربوط بـ store
 // ══════════════════════════════════════════════════════════════
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   supabase, SUPABASE_READY,
   sbUpsert, sbDelete,
@@ -895,8 +895,8 @@ export const useStore = () => {
   // fix(sync): Promise.allSettled بدل Promise.all — كل جدول مستقل
   // fix(sync): timeout 12s لكل طلب — لا تجمّد في شبكة بطيئة
   // fix(sync): flushOutbox فور اكتمال التحميل — لا انتظار لـ online event
-  useEffect(() => {
-    if (!SUPABASE_READY) return;
+  const pullAll = useCallback(() => {
+    if (!SUPABASE_READY) return Promise.resolve();
     setSyncing(true);
 
     // timeout wrapper: يرفع خطأ بعد 12 ثانية إن لم يستجب الجدول
@@ -911,7 +911,7 @@ export const useStore = () => {
         return { data: null, error: err }; // يُعامَل كنتيجة فارغة آمنة
       });
 
-    Promise.allSettled([
+    return Promise.allSettled([
       withTimeout(supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(500), "orders"),
       withTimeout(supabase.from("menu_items").select("*").order("category"), "menu_items"),
       withTimeout(supabase.from("profiles").select("*"), "profiles"),
@@ -979,6 +979,26 @@ export const useStore = () => {
       if (navigator.onLine) { try { flushOutbox(); } catch {} }
     }).finally(() => setSyncing(false));
   }, []);
+
+  useEffect(() => { pullAll(); }, [pullAll]);
+
+  // fix(offline-sync): إعادة السحب الكامل عند عودة الاتصال أو الرجوع للتطبيق.
+  // عند انقطاع الإنترنت يفوت الجهازَ تغييراتُ الأجهزة الأخرى (Realtime لا يعوّض
+  // الأحداث الفائتة)، لذا ندفع الطابور المؤجّل أولًا ثم نسحب أحدث البيانات.
+  const lastPullRef = useRef(0);
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    const onReconnect = () => { lastPullRef.current = Date.now(); flushOutbox().then(() => pullAll()); };
+    const onVis = () => {
+      if (document.visibilityState === "visible" && navigator.onLine && Date.now() - lastPullRef.current > 10000) onReconnect();
+    };
+    window.addEventListener("online", onReconnect);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("online", onReconnect);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [pullAll]);
 
   // ══════════════════════════════════════════════════════════
   // Realtime subscriptions
