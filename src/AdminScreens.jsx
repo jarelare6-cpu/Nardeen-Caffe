@@ -1644,6 +1644,30 @@ export function SettingsTab({store,showToast,dm,user}){
       <h2 style={{fontSize:18,fontWeight:900,marginBottom:20}}>⚙ الإعدادات</h2>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:20}}>
 
+        {/* النسخ الاحتياطي */}
+        <div className="card">
+          <h3 style={{fontSize:15,fontWeight:800,marginBottom:12,color:"#c62828"}}>💾 النسخ الاحتياطي</h3>
+          <div style={{fontSize:12,color:"var(--sub)",lineHeight:1.7,marginBottom:12}}>
+            احفظ نسخة كاملة من بياناتك كملف. بياناتك محفوظة سحابيًا أيضًا. (يعمل التنزيل بأفضل صورة من المتصفّح/الـPWA.)
+          </div>
+          <button onClick={()=>{
+            try{
+              const data={ _meta:{app:"nardeen-caffe",exportedAt:new Date().toISOString()},
+                orders:store.orders||[], menu:store.menu||[], tables:store.tables||[],
+                outdoorTables:store.outdoorTables||[], debts:store.debts||[], expenses:store.expenses||[],
+                customers:store.customers||[], receipts:store.receipts||[], settings:store.settings||{} };
+              const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+              const u=URL.createObjectURL(blob); const a=document.createElement("a");
+              a.href=u; a.download=`nardeen-backup-${new Date().toISOString().slice(0,10)}.json`;
+              document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),1000);
+              try{localStorage.setItem("nc_last_backup",new Date().toISOString());}catch{}
+              showToast?.("تم تنزيل النسخة الاحتياطية ✓");
+            }catch{ showToast?.("تعذّر التصدير","error"); }
+          }} className="btn btn-red" style={{width:"100%"}}>تنزيل نسخة احتياطية كاملة (JSON)</button>
+          <div style={{fontSize:11,color:"var(--sub)",marginTop:8}}>
+            آخر نسخة: {(()=>{try{const t=localStorage.getItem("nc_last_backup");return t?new Date(t).toLocaleString("ar"):"—";}catch{return "—";}})()}
+          </div>
+        </div>
 
         {/* General */}
         <div className="card">

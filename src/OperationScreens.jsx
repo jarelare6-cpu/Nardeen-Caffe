@@ -43,6 +43,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
     if(ex&&ex.qty>1) return p.map(c=>c.itemId===id?{...c,qty:c.qty-1}:c);
     return p.filter(c=>c.itemId!==id);
   });
+  const setItemNote=(id,note)=>setCart(p=>p.map(c=>c.itemId===id?{...c,note}:c));
 
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
@@ -62,7 +63,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       const mergedItems=[...target.items];
       cart.forEach(ci=>{
         const ex=mergedItems.find(i=>i.itemId===ci.itemId);
-        if(ex) ex.qty+=ci.qty;
+        if(ex){ ex.qty+=ci.qty; if(ci.note) ex.note=ci.note; }
         else mergedItems.push({...ci});
       });
       const newTotal=mergedItems.reduce((s,i)=>s+i.price*i.qty,0);
@@ -243,17 +244,23 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
               <div style={{fontSize:12}}>اضغط على الأصناف</div>
             </div>
           ):cart.map(item=>(
-            <div key={item.itemId} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
-              <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={34} round={8}/>
-              <div style={{flex:1}}>
-                <div style={{fontSize:12,fontWeight:600}}>{item.itemName}</div>
-                <div style={{fontSize:11,color:"#c62828",fontWeight:700}}>{(item.price*item.qty).toLocaleString()} {CUR}</div>
+            <div key={item.itemId} style={{padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={34} round={8}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:600}}>{item.itemName}</div>
+                  <div style={{fontSize:11,color:"#c62828",fontWeight:700}}>{(item.price*item.qty).toLocaleString()} {CUR}</div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:6,background:"var(--card2)",borderRadius:20,padding:"3px 8px"}}>
+                  <button onClick={()=>removeFromCart(item.itemId)} style={{background:"none",border:"none",fontSize:15,color:"#c62828",fontWeight:900,lineHeight:1}}>−</button>
+                  <span style={{fontWeight:900,fontSize:13,minWidth:18,textAlign:"center"}}>{item.qty}</span>
+                  <button onClick={()=>addToCart(store.menu.find(m=>m.id===item.itemId))} style={{background:"none",border:"none",fontSize:15,color:"#2e7d32",fontWeight:900,lineHeight:1}}>+</button>
+                </div>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:6,background:"var(--card2)",borderRadius:20,padding:"3px 8px"}}>
-                <button onClick={()=>removeFromCart(item.itemId)} style={{background:"none",border:"none",fontSize:15,color:"#c62828",fontWeight:900,lineHeight:1}}>−</button>
-                <span style={{fontWeight:900,fontSize:13,minWidth:18,textAlign:"center"}}>{item.qty}</span>
-                <button onClick={()=>addToCart(store.menu.find(m=>m.id===item.itemId))} style={{background:"none",border:"none",fontSize:15,color:"#2e7d32",fontWeight:900,lineHeight:1}}>+</button>
-              </div>
+              <input value={item.note||""} onChange={e=>setItemNote(item.itemId,e.target.value)}
+                placeholder="📝 ملاحظة (مثال: بدون سكر، إكسترا...)"
+                style={{width:"100%",marginTop:5,padding:"5px 8px",fontSize:11,borderRadius:7,
+                  border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontFamily:"'Tajawal',sans-serif"}}/>
             </div>
           ))}
         </div>
@@ -357,7 +364,10 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
           {items.map((item,idx)=>(
             <div key={idx} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"6px 10px",background:"var(--card2)",borderRadius:10}}>
               <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={30} round={8}/>
-              <div style={{flex:1,fontSize:13,fontWeight:600}}>{item.itemName}</div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600}}>{item.itemName}</div>
+                {item.note&&<div style={{fontSize:10,color:"#c62828",fontWeight:700}}>📝 {item.note}</div>}
+              </div>
               <div style={{display:"flex",alignItems:"center",gap:6}}>
                 <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:Math.max(1,it.qty-1)}:it))}
                   style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>−</button>
@@ -424,7 +434,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
               <div style={{borderTop:"1px dashed var(--border)",paddingTop:8,marginBottom:8}}>
                 {order.items.map((item,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"2px 0"}}>
-                    <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={22} round={6}/>{item.itemName} ×{item.qty}</span>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={22} round={6}/>{item.itemName} ×{item.qty}{item.note?<span style={{color:"#c62828",fontWeight:700,marginInlineStart:4}}>📝{item.note}</span>:""}</span>
                     <span style={{color:"#c62828",fontWeight:600}}>{(item.price*item.qty).toLocaleString()}</span>
                   </div>
                 ))}
@@ -765,7 +775,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
             {(order.items || []).map((i, idx) => (
               <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0", borderBottom: "1px dashed var(--border)" }}>
-                <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===i.itemId)||i} size={22} round={6}/>{i.itemName} ×{i.qty}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:6}}><ItemVisual item={store.menu.find(m=>m.id===i.itemId)||i} size={22} round={6}/>{i.itemName} ×{i.qty}{i.note?<span style={{color:"#c62828",fontWeight:700,marginInlineStart:4}}>📝{i.note}</span>:""}</span>
                 <span style={{ fontWeight: 700 }}>{(i.price * i.qty).toLocaleString()} {CUR}</span>
               </div>
             ))}
@@ -1016,7 +1026,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 <input type="checkbox" checked={!!compItems[i]?.selected}
                   onChange={e => setCompItems(p => p.map((c, ci) => ci === i ? { ...c, selected: e.target.checked, qty: e.target.checked ? it.qty : 0 } : c))}
                   style={{ width: 18, height: 18, accentColor: "#00897b" }} />
-                <span style={{ flex: 1, fontSize: 13, display:"inline-flex", alignItems:"center", gap:6 }}><ItemVisual item={store.menu.find(m=>m.id===it.itemId)||it} size={22} round={6}/>{it.itemName} ×{it.qty}</span>
+                <span style={{ flex: 1, fontSize: 13, display:"inline-flex", alignItems:"center", gap:6 }}><ItemVisual item={store.menu.find(m=>m.id===it.itemId)||it} size={22} round={6}/>{it.itemName} ×{it.qty}{it.note?<span style={{color:"#c62828",fontWeight:700,marginInlineStart:4}}>📝{it.note}</span>:""}</span>
                 {compItems[i]?.selected && (
                   <input type="number" min="1" max={it.qty} value={compItems[i]?.qty || it.qty}
                     onChange={e => setCompItems(p => p.map((c, ci) => ci === i ? { ...c, qty: Math.min(it.qty, Math.max(1, +e.target.value)) } : c))}

@@ -29,6 +29,7 @@ export default function NardeenCaffe(){
   const [failed,setFailed]=useState(()=>{try{return outboxFailedCount();}catch{return 0;}});
   const [syncing,setSyncing]=useState(false);
   const [syncOpen,setSyncOpen]=useState(false);
+  const [updateUrl,setUpdateUrl]=useState(null);
   const bannerRef=useRef(null);
   const [bannerH,setBannerH]=useState(0);
   const prevLen=useRef(store.orders.length);
@@ -41,6 +42,21 @@ export default function NardeenCaffe(){
     window.addEventListener("resize",m);
     return ()=>{ clearTimeout(t); window.removeEventListener("resize",m); };
   },[offline,pending,failed,syncing]);
+
+  // فحص التحديثات داخل تطبيق أندرويد: قارن وقت بناء النسخة بآخر إصدار منشور
+  useEffect(()=>{
+    if(!(typeof window!=="undefined" && window.Capacitor?.isNativePlatform?.())) return;
+    (async()=>{
+      try{
+        const r=await fetch("https://api.github.com/repos/jarelare6-cpu/Nardeen-Caffe/releases/latest",{headers:{Accept:"application/vnd.github+json"}});
+        if(!r.ok) return;
+        const j=await r.json();
+        const pub=new Date(j.published_at||0).getTime();
+        const built=new Date(__BUILD_TIME__).getTime();
+        if(pub>built+60000) setUpdateUrl(j.html_url||"https://github.com/jarelare6-cpu/Nardeen-Caffe/releases/latest");
+      }catch{}
+    })();
+  },[]);
 
   // ── نبض الجهاز للمراقبة عن بُعد (آمن الفشل) ──
   useEffect(()=>{
@@ -153,6 +169,14 @@ export default function NardeenCaffe(){
           {pending>0?` • ${pending} بانتظار`:""}
           {failed>0?` • ⚠ ${failed} فشل`:""}
           <span style={{opacity:.85,marginInlineStart:8,fontSize:11}}>(اضغط للتفاصيل)</span>
+        </div>
+      )}
+      {updateUrl&&(
+        <div onClick={()=>{try{window.open(updateUrl,"_system");}catch{try{window.open(updateUrl,"_blank");}catch{}}}}
+          style={{position:"sticky",top:0,zIndex:9998,cursor:"pointer",background:"#1565c0",color:"#fff",
+          textAlign:"center",padding:"7px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
+          boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
+          🔄 تحديث متوفّر — اضغط للتنزيل والتثبيت
         </div>
       )}
       {syncOpen&&<SyncPanel onClose={()=>setSyncOpen(false)}/>}
