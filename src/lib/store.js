@@ -20,6 +20,7 @@ import {
   subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll, flushOutbox,
 } from "./supabase";
+import { isNativeApp, lanBase, lanChanges, lanPush } from "./lanSync";
 
 // ── تخزين: offline-first — حفظ محلي + Supabase كمصدر حقيقة عند الاتصال ──
 // كل المجموعات تُحفظ محليًا (localStorage) ليعمل التطبيق دون إنترنت ويصمد
@@ -1001,8 +1002,78 @@ export const useStore = () => {
   }, [pullAll]);
 
   // ══════════════════════════════════════════════════════════
-  // Realtime subscriptions
+  // مزامنة الشبكة المحلية (LAN) — اختيارية، لا تعمل إلا داخل تطبيق
+  // أندرويد وعند تفعيلها من الإعدادات. الكاشير = خادم؛ البقية عملاء.
+  // عند الإيقاف لا تؤثر إطلاقًا على السلوك الأونلاين الحالي.
   // ══════════════════════════════════════════════════════════
+  const lanSnap = useRef({});   // table -> { id: jsonString }  (كشف التغيّر للدفع)
+  const lanUt = useRef({});     // table -> { id: _ut }         (حلّ التعارض LWW)
+  const lanSince = useRef(0);
+  const lanApplying = useRef(false);
+
+  // دفع التغييرات المحلية إلى خادم الكاشير
+  useEffect(() => {
+    const cfg = settings?.lan;
+    if (!isNativeApp() || !cfg?.enabled) return;
+    const base = lanBase(cfg); if (!base) return;
+    if (lanApplying.current) return;
+    const data = { orders, tables, outdoor_tables: outdoorTables };
+    for (const tbl of Object.keys(data)) {
+      const arr = data[tbl]; if (!Array.isArray(arr)) continue;
+      const snap = (lanSnap.current[tbl] ||= {});
+      for (const row of arr) {
+        if (!row || row.id == null) continue;
+        const js = JSON.stringify(row);
+        if (snap[row.id] !== js) { snap[row.id] = js; lanPush(base, tbl, row).catch(() => {}); }
+      }
+    }
+  }, [orders, tables, outdoorTables, settings]);
+
+  // سحب تغييرات بقية الأجهزة من خادم الكاشير كل 1.5 ثانية
+  useEffect(() => {
+    const cfg = settings?.lan;
+    if (!isNativeApp() || !cfg?.enabled) return;
+    const base = lanBase(cfg); if (!base) return;
+    const setters = {
+      orders: [setOrdersRaw, "nc_orders"],
+      tables: [setTablesRaw, "nc_tables"],
+      outdoor_tables: [setOutdoorTablesRaw, "nc_outdoor_tables"],
+    };
+    let stop = false;
+    const tick = async () => {
+      try {
+        const res = await lanChanges(base, lanSince.current);
+        if (stop || !res || !Array.isArray(res.rows)) return;
+        if (res.ts) lanSince.current = res.ts;
+        const byTable = {};
+        for (const row of res.rows) { const t = row._table; if (t) (byTable[t] ||= []).push(row); }
+        lanApplying.current = true;
+        for (const t of Object.keys(byTable)) {
+          const entry = setters[t]; if (!entry) continue;
+          const [setter, lsKey] = entry;
+          setter(prev => {
+            const map = new Map((prev || []).map(r => [r.id, r]));
+            for (const row of byTable[t]) {
+              const clean = { ...row }; delete clean._table; delete clean._ut;
+              const prevUt = (lanUt.current[t] ||= {})[row.id] || 0;
+              if ((row._ut || 0) >= prevUt) {
+                map.set(row.id, clean);
+                lanUt.current[t][row.id] = row._ut || 0;
+                (lanSnap.current[t] ||= {})[row.id] = JSON.stringify(clean);
+              }
+            }
+            const next = Array.from(map.values());
+            ls.set(lsKey, next); broadcast(lsKey, next);
+            return next;
+          });
+        }
+        lanApplying.current = false;
+      } catch { lanApplying.current = false; }
+    };
+    const iv = setInterval(tick, 1500);
+    tick();
+    return () => { stop = true; clearInterval(iv); };
+  }, [settings]);
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeOrders(

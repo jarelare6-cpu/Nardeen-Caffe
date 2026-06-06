@@ -1,0 +1,8 @@
+{
+  "appId": "com.nardeen.caffe",
+  "appName": "Nardeen Caffe",
+  "webDir": "dist",
+  "server": { "androidScheme": "http", "cleartext": true },
+  "android": { "allowMixedContent": true },
+  "plugins": { "CapacitorHttp": { "enabled": true } }
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nardeen Caffe</string>
+    <string name="title_activity_main">Nardeen Caffe</string>
+    <string name="package_name">com.nardeen.caffe</string>
+    <string name="custom_url_scheme">com.nardeen.caffe</string>
+</resources>
