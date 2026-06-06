@@ -2,6 +2,14 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 
+// داخل تطبيق أندرويد (APK): ألغِ أي Service Worker حتى يُحمَّل دائمًا الإصدار
+// المُضمَّن في الـAPK (تحديث نظيف). لا أثر على الـPWA في المتصفّح.
+if (typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.()) {
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
+  }
+}
+
 const btn = (bg) => ({
   background: bg, color: "#fff", border: "none", borderRadius: 10,
   padding: "11px 22px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
