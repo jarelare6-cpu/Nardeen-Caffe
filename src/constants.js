@@ -80,6 +80,7 @@ export const PERMISSIONS = {
   receipts:     ["admin","cashier"],
   complog:      ["admin","cashier"],
   customers:    ["admin","cashier"],
+  lansync:      ["admin","cashier"],
   customer_home:["customer"],
   myorders:     ["customer"],
 };

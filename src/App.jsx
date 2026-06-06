@@ -6,7 +6,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox, clearOutbox, sbHeartbeat } from "./lib/supabase.js";
-import { startMesh, mergeById } from "./lib/mesh.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle, ImageStyleContext } from "./uikit.jsx";
 import { ROLES } from "./constants.js";
@@ -27,18 +26,13 @@ export default function NardeenCaffe(){
   const [dm,setDm]=useState(()=>localStorage.getItem("nc_dark")==="1");
   const [offline,setOffline]=useState(()=>typeof navigator!=="undefined"&&!navigator.onLine);
   const [pending,setPending]=useState(()=>{try{return outboxCount();}catch{return 0;}});
-  const [meshPeers,setMeshPeers]=useState(0);
   const [failed,setFailed]=useState(()=>{try{return outboxFailedCount();}catch{return 0;}});
   const [syncing,setSyncing]=useState(false);
   const [syncOpen,setSyncOpen]=useState(false);
-  const meshRef=useRef(null);
   const bannerRef=useRef(null);
   const [bannerH,setBannerH]=useState(0);
   const prevLen=useRef(store.orders.length);
 
-  // ── mesh تجريبي: تزامن P2P لعدة مجموعات عبر LAN (مطفأ افتراضيًا) ──
-  // المخزون (menu) مستثنى عمدًا حتى ننفّذ مخزون CRDT (تفادي ضياع الخصم).
-  const meshOn=!!store.settings?.meshEnabled;
   // قياس ارتفاع شريط المزامنة (يتغيّر حسب الحالة) لإزاحة الهيدر تحته بلا تغطية
   useEffect(()=>{
     const m=()=>setBannerH(bannerRef.current?bannerRef.current.offsetHeight:0);
@@ -46,25 +40,7 @@ export default function NardeenCaffe(){
     const t=setTimeout(m,60);
     window.addEventListener("resize",m);
     return ()=>{ clearTimeout(t); window.removeEventListener("resize",m); };
-  },[offline,pending,failed,meshOn,meshPeers,syncing]);
-  const meshSettersRef=useRef(null);
-  meshSettersRef.current={orders:store.setOrders,tables:store.setTables,debts:store.setDebts,expenses:store.setExpenses,receipts:store.setReceipts};
-  useEffect(()=>{
-    if(!meshOn){ try{meshRef.current?.stop?.();}catch{} meshRef.current=null; setMeshPeers(0); return; }
-    let active=true;
-    startMesh({
-      collections:["orders","tables","debts","expenses","receipts"],
-      onPeers:(n)=>{ if(active) setMeshPeers(n); },
-      onData:(name,items)=>{ try{ const setter=meshSettersRef.current?.[name]; if(setter) setter(prev=>mergeById(prev,items)); }catch{} }
-    }).then(m=>{ if(active) meshRef.current=m; else m.stop(); }).catch(e=>console.warn("[mesh] init failed",e));
-    return()=>{ active=false; try{meshRef.current?.stop?.();}catch{} meshRef.current=null; };
-  },[meshOn]);
-  // دفع المجموعات المحلية للأقران عند تغيّرها
-  useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("orders",store.orders);}catch{} },[store.orders,meshOn]);
-  useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("tables",store.tables);}catch{} },[store.tables,meshOn]);
-  useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("debts",store.debts);}catch{} },[store.debts,meshOn]);
-  useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("expenses",store.expenses);}catch{} },[store.expenses,meshOn]);
-  useEffect(()=>{ if(meshOn) try{meshRef.current?.push?.("receipts",store.receipts);}catch{} },[store.receipts,meshOn]);
+  },[offline,pending,failed,syncing]);
 
   // ── نبض الجهاز للمراقبة عن بُعد (آمن الفشل) ──
   useEffect(()=>{
@@ -168,15 +144,14 @@ export default function NardeenCaffe(){
       <GlobalStyle dm={dm} theme={store.settings?.appTheme||"default"}/>
       <Toast toast={toast}/>
       <PWABanner/>
-      {(offline||pending>0||failed>0||meshOn)&&(
+      {(offline||pending>0||failed>0)&&(
         <div onClick={()=>setSyncOpen(true)} ref={bannerRef} style={{position:"sticky",top:0,zIndex:9999,cursor:"pointer",
           background:offline?"#c62828":(failed>0?"#b71c1c":(pending>0?"#e65100":"#2e7d32")),color:"#fff",textAlign:"center",
           padding:"6px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
           boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
-          {offline?"⚠ غير متصل — يعمل محليًا والبيانات محفوظة":(syncing?"🔄 جارٍ الرفع الآن":(pending>0?"⏳ بانتظار الرفع":"🔗 المزامنة المباشرة فعّالة"))}
+          {offline?"⚠ غير متصل — يعمل محليًا والبيانات محفوظة":(syncing?"🔄 جارٍ الرفع الآن":(pending>0?"⏳ بانتظار الرفع":"✓ متزامن"))}
           {pending>0?` • ${pending} بانتظار`:""}
           {failed>0?` • ⚠ ${failed} فشل`:""}
-          {meshOn?` • 🔗 ${meshPeers} جهاز`:""}
           <span style={{opacity:.85,marginInlineStart:8,fontSize:11}}>(اضغط للتفاصيل)</span>
         </div>
       )}

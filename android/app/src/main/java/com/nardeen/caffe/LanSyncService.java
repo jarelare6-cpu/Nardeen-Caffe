@@ -64,7 +64,7 @@ public class LanSyncService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("ناردين كافيه")
                 .setContentText("المزامنة المحلية فعّالة — " + LanSyncServer.getLocalIp())
-                .setSmallIcon(android.R.drawable.stat_sys_upload)
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();

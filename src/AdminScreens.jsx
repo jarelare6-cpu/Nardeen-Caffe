@@ -8,7 +8,6 @@ import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_CO
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
 import { IMAGE_LIBRARY, AUTO_MAP } from "./lib/imageLibrary.js";
-import { isNativeApp, lanBase, lanMyIp, lanPing, lanReset } from "./lib/lanSync.js";
 
 // ضغط صورة مرفوعة إلى dataURL صغير (يعمل أوفلاين بلا Storage)
 async function compressImage(file, max = 320, quality = 0.72) {
@@ -1579,58 +1578,6 @@ function S({label,children}){
   );
 }
 
-function LanCard({store,showToast}){
-  const lan=store.settings?.lan||{enabled:false,role:"client",ip:""};
-  const native=isNativeApp();
-  const [myIp,setMyIp]=useState("");
-  const [status,setStatus]=useState("…");
-  const update=(patch)=>store.setSettings({...store.settings,lan:{...lan,...patch}});
-  useEffect(()=>{
-    if(!native||!lan.enabled){setStatus("متوقّف");return;}
-    const base=lanBase(lan); if(!base){setStatus("أدخل عنوان الكاشير");return;}
-    let stop=false;
-    const check=async()=>{
-      const p=await lanPing(base); if(stop)return;
-      setStatus(p?"متصل ✓":"غير متصل ✗");
-      if(lan.role==="cashier"){ const ip=await lanMyIp(base); if(!stop&&ip)setMyIp(ip); }
-    };
-    check(); const iv=setInterval(check,3000);
-    return ()=>{stop=true;clearInterval(iv);};
-  },[native,lan.enabled,lan.role,lan.ip]);
-  const btn=(active)=>({flex:1,padding:"9px",borderRadius:9,fontWeight:800,fontSize:13,border:"1px solid "+(active?"#c62828":"var(--border)"),background:active?"#c62828":"var(--card2)",color:active?"#fff":"var(--text)",cursor:"pointer"});
-  return(
-    <div className="card">
-      <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>📡 المزامنة المحلية (بلا إنترنت)</h3>
-      {!native&&<div style={{fontSize:12,color:"var(--sub)",marginBottom:12,lineHeight:1.7}}>تعمل فقط داخل تطبيق أندرويد المثبّت (APK)، وليس من المتصفّح.</div>}
-      <label style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,fontWeight:700}}>
-        تفعيل المزامنة المحلية
-        <input type="checkbox" checked={!!lan.enabled} onChange={e=>update({enabled:e.target.checked})} style={{width:20,height:20}}/>
-      </label>
-      <div style={{fontSize:13,fontWeight:700,marginBottom:6}}>دور هذا الجهاز</div>
-      <div style={{display:"flex",gap:8,marginBottom:14}}>
-        <button style={btn(lan.role==="cashier")} onClick={()=>update({role:"cashier"})}>الكاشير (المركز)</button>
-        <button style={btn(lan.role!=="cashier")} onClick={()=>update({role:"client"})}>جهاز عادي</button>
-      </div>
-      {lan.role==="cashier"?(
-        <div style={{background:"var(--card2)",borderRadius:9,padding:12,marginBottom:12}}>
-          <div style={{fontSize:12,color:"var(--sub)"}}>عنوان هذا الجهاز (أدخله في باقي الأجهزة):</div>
-          <div style={{fontSize:20,fontWeight:900,direction:"ltr",textAlign:"center"}}>{myIp||"…"}</div>
-        </div>
-      ):(
-        <input className="input" placeholder="عنوان الكاشير مثل 192.168.1.50" value={lan.ip||""}
-          onChange={e=>update({ip:e.target.value.trim()})} style={{marginBottom:12,direction:"ltr",textAlign:"center"}}/>
-      )}
-      <div style={{fontSize:13,marginBottom:12}}>الحالة: <b>{status}</b></div>
-      {lan.role==="cashier"&&(
-        <button onClick={async()=>{const b=lanBase(lan);if(b){await lanReset(b);showToast?.("تم تصفير ترقيم الطلبات ✓");}}}
-          style={{width:"100%",padding:"9px",borderRadius:9,border:"1px solid #c62828",background:"transparent",color:"#c62828",fontWeight:800,cursor:"pointer"}}>
-          تصفير ترقيم الطلبات
-        </button>
-      )}
-    </div>
-  );
-}
-
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const [_formRaw,_setFormRaw]=useState({...store.settings});
@@ -1697,7 +1644,6 @@ export function SettingsTab({store,showToast,dm,user}){
       <h2 style={{fontSize:18,fontWeight:900,marginBottom:20}}>⚙ الإعدادات</h2>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:20}}>
 
-        <LanCard store={store} showToast={showToast}/>
 
         {/* General */}
         <div className="card">
@@ -1788,19 +1734,6 @@ export function SettingsTab({store,showToast,dm,user}){
                 </div>
               </div>
             )}
-          </S>
-          {/* 11. المزامنة المباشرة P2P (تجريبي) */}
-          <S label="🔗 المزامنة المباشرة بين الأجهزة (تجريبي)">
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
-              <input type="checkbox" checked={form.meshEnabled||false}
-                onChange={e=>setForm(f=>({...f,meshEnabled:e.target.checked}))} id="mesh"/>
-              <label htmlFor="mesh" style={{fontSize:13,fontWeight:600}}>تفعيل التزامن المباشر عبر الشبكة المحلية</label>
-            </div>
-            <div style={{fontSize:11,color:"var(--sub)",lineHeight:1.7}}>
-              تجريبي: يزامن الطلبات مباشرةً بين الأجهزة على نفس الراوتر (P2P)، ويستمر أثناء انقطاع الإنترنت
-              للأجهزة المتصلة مسبقًا. فعّله على كل الأجهزة واختبره. عطّل "AP/Client Isolation" في الراوتر.
-              عند الإطفاء يعمل التطبيق عبر السحابة كالمعتاد.
-            </div>
           </S>
           <S label="لغة الواجهة">
             <div style={{display:"flex",gap:10}}>
