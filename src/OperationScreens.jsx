@@ -1,7 +1,7 @@
 // شاشات التشغيل (طلبات/كاشير/ديون/مصاريف) — مفصولة من App.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
@@ -97,6 +97,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         createdAt:new Date().toISOString(),paymentStatus:"pending",
       };
       store.setOrders(p=>[newOrder,...p]);
+      logActivity({ action: "إنشاء طلب", details: `${cart.length} صنف${tableNum.trim() ? ` — طاولة ${tableNum.trim()}` : ""}`, userName: user.name, userRole: user.role, orderNum, amount: finalTotal, branch: "main" });
       store.setMenu(p=>p.map(m=>{
         const ci=cart.find(c=>c.itemId===m.id);
         if(!ci) return m;
@@ -337,6 +338,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
       if(!ci) return m;
       return{...m,stock:m.stock+ci.qty,totalSold:Math.max(0,m.totalSold-ci.qty)};
     }));
+    logActivity({ action: "إلغاء طلب", details: "", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
     showToast(`تم إلغاء الطلب #${order.orderNum}`,"error");
   };
 
@@ -535,6 +537,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const [tronInput, setTronInput] = useState("");
   const [partialModal, setPartialModal] = useState(null);
   const [partialInput, setPartialInput] = useState("");
+  const [payingId, setPayingId] = useState(null); // v22: قفل الدفع المزدوج + حالة التحميل
 
   const filteredReady = readyOrders.filter(o =>
     !customerFilter || (o.customerName || "").includes(customerFilter)
@@ -554,6 +557,12 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   };
 
   const markPaid = async (order, payType = "cash") => {
+    // v22: حمايات الدفع — منع النقر المزدوج + رفض الدفع دون اتصال
+    if (payingId) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error");
+      return;
+    }
     const disc = discounts[order.id] || 0;
     const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
     const finalTotal = order.total - discAmt;
@@ -566,14 +575,27 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       discount: disc, originalTotal: order.total, total: finalTotal,
       shiftId: openShift?.id || order.shiftId || null,
     };
-    const updated = store.orders.map(o => o.id === order.id ? paid : o);
-    store.setOrders(() => updated);
-    store.setCashLog(p => [{
+    const cashEntry = {
       id: Date.now().toString(), orderId: order.id, orderNum: order.orderNum,
       amount: finalTotal, at: new Date().toISOString(), by: user.name,
       type: payType === "tron" ? "tron" : "sale",
       branch: order.branch || "main", shiftId: openShift?.id || null,
-    }, ...p]);
+    };
+    const updated = store.orders.map(o => o.id === order.id ? paid : o);
+    const shouldFreeTable = !!order.table && updated.filter(o =>
+      String(o.table) === String(order.table) &&
+      !["paid", "cancelled", "debt", "complimentary"].includes(o.status)
+    ).length === 0;
+
+    setPayingId(order.id);
+    try {
+      // ✅ v22: السحابة أولاً (ذرّي) — إن فشلت لا يتغيّر شيء محلياً ولا يعلق التطبيق (مهلة 10ث)
+      await store.payOrder(paid, cashEntry, { freeTable: shouldFreeTable });
+    } catch (e) {
+      showToast("⚠ فشل الدفع: " + (e?.message || "خطأ في الاتصال — حاول مجدداً"), "error");
+      setPayingId(null);
+      return;
+    }
 
     if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
       const cust = (store.customers || []).find(c => c.name === order.customerName);
@@ -597,13 +619,21 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     // ✅ الفاتورة تُحفظ هنا فقط — عند الدفع
     saveReceiptRecord(paid, settings, store, tronAmt);
 
-    await generateReceiptPDF(paid, settings, tronAmt);
+    // v22: سجل النشاط
+    logActivity({
+      action: "دفع طلب", details: `${payType === "card" ? "بطاقة" : payType === "tron" ? "ترون" : "نقدي"}${disc ? ` — خصم ${disc}%` : ""}`,
+      userName: user.name, userRole: user.role, orderNum: order.orderNum,
+      amount: finalTotal, branch: order.branch || "main",
+    });
+
+    try { await generateReceiptPDF(paid, settings, tronAmt); } catch (e) { console.warn("receipt pdf:", e); }
 
     showToast(`💰 تم الدفع — ${order.customerName || "زبون"} #${order.orderNum}`);
     autoFreeTable(order.table, updated);
     setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setTronAmounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setTronModal(null);
+    setPayingId(null);
   };
 
   const markDebt = (order) => {
@@ -814,17 +844,17 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-              <button onClick={() => markPaid(order, "cash")}
-                style={{ flex: 2, minWidth: 100, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-                💵 دفع نقدي
+              <button onClick={() => markPaid(order, "cash")} disabled={!!payingId}
+                style={{ flex: 2, minWidth: 100, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 13, cursor: payingId ? "wait" : "pointer", opacity: payingId && payingId !== order.id ? .5 : 1 }}>
+                {payingId === order.id ? "⏳ جارٍ الدفع..." : "💵 دفع نقدي"}
               </button>
-              <button onClick={() => markPaid(order, "card")}
-                style={{ flex: 1, minWidth: 70, background: "#1565c0", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+              <button onClick={() => markPaid(order, "card")} disabled={!!payingId}
+                style={{ flex: 1, minWidth: 70, background: "#1565c0", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: payingId ? "wait" : "pointer", opacity: payingId ? .6 : 1 }}>
                 💳 بطاقة
               </button>
               {tronAmt > 0 && (
-                <button onClick={() => markPaid(order, "tron")}
-                  style={{ flex: 1, minWidth: 70, background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                <button onClick={() => markPaid(order, "tron")} disabled={!!payingId}
+                  style={{ flex: 1, minWidth: 70, background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: payingId ? "wait" : "pointer", opacity: payingId ? .6 : 1 }}>
                   💠 ترون
                 </button>
               )}
@@ -867,6 +897,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
               <button onClick={() => {
                 const paid = Math.min(Math.max(0, +partialInput || 0), partialModal.total);
                 if (paid <= 0) { showToast("أدخل مبلغاً صحيحاً", "error"); return; }
+                if (typeof navigator !== "undefined" && navigator.onLine === false) { showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error"); return; }
                 if (paid >= partialModal.total) { markPaid(partialModal, "cash"); setPartialModal(null); return; }
                 const remaining = partialModal.total - paid;
                 const updated = store.orders.map(o => o.id === partialModal.id ? {
@@ -880,6 +911,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 store.setDebts(p => [{ id: "d" + Date.now(), orderId: partialModal.id, orderNum: partialModal.orderNum, customerName: partialModal.customerName || "زبون", amount: remaining, remaining, date: new Date().toISOString(), settled: false, settledAt: null, createdBy: user.name, notes: `دفع جزئي — دفع ${paid.toLocaleString()} ${CUR}` }, ...p]);
                 saveReceiptRecord({ ...partialModal, total: paid, paymentType: "cash" }, settings, store, 0);
                 autoFreeTable(partialModal.table, updated);
+                logActivity({ action: "دفع جزئي", details: `دفع ${paid.toLocaleString()} — باقي ${remaining.toLocaleString()} دين`, userName: user.name, userRole: user.role, orderNum: partialModal.orderNum, amount: paid, branch: partialModal.branch || "main" });
                 showToast(`✓ دفع جزئي ${paid.toLocaleString()} ${CUR} — باقي ${remaining.toLocaleString()} ${CUR} دين`);
                 setPartialModal(null);
               }} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#e65100", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>

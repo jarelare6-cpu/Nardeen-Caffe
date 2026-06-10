@@ -8,7 +8,7 @@ import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_CO
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
 import { NardeenLogoIcon } from "./NardeenIcons.jsx";
-import LanCard from "./LanCard.jsx";
+import ActivityLog from "./ActivityLog.jsx";
 
 import { BarTab, HookahTab } from "./StationScreens.jsx";
 import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./OperationScreens.jsx";
@@ -101,7 +101,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     ["reports","📈","التقارير"],
     ["receipts","🧾","الفواتير"],
     ["settings","⚙","الإعدادات"],
-    ["lansync","📡","المزامنة المحلية"],
+    ["activity","📋","سجل النشاط"],
     ["outdoor_admin","🌿","الحديقة — أدمن"],
   ];
   const navItems=navDef.filter(([t])=>canAccess(user.role,t));
@@ -222,7 +222,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="complog"    &&canAccess(user.role,"complog")   &&<CompLogTab     store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="customers"  &&canAccess(user.role,"customers") &&<CustomerFileTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")      &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
-        {tab==="lansync"    &&canAccess(user.role,"lansync")       &&<div className="fade-in" style={{padding:16,maxWidth:480,margin:"0 auto"}}><LanCard store={store} showToast={showToast}/></div>}
+        {tab==="activity"   &&canAccess(user.role,"activity")      &&<div className="fade-in" style={{padding:16,maxWidth:720,margin:"0 auto"}}><ActivityLog/></div>}
         {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         </ErrorBoundary>
       </main>

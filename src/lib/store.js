@@ -18,21 +18,10 @@ import {
   subscribeReceipts, subscribeCompLog, subscribeCustomers,
   subscribeSettings, subscribePermOverrides,
   subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
-  sbSaveSettings, sbSavePermOverrides, sbDeleteAll, flushOutbox,
+  sbSaveSettings, sbSavePermOverrides, sbDeleteAll, payOrderAtomic,
 } from "./supabase";
-import { isNativeApp, lanBase, lanChanges, lanPush } from "./lanSync";
 
-// ── تخزين: offline-first — حفظ محلي + Supabase كمصدر حقيقة عند الاتصال ──
-// كل المجموعات تُحفظ محليًا (localStorage) ليعمل التطبيق دون إنترنت ويصمد
-// أمام التحديث/إعادة التشغيل. عند الاتصال يُحدّثها التحميل من Supabase.
-const ls = {
-  get: (k, def) => {
-    try { const v = JSON.parse(localStorage.getItem(k)); return v ?? def; } catch { return def; }
-  },
-  set: (k, v) => {
-    try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-  },
-};
+// ── v22: أونلاين فقط — لا تخزين محلي للبيانات. السحابة هي مصدر الحقيقة الوحيد. ──
 
 // ── BroadcastChannel ──────────────────────────────────────────
 const bc = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("nardeen_v6") : null;
@@ -218,6 +207,36 @@ export const DEFAULT_MENU = [
 // ══════════════════════════════════════════════════════════════
 // كتابة إلى Supabase
 // ══════════════════════════════════════════════════════════════
+// v22: مُحوّلات صفوف قابلة لإعادة الاستخدام (للدفع الذرّي)
+export const rowOfOrder = (o) => ({
+  id: o.id, order_num: o.orderNum,
+  customer_name: o.customerName, customer_id: o.customerId || null,
+  table_num: o.table || "", items: o.items,
+  total: o.total, discount: o.discount || 0,
+  status: o.status, payment_type: o.paymentType || "cash",
+  payment_status: o.paymentStatus || "pending",
+  partial_paid: o.partialPaid || 0,
+  notes: o.notes || "", created_at: o.createdAt,
+  paid_at: o.paidAt || null, paid_by: o.paidBy || null,
+  paid_by_name: o.paidByName || "",
+  is_debt_settlement: o.isDebtSettlement || false,
+  original_total: o.originalTotal || null,
+  comp_amount: o.compAmount || 0,
+  is_complimentary: o.isComplimentary || false,
+  worker_name: o.workerName || "",
+  tron_amount: o.tronAmount || 0,
+  branch: o.branch || "main",
+  shift_id: o.shiftId || null,
+  preparing_at: o.preparingAt || null,
+  ready_at: o.readyAt || null,
+});
+export const rowOfCash = (e) => ({
+  id: e.id, order_id: e.orderId || null,
+  order_num: e.orderNum || "", amount: e.amount,
+  at: e.at, by: e.by || "", type: e.type || "sale",
+  branch: e.branch || "main",
+});
+
 const sbWrite = {
   user: async (u) => {
     const pw = await hashPassword(u.password);
@@ -240,28 +259,7 @@ const sbWrite = {
   },
   deleteMenuItem: (id) => sbDelete("menu_items", id),
 
-  order: (o) => sbUpsert("orders", {
-    id: o.id, order_num: o.orderNum,
-    customer_name: o.customerName, customer_id: o.customerId || null,
-    table_num: o.table || "", items: o.items,
-    total: o.total, discount: o.discount || 0,
-    status: o.status, payment_type: o.paymentType || "cash",
-    payment_status: o.paymentStatus || "pending",
-    partial_paid: o.partialPaid || 0,
-    notes: o.notes || "", created_at: o.createdAt,
-    paid_at: o.paidAt || null, paid_by: o.paidBy || null,
-    paid_by_name: o.paidByName || "",
-    is_debt_settlement: o.isDebtSettlement || false,
-    original_total: o.originalTotal || null,
-    comp_amount: o.compAmount || 0,
-    is_complimentary: o.isComplimentary || false,
-    worker_name: o.workerName || "",
-    tron_amount: o.tronAmount || 0,
-    branch: o.branch || "main",
-    shift_id: o.shiftId || null,
-    preparing_at: o.preparingAt || null,
-    ready_at: o.readyAt || null,
-  }),
+  order: (o) => sbUpsert("orders", rowOfOrder(o)),
   deleteOrder: (id) => sbDelete("orders", id),
 
   table: (t) => sbUpsert("tables", {
@@ -293,13 +291,7 @@ const sbWrite = {
     is_complimentary: e.isComplimentary || false,
   }),
 
-  // ✅ cash_log يُكتب لـ Supabase
-  cashLog: (e) => sbUpsert("cash_log", {
-    id: e.id, order_id: e.orderId || null,
-    order_num: e.orderNum || "", amount: e.amount,
-    at: e.at, by: e.by || "", type: e.type || "sale",
-    branch: e.branch || "main",
-  }),
+  cashLog: (e) => sbUpsert("cash_log", rowOfCash(e)),
 
   // ✅ receipts تُكتب لـ Supabase
   receipt: (r) => sbUpsert("receipts", {
@@ -522,58 +514,31 @@ const mapLoyalty = l => ({
 // MAIN STORE HOOK
 // ══════════════════════════════════════════════════════════════
 export const useStore = () => {
-  const [users,         setUsersRaw]        = useState(() => ls.get("nc_users",    DEFAULT_USERS_PLAIN));
-  const [menu,          setMenuRaw]          = useState(() => ls.get("nc_menu",     DEFAULT_MENU));
-  const [orders,        setOrdersRaw]        = useState(() => ls.get("nc_orders",   []));
-  const [notifications, setNotificationsRaw] = useState(() => ls.get("nc_notifs",   []));
-  const [cashLog,       setCashLogRaw]       = useState(() => ls.get("nc_cash",     []));
-  const [tables,        setTablesRaw]        = useState(() => {
-    const saved = ls.get("nc_tables", null);
-    return saved && saved.length > 0 ? saved : buildDefaultTables(20);
-  });
-  const [outdoorTables, setOutdoorTablesRaw] = useState(() => {
-    const saved = ls.get("nc_outdoor_tables", null);
-    return saved && saved.length > 0 ? saved : buildOutdoorTables(10);
-  });
-  const [debts,         setDebtsRaw]         = useState(() => ls.get("nc_debts",    []));
-  const [expenses,      setExpensesRaw]      = useState(() => ls.get("nc_expenses", []));
-  const [receipts,      setReceiptsRaw]      = useState(() => ls.get("nc_receipts", []));
-  const [settings,      setSettingsRaw]      = useState(() => ({ ...DEFAULT_SETTINGS, ...ls.get("nc_settings", {}) }));
-  const [compLog,       setCompLogRaw]       = useState(() => ls.get("nc_complog",  []));
-  const [customers,     setCustomersRaw]     = useState(() => ls.get("nc_customers",[]));
-  const [permOverrides, setPermOverridesRaw] = useState(() => ls.get("nc_perms",   {}));
-  const [shifts,        setShiftsRaw]        = useState(() => ls.get("nc_shifts",   []));
-  const [loyaltyLog,    setLoyaltyLogRaw]    = useState(() => ls.get("nc_loyalty",  []));
+  const [users,         setUsersRaw]        = useState(DEFAULT_USERS_PLAIN);
+  const [menu,          setMenuRaw]          = useState(DEFAULT_MENU);
+  const [orders,        setOrdersRaw]        = useState([]);
+  const [notifications, setNotificationsRaw] = useState([]);
+  const [cashLog,       setCashLogRaw]       = useState([]);
+  const [tables,        setTablesRaw]        = useState(() => buildDefaultTables(20));
+  const [outdoorTables, setOutdoorTablesRaw] = useState(() => buildOutdoorTables(10));
+  const [debts,         setDebtsRaw]         = useState([]);
+  const [expenses,      setExpensesRaw]      = useState([]);
+  const [receipts,      setReceiptsRaw]      = useState([]);
+  const [settings,      setSettingsRaw]      = useState({ ...DEFAULT_SETTINGS });
+  const [compLog,       setCompLogRaw]       = useState([]);
+  const [customers,     setCustomersRaw]     = useState([]);
+  const [permOverrides, setPermOverridesRaw] = useState({});
+  const [shifts,        setShiftsRaw]        = useState([]);
+  const [loyaltyLog,    setLoyaltyLogRaw]    = useState([]);
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
-
-  // ── تشفير كلمات المرور الافتراضية محلياً عند أول تشغيل ──────────
-  // مهم: لا نرفع المستخدمين الافتراضيين هنا إطلاقاً، حتى لا نكتب فوق
-  // كلمات مرور مُعدّلة موجودة في Supabase. البذر يتم في تأثير التحميل
-  // أدناه فقط عندما يكون جدول profiles فارغاً تماماً.
-  useEffect(() => {
-    const alreadyHashed = ls.get("nc_pw_hashed", false);
-    if (alreadyHashed) return;
-    getHashedDefaultUsers().then(hashed => {
-      setUsersRaw(prev => {
-        const updated = prev.map(u => {
-          const h = hashed.find(x => x.id === u.id);
-          if (h && !/^[a-f0-9]{64}$/i.test(u.password)) return { ...u, password: h.password };
-          return u;
-        });
-        ls.set("nc_users", updated);
-        ls.set("nc_pw_hashed", true);
-        return updated;
-      });
-    });
-  }, []);
 
   // ── Setters ───────────────────────────────────────────────
 
   const setUsers = useCallback((v) => {
     setUsersRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_users", next); broadcast("nc_users", next);
+      broadcast("nc_users", next);
       if (SUPABASE_READY) {
         next.forEach(u => {
           const old = p.find(x => x.id === u.id);
@@ -588,7 +553,7 @@ export const useStore = () => {
   const setMenu = useCallback((v) => {
     setMenuRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_menu", next); broadcast("nc_menu", next);
+      broadcast("nc_menu", next);
       if (SUPABASE_READY) {
         next.forEach(m => {
           const old = p.find(x => x.id === m.id);
@@ -613,7 +578,7 @@ export const useStore = () => {
                JSON.stringify(old.items) !== JSON.stringify(o.items);
         return isChanged ? { ...o, updatedAt: new Date().toISOString() } : o;
       });
-      ls.set("nc_orders", next); broadcast("nc_orders", next);
+      broadcast("nc_orders", next);
       if (SUPABASE_READY) {
         const changed = next.filter(o => {
           const old = p.find(x => x.id === o.id);
@@ -633,7 +598,7 @@ export const useStore = () => {
   const setNotifications = useCallback((v) => {
     setNotificationsRaw(p => {
       const d = typeof v === "function" ? v(p) : v;
-      ls.set("nc_notifs", d); broadcast("nc_notifs", d); return d;
+      broadcast("nc_notifs", d); return d;
     });
   }, []);
 
@@ -641,7 +606,7 @@ export const useStore = () => {
   const setCashLog = useCallback((v) => {
     setCashLogRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_cash", next); broadcast("nc_cash", next);
+      broadcast("nc_cash", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(e => e.id));
         next.filter(e => !prevIds.has(e.id)).forEach(e => sbWrite.cashLog(e));
@@ -653,7 +618,7 @@ export const useStore = () => {
   const setTables = useCallback((v) => {
     setTablesRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_tables", next); broadcast("nc_tables", next);
+      broadcast("nc_tables", next);
       if (SUPABASE_READY) {
         next.forEach(t => {
           const old = p.find(x => x.id === t.id);
@@ -668,7 +633,7 @@ export const useStore = () => {
   const setDebts = useCallback((v) => {
     setDebtsRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_debts", next); broadcast("nc_debts", next);
+      broadcast("nc_debts", next);
       if (SUPABASE_READY) {
         next.forEach(d => {
           const old = p.find(x => x.id === d.id);
@@ -682,7 +647,7 @@ export const useStore = () => {
   const setExpenses = useCallback((v) => {
     setExpensesRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_expenses", next); broadcast("nc_expenses", next);
+      broadcast("nc_expenses", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(e => e.id));
         next.filter(e => !prevIds.has(e.id)).forEach(e => sbWrite.expense(e));
@@ -695,7 +660,7 @@ export const useStore = () => {
   const setReceipts = useCallback((v) => {
     setReceiptsRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_receipts", next); broadcast("nc_receipts", next);
+      broadcast("nc_receipts", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(r => r.id));
         next.filter(r => !prevIds.has(r.id)).forEach(r => sbWrite.receipt(r));
@@ -709,7 +674,7 @@ export const useStore = () => {
       const raw = typeof v === "function" ? v(p) : v;
       // نضيف طابع زمني عند كل حفظ — يُستخدم للتحكيم مع السحابة
       const d = { ...raw, _savedAt: new Date().toISOString() };
-      ls.set("nc_settings", d); broadcast("nc_settings", d);
+      broadcast("nc_settings", d);
       if (SUPABASE_READY) sbSaveSettings(d);
       return d;
     });
@@ -718,7 +683,7 @@ export const useStore = () => {
   const setCompLog = useCallback((v) => {
     setCompLogRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_complog", next); broadcast("nc_complog", next);
+      broadcast("nc_complog", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(c => c.id));
         next.filter(c => !prevIds.has(c.id)).forEach(c => sbWrite.compLog(c));
@@ -732,7 +697,7 @@ export const useStore = () => {
   const setCustomers = useCallback((v) => {
     setCustomersRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_customers", next); broadcast("nc_customers", next);
+      broadcast("nc_customers", next);
       if (SUPABASE_READY) {
         next.forEach(c => {
           const old = p.find(x => x.id === c.id);
@@ -747,7 +712,7 @@ export const useStore = () => {
   const setPermOverrides = useCallback((v) => {
     setPermOverridesRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_perms", next); broadcast("nc_perms", next);
+      broadcast("nc_perms", next);
       if (SUPABASE_READY) sbSavePermOverrides(next);
       return next;
     });
@@ -757,7 +722,7 @@ export const useStore = () => {
   const setShifts = useCallback((v) => {
     setShiftsRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_shifts", next); broadcast("nc_shifts", next);
+      broadcast("nc_shifts", next);
       if (SUPABASE_READY) {
         next.forEach(s => {
           const old = p.find(x => x.id === s.id);
@@ -772,7 +737,7 @@ export const useStore = () => {
   const setLoyaltyLog = useCallback((v) => {
     setLoyaltyLogRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_loyalty", next); broadcast("nc_loyalty", next);
+      broadcast("nc_loyalty", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(l => l.id));
         next.filter(l => !prevIds.has(l.id)).forEach(l => sbWrite.loyaltyLog(l));
@@ -793,7 +758,7 @@ export const useStore = () => {
         note: "", orderId: null, openedAt: null, branch: "main",
       };
       const next = [...p, newTable];
-      ls.set("nc_tables", next); broadcast("nc_tables", next);
+      broadcast("nc_tables", next);
       if (SUPABASE_READY) sbWrite.table(newTable);
       return next;
     });
@@ -802,7 +767,7 @@ export const useStore = () => {
   const setOutdoorTables = useCallback((v) => {
     setOutdoorTablesRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
-      ls.set("nc_outdoor_tables", next); broadcast("nc_outdoor_tables", next);
+      broadcast("nc_outdoor_tables", next);
       if (SUPABASE_READY) {
         next.forEach(t => {
           const old = p.find(x => x.id === t.id);
@@ -826,10 +791,28 @@ export const useStore = () => {
         note: "", orderId: null, openedAt: null, branch: "outdoor",
       };
       const next = [...p, newTable];
-      ls.set("nc_outdoor_tables", next); broadcast("nc_outdoor_tables", next);
+      broadcast("nc_outdoor_tables", next);
       if (SUPABASE_READY) sbWrite.table(newTable);
       return next;
     });
+  }, []);
+
+  // ══════════════════════════════════════════════════════════
+  // v22: دفع ذرّي أونلاين — السحابة أولاً (RPC أو fallback)، وعند النجاح
+  // فقط تُحدَّث الحالة المحلية. أي فشل/مهلة يُرمى للواجهة لعرضه للمستخدم.
+  // ══════════════════════════════════════════════════════════
+  const payOrder = useCallback(async (paidOrder, cashEntry, { freeTable = false } = {}) => {
+    if (SUPABASE_READY) {
+      await payOrderAtomic({
+        orderRow: rowOfOrder(paidOrder),
+        cashRow: rowOfCash(cashEntry),
+        freeTable,
+        tableNum: paidOrder.table,
+        branch: paidOrder.branch || "main",
+      });
+    }
+    setOrdersRaw(p => { const n = p.map(o => o.id === paidOrder.id ? paidOrder : o); broadcast("nc_orders", n); return n; });
+    setCashLogRaw(p => { const n = [cashEntry, ...p]; broadcast("nc_cash", n); return n; });
   }, []);
 
   // ── BroadcastChannel ───────────────────────────────────────
@@ -858,36 +841,6 @@ export const useStore = () => {
     };
     bc.addEventListener("message", handler);
     return () => bc.removeEventListener("message", handler);
-  }, []);
-
-  // ── storage event ──────────────────────────────────────────
-  useEffect(() => {
-    const handler = (e) => {
-      if (!e.key || !e.newValue) return;
-      try {
-        const data = JSON.parse(e.newValue);
-        switch (e.key) {
-          case "nc_users":          setUsersRaw(data);        break;
-          case "nc_menu":           setMenuRaw(data);          break;
-          case "nc_orders":         setOrdersRaw(data);        break;
-          case "nc_notifs":         setNotificationsRaw(data); break;
-          case "nc_cash":           setCashLogRaw(data);       break;
-          case "nc_tables":         setTablesRaw(data);        break;
-          case "nc_outdoor_tables": setOutdoorTablesRaw(data); break;
-          case "nc_debts":          setDebtsRaw(data);         break;
-          case "nc_expenses":       setExpensesRaw(data);      break;
-          case "nc_receipts":       setReceiptsRaw(data);      break;
-          case "nc_settings":       setSettingsRaw(data);      break;
-          case "nc_complog":        setCompLogRaw(data);       break;
-          case "nc_customers":      setCustomersRaw(data);     break;
-          case "nc_perms":          setPermOverridesRaw(data); break;
-          case "nc_shifts":         setShiftsRaw(data);        break;
-          case "nc_loyalty":        setLoyaltyLogRaw(data);    break;
-        }
-      } catch {}
-    };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
   }, []);
 
   // ══════════════════════════════════════════════════════════
@@ -934,50 +887,36 @@ export const useStore = () => {
       const [ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy] =
         results.map(r => r.status === "fulfilled" ? r.value : { data: null, error: r.reason });
 
-      if (ord.data)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   ls.set("nc_orders",   d); }
-      if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     ls.set("nc_menu",     d); }
-      if (prof.data?.length) { setUsersRaw(prof.data);               ls.set("nc_users", prof.data); }
+      if (ord.data)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   }
+      if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     }
+      if (prof.data?.length) { setUsersRaw(prof.data);               }
       else { getHashedDefaultUsers().then(hu => hu.forEach(u => sbWrite.user(u))); }
-      if (dbt.data)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    ls.set("nc_debts",    d); }
-      if (exp.data)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); ls.set("nc_expenses", d); }
-      if (cash.data) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  ls.set("nc_cash",     d); }
-      if (rct.data)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); ls.set("nc_receipts", d); }
-      if (tbl.data?.length)  { const d = tbl.data.map(mapTable);    setTablesRaw(d);   ls.set("nc_tables",   d); }
+      if (dbt.data)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    }
+      if (exp.data)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); }
+      if (cash.data) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  }
+      if (rct.data)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); }
+      if (tbl.data?.length)  { const d = tbl.data.map(mapTable);    setTablesRaw(d);   }
       if (outdoorTbl.data?.length) {
         const d = outdoorTbl.data.map(mapTable);
-        setOutdoorTablesRaw(d); ls.set("nc_outdoor_tables", d);
-      }
-      if (cmp.data)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  ls.set("nc_complog",  d); }
-      if (cust.data) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);ls.set("nc_customers",d); }
-      // ══ إعدادات: التحكيم بالطابع الزمني (_savedAt) ══
-      if (sett.data != null) {
+        setOutdoorTablesRaw(d); }
+      if (cmp.data)  { const d = cmp.data.map(mapCompLog);  setCompLogRaw(d);  }
+      if (cust.data) { const d = cust.data.map(mapCustomer);setCustomersRaw(d);}
+      // ══ v22: الإعدادات من السحابة دائماً — وإن كانت فارغة نبذر الافتراضية ══
+      {
         const cloudData = sett.data?.data || {};
-        const hasCloud = Object.keys(cloudData).length > 0;
-        const localRaw  = ls.get("nc_settings", {});
-        const localTs   = localRaw._savedAt  ? new Date(localRaw._savedAt).getTime()  : 0;
-        const cloudTs   = cloudData._savedAt ? new Date(cloudData._savedAt).getTime() : 0;
-        if (hasCloud && cloudTs >= localTs) {
-          const n = { ...DEFAULT_SETTINGS, ...cloudData };
-          setSettingsRaw(n); ls.set("nc_settings", n);
-        } else if (hasCloud && localTs > cloudTs) {
-          const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
-          setSettingsRaw(localFull); ls.set("nc_settings", localFull);
-          sbSaveSettings(localFull);
-        } else {
-          const localFull = { ...DEFAULT_SETTINGS, ...localRaw };
-          const stamped = { ...localFull, _savedAt: localFull._savedAt || new Date().toISOString() };
-          setSettingsRaw(stamped); ls.set("nc_settings", stamped);
+        if (Object.keys(cloudData).length > 0) {
+          setSettingsRaw({ ...DEFAULT_SETTINGS, ...cloudData });
+        } else if (sett.data != null || /no rows|PGRST116/i.test(String(sett.error?.message || ""))) {
+          const stamped = { ...DEFAULT_SETTINGS, _savedAt: new Date().toISOString() };
+          setSettingsRaw(stamped);
           sbSaveSettings(stamped);
         }
       }
-      if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); ls.set("nc_perms", perms.data.data); }
-      if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   ls.set("nc_shifts",   d); }
-      if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);ls.set("nc_loyalty",  d); }
+      if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); }
+      if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   }
+      if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);}
 
       setCloudReady(true);
-      // fix(sync): فرّغ الـ outbox فوراً بعد اكتمال التحميل إن كان الجهاز متصلاً
-      // هذا يضمن رفع الطلبات المتراكمة دون انتظار online event (الذي لا يُطلَق إن كان الجهاز متصلاً أصلاً)
-      if (navigator.onLine) { try { flushOutbox(); } catch {} }
     }).finally(() => setSyncing(false));
   }, []);
 
@@ -991,20 +930,6 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     const onReconnect = async () => {
       lastPullRef.current = Date.now();
-      await flushOutbox();
-      // إن كانت المزامنة المحلية مفعّلة: ارفع للسحابة العملَ المُدمَج محليًّا
-      // (طلبات آخر ٢٤ ساعة + الطاولات) حتى يرفع أيُّ جهاز يتصل بالإنترنت
-      // ما استقبله من بقية الأجهزة عبر LAN — الرفع idempotent فلا تكرار.
-      try {
-        if (ls.get("nc_settings", {})?.lan?.enabled) {
-          const DAY = 86400000, now = Date.now();
-          (ls.get("nc_orders", []) || []).forEach(o => {
-            const ut = new Date(o?.updatedAt || o?.createdAt || 0).getTime();
-            if (now - ut < DAY) sbWrite.order(o);
-          });
-          (ls.get("nc_tables", []) || []).forEach(t => sbWrite.table(t));
-        }
-      } catch {}
       await pullAll();
     };
     const onVis = () => {
@@ -1018,85 +943,12 @@ export const useStore = () => {
     };
   }, [pullAll]);
 
-  // ══════════════════════════════════════════════════════════
-  // مزامنة الشبكة المحلية (LAN) — اختيارية، لا تعمل إلا داخل تطبيق
-  // أندرويد وعند تفعيلها من الإعدادات. الكاشير = خادم؛ البقية عملاء.
-  // عند الإيقاف لا تؤثر إطلاقًا على السلوك الأونلاين الحالي.
-  // ══════════════════════════════════════════════════════════
-  const lanSnap = useRef({});   // table -> { id: jsonString }  (كشف التغيّر للدفع)
-  const lanUt = useRef({});     // table -> { id: _ut }         (حلّ التعارض LWW)
-  const lanSince = useRef(0);
-  const lanApplying = useRef(false);
-
-  // دفع التغييرات المحلية إلى خادم الكاشير
-  useEffect(() => {
-    const cfg = settings?.lan;
-    if (!isNativeApp() || !cfg?.enabled) return;
-    const base = lanBase(cfg); if (!base) return;
-    if (lanApplying.current) return;
-    const data = { orders, tables, outdoor_tables: outdoorTables };
-    for (const tbl of Object.keys(data)) {
-      const arr = data[tbl]; if (!Array.isArray(arr)) continue;
-      const snap = (lanSnap.current[tbl] ||= {});
-      for (const row of arr) {
-        if (!row || row.id == null) continue;
-        const js = JSON.stringify(row);
-        if (snap[row.id] !== js) { snap[row.id] = js; lanPush(base, tbl, row).catch(() => {}); }
-      }
-    }
-  }, [orders, tables, outdoorTables, settings]);
-
-  // سحب تغييرات بقية الأجهزة من خادم الكاشير كل 1.5 ثانية
-  useEffect(() => {
-    const cfg = settings?.lan;
-    if (!isNativeApp() || !cfg?.enabled) return;
-    const base = lanBase(cfg); if (!base) return;
-    const setters = {
-      orders: [setOrdersRaw, "nc_orders"],
-      tables: [setTablesRaw, "nc_tables"],
-      outdoor_tables: [setOutdoorTablesRaw, "nc_outdoor_tables"],
-    };
-    let stop = false;
-    const tick = async () => {
-      try {
-        const res = await lanChanges(base, lanSince.current);
-        if (stop || !res || !Array.isArray(res.rows)) return;
-        if (res.ts) lanSince.current = res.ts;
-        const byTable = {};
-        for (const row of res.rows) { const t = row._table; if (t) (byTable[t] ||= []).push(row); }
-        lanApplying.current = true;
-        for (const t of Object.keys(byTable)) {
-          const entry = setters[t]; if (!entry) continue;
-          const [setter, lsKey] = entry;
-          setter(prev => {
-            const map = new Map((prev || []).map(r => [r.id, r]));
-            for (const row of byTable[t]) {
-              const clean = { ...row }; delete clean._table; delete clean._ut;
-              const prevUt = (lanUt.current[t] ||= {})[row.id] || 0;
-              if ((row._ut || 0) >= prevUt) {
-                map.set(row.id, clean);
-                lanUt.current[t][row.id] = row._ut || 0;
-                (lanSnap.current[t] ||= {})[row.id] = JSON.stringify(clean);
-              }
-            }
-            const next = Array.from(map.values());
-            ls.set(lsKey, next); broadcast(lsKey, next);
-            return next;
-          });
-        }
-        lanApplying.current = false;
-      } catch { lanApplying.current = false; }
-    };
-    const iv = setInterval(tick, 1500);
-    tick();
-    return () => { stop = true; clearInterval(iv); };
-  }, [settings]);
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeOrders(
-      (r) => setOrdersRaw(p => { const m = mapOrder(r); const n = [m, ...p.filter(o => o.id !== m.id)]; ls.set("nc_orders", n); broadcast("nc_orders", n); return n; }),
-      (r) => setOrdersRaw(p => { const m = mapOrder(r); const n = p.map(o => o.id === m.id ? m : o);    ls.set("nc_orders", n); broadcast("nc_orders", n); return n; }),
-      (r) => setOrdersRaw(p => { const n = p.filter(o => o.id !== r.id);                                ls.set("nc_orders", n); broadcast("nc_orders", n); return n; }),
+      (r) => setOrdersRaw(p => { const m = mapOrder(r); const n = [m, ...p.filter(o => o.id !== m.id)]; broadcast("nc_orders", n); return n; }),
+      (r) => setOrdersRaw(p => { const m = mapOrder(r); const n = p.map(o => o.id === m.id ? m : o);    broadcast("nc_orders", n); return n; }),
+      (r) => setOrdersRaw(p => { const n = p.filter(o => o.id !== r.id);                                broadcast("nc_orders", n); return n; }),
     );
   }, []);
 
@@ -1104,14 +956,14 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribeTables((newRow, deletedId) => {
       if (deletedId) {
-        setTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); ls.set("nc_tables", n); broadcast("nc_tables", n); return n; });
-        setOutdoorTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); ls.set("nc_outdoor_tables", n); broadcast("nc_outdoor_tables", n); return n; });
+        setTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); broadcast("nc_tables", n); return n; });
+        setOutdoorTablesRaw(p => { const n = p.filter(t => t.id !== deletedId); broadcast("nc_outdoor_tables", n); return n; });
       } else if (newRow) {
         const t = mapTable(newRow);
         if (t.branch === "outdoor") {
-          setOutdoorTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); ls.set("nc_outdoor_tables", n); broadcast("nc_outdoor_tables", n); return n; });
+          setOutdoorTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); broadcast("nc_outdoor_tables", n); return n; });
         } else {
-          setTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); ls.set("nc_tables", n); broadcast("nc_tables", n); return n; });
+          setTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); broadcast("nc_tables", n); return n; });
         }
       }
     });
@@ -1120,9 +972,9 @@ export const useStore = () => {
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeDebts(
-      (r) => setDebtsRaw(p => { const d = mapDebt(r); const n = [d, ...p.filter(x => x.id !== d.id)]; ls.set("nc_debts", n); broadcast("nc_debts", n); return n; }),
-      (r) => setDebtsRaw(p => { const d = mapDebt(r); const n = p.map(x => x.id === d.id ? d : x);   ls.set("nc_debts", n); broadcast("nc_debts", n); return n; }),
-      (r) => setDebtsRaw(p => { const n = p.filter(x => x.id !== r.id);                               ls.set("nc_debts", n); broadcast("nc_debts", n); return n; }),
+      (r) => setDebtsRaw(p => { const d = mapDebt(r); const n = [d, ...p.filter(x => x.id !== d.id)]; broadcast("nc_debts", n); return n; }),
+      (r) => setDebtsRaw(p => { const d = mapDebt(r); const n = p.map(x => x.id === d.id ? d : x);   broadcast("nc_debts", n); return n; }),
+      (r) => setDebtsRaw(p => { const n = p.filter(x => x.id !== r.id);                               broadcast("nc_debts", n); return n; }),
     );
   }, []);
 
@@ -1131,10 +983,10 @@ export const useStore = () => {
     const ch = supabase.channel("profiles-rt-v6")
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (p) => {
         if (p.eventType === "INSERT" || p.eventType === "UPDATE") {
-          setUsersRaw(prev => { const n = [p.new, ...prev.filter(u => u.id !== p.new.id)]; ls.set("nc_users", n); broadcast("nc_users", n); return n; });
+          setUsersRaw(prev => { const n = [p.new, ...prev.filter(u => u.id !== p.new.id)]; broadcast("nc_users", n); return n; });
         }
         if (p.eventType === "DELETE") {
-          setUsersRaw(prev => { const n = prev.filter(u => u.id !== p.old.id); ls.set("nc_users", n); broadcast("nc_users", n); return n; });
+          setUsersRaw(prev => { const n = prev.filter(u => u.id !== p.old.id); broadcast("nc_users", n); return n; });
         }
       }).subscribe();
     return () => supabase.removeChannel(ch);
@@ -1143,18 +995,18 @@ export const useStore = () => {
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeMenu(
-      (r) => setMenuRaw(p => { const m = mapMenu(r); const n = [m, ...p.filter(x => x.id !== m.id)]; ls.set("nc_menu", n); broadcast("nc_menu", n); return n; }),
-      (r) => setMenuRaw(p => { const m = mapMenu(r); const n = p.map(x => x.id === m.id ? m : x);   ls.set("nc_menu", n); broadcast("nc_menu", n); return n; }),
-      (r) => setMenuRaw(p => { const n = p.filter(x => x.id !== r.id);                               ls.set("nc_menu", n); broadcast("nc_menu", n); return n; }),
+      (r) => setMenuRaw(p => { const m = mapMenu(r); const n = [m, ...p.filter(x => x.id !== m.id)]; broadcast("nc_menu", n); return n; }),
+      (r) => setMenuRaw(p => { const m = mapMenu(r); const n = p.map(x => x.id === m.id ? m : x);   broadcast("nc_menu", n); return n; }),
+      (r) => setMenuRaw(p => { const n = p.filter(x => x.id !== r.id);                               broadcast("nc_menu", n); return n; }),
     );
   }, []);
 
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeExpenses(
-      (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = [e, ...p.filter(x => x.id !== e.id)]; ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
-      (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = p.map(x => x.id === e.id ? e : x);   ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
-      (r) => setExpensesRaw(p => { const n = p.filter(x => x.id !== r.id);                                  ls.set("nc_expenses", n); broadcast("nc_expenses", n); return n; }),
+      (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = [e, ...p.filter(x => x.id !== e.id)]; broadcast("nc_expenses", n); return n; }),
+      (r) => setExpensesRaw(p => { const e = mapExpense(r); const n = p.map(x => x.id === e.id ? e : x);   broadcast("nc_expenses", n); return n; }),
+      (r) => setExpensesRaw(p => { const n = p.filter(x => x.id !== r.id);                                  broadcast("nc_expenses", n); return n; }),
     );
   }, []);
 
@@ -1162,24 +1014,24 @@ export const useStore = () => {
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeReceipts(
-      (r) => setReceiptsRaw(p => { const m = mapReceipt(r); const n = [m, ...p.filter(x => x.id !== m.id)]; ls.set("nc_receipts", n); broadcast("nc_receipts", n); return n; }),
-      (r) => setReceiptsRaw(p => { const m = mapReceipt(r); const n = p.map(x => x.id === m.id ? m : x);   ls.set("nc_receipts", n); broadcast("nc_receipts", n); return n; }),
+      (r) => setReceiptsRaw(p => { const m = mapReceipt(r); const n = [m, ...p.filter(x => x.id !== m.id)]; broadcast("nc_receipts", n); return n; }),
+      (r) => setReceiptsRaw(p => { const m = mapReceipt(r); const n = p.map(x => x.id === m.id ? m : x);   broadcast("nc_receipts", n); return n; }),
     );
   }, []);
 
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeCompLog(
-      (r) => setCompLogRaw(p => { const c = mapCompLog(r); const n = [c, ...p.filter(x => x.id !== c.id)]; ls.set("nc_complog", n); broadcast("nc_complog", n); return n; }),
+      (r) => setCompLogRaw(p => { const c = mapCompLog(r); const n = [c, ...p.filter(x => x.id !== c.id)]; broadcast("nc_complog", n); return n; }),
     );
   }, []);
 
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeCustomers(
-      (r) => setCustomersRaw(p => { const c = mapCustomer(r); const n = [c, ...p.filter(x => x.id !== c.id)]; ls.set("nc_customers", n); broadcast("nc_customers", n); return n; }),
-      (r) => setCustomersRaw(p => { const c = mapCustomer(r); const n = p.map(x => x.id === c.id ? c : x);   ls.set("nc_customers", n); broadcast("nc_customers", n); return n; }),
-      (r) => setCustomersRaw(p => { const n = p.filter(x => x.id !== r.id);                                   ls.set("nc_customers", n); broadcast("nc_customers", n); return n; }),
+      (r) => setCustomersRaw(p => { const c = mapCustomer(r); const n = [c, ...p.filter(x => x.id !== c.id)]; broadcast("nc_customers", n); return n; }),
+      (r) => setCustomersRaw(p => { const c = mapCustomer(r); const n = p.map(x => x.id === c.id ? c : x);   broadcast("nc_customers", n); return n; }),
+      (r) => setCustomersRaw(p => { const n = p.filter(x => x.id !== r.id);                                   broadcast("nc_customers", n); return n; }),
     );
   }, []);
 
@@ -1187,14 +1039,8 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribeSettings((row) => {
       if (row?.data) {
-        // تحكيم: نقبل تحديث realtime فقط إن كان أحدث من المحلي
-        const localRaw = ls.get("nc_settings", {});
-        const localTs  = localRaw._savedAt  ? new Date(localRaw._savedAt).getTime()  : 0;
-        const cloudTs  = row.data._savedAt  ? new Date(row.data._savedAt).getTime()  : 0;
-        if (cloudTs >= localTs) {
-          const n = { ...DEFAULT_SETTINGS, ...row.data };
-          setSettingsRaw(n); ls.set("nc_settings", n); broadcast("nc_settings", n);
-        }
+        const n = { ...DEFAULT_SETTINGS, ...row.data };
+        setSettingsRaw(n); broadcast("nc_settings", n);
       }
     });
   }, []);
@@ -1203,7 +1049,7 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     return subscribePermOverrides((row) => {
       if (row?.data) {
-        setPermOverridesRaw(() => { ls.set("nc_perms", row.data); broadcast("nc_perms", row.data); return row.data; });
+        setPermOverridesRaw(() => { broadcast("nc_perms", row.data); return row.data; });
       }
     });
   }, []);
@@ -1212,8 +1058,8 @@ export const useStore = () => {
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeCashLog(
-      (r) => setCashLogRaw(p => { const c = mapCash(r); const n = [c, ...p.filter(x => x.id !== c.id)]; ls.set("nc_cash", n); broadcast("nc_cash", n); return n; }),
-      (r) => setCashLogRaw(p => { const n = p.filter(x => x.id !== r.id); ls.set("nc_cash", n); broadcast("nc_cash", n); return n; }),
+      (r) => setCashLogRaw(p => { const c = mapCash(r); const n = [c, ...p.filter(x => x.id !== c.id)]; broadcast("nc_cash", n); return n; }),
+      (r) => setCashLogRaw(p => { const n = p.filter(x => x.id !== r.id); broadcast("nc_cash", n); return n; }),
     );
   }, []);
 
@@ -1221,9 +1067,9 @@ export const useStore = () => {
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeShifts(
-      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = [s, ...p.filter(x => x.id !== s.id)]; ls.set("nc_shifts", n); broadcast("nc_shifts", n); return n; }),
-      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = p.map(x => x.id === s.id ? s : x);   ls.set("nc_shifts", n); broadcast("nc_shifts", n); return n; }),
-      (r) => setShiftsRaw(p => { const n = p.filter(x => x.id !== r.id);                                ls.set("nc_shifts", n); broadcast("nc_shifts", n); return n; }),
+      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = [s, ...p.filter(x => x.id !== s.id)]; broadcast("nc_shifts", n); return n; }),
+      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = p.map(x => x.id === s.id ? s : x);   broadcast("nc_shifts", n); return n; }),
+      (r) => setShiftsRaw(p => { const n = p.filter(x => x.id !== r.id);                                broadcast("nc_shifts", n); return n; }),
     );
   }, []);
 
@@ -1231,7 +1077,7 @@ export const useStore = () => {
   useEffect(() => {
     if (!SUPABASE_READY) return;
     return subscribeLoyaltyLog(
-      (r) => setLoyaltyLogRaw(p => { const l = mapLoyalty(r); const n = [l, ...p.filter(x => x.id !== l.id)]; ls.set("nc_loyalty", n); broadcast("nc_loyalty", n); return n; }),
+      (r) => setLoyaltyLogRaw(p => { const l = mapLoyalty(r); const n = [l, ...p.filter(x => x.id !== l.id)]; broadcast("nc_loyalty", n); return n; }),
     );
   }, []);
 
@@ -1252,6 +1098,7 @@ export const useStore = () => {
     permOverrides, setPermOverrides,
     shifts, setShifts,
     loyaltyLog, setLoyaltyLog,
+    payOrder,
     syncing, cloudReady,
   };
 };
