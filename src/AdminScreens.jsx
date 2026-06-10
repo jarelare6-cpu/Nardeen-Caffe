@@ -1,7 +1,14 @@
 // شاشات الإدارة — مفصولة من App.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
+import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
+
+// v23: تأكيد كتابي للإجراءات التي لا يمكن التراجع عنها
+const confirmDanger = (label) => {
+  const v = window.prompt(`⚠️ ${label}\nهذا الإجراء لا يمكن التراجع عنه!\nللمتابعة اكتب كلمة: تأكيد`);
+  return (v || "").trim() === "تأكيد";
+};
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
@@ -756,14 +763,17 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
                         const tOrders = orders.filter(o => o.status === "ready");
                         if (!tOrders.length) { showToast("لا توجد طلبات جاهزة للدفع", "warn"); return; }
                         if (window.confirm(`دفع كامل طاولة ${t.number}؟ (${total.toLocaleString()} ${CUR})`)) {
+                          if (typeof navigator !== "undefined" && navigator.onLine === false) { showToast("⚠ لا يوجد اتصال — لا يمكن الدفع", "error"); return; }
                           const now = new Date().toISOString();
                           const updated = store.orders.map(o =>
                             tOrders.find(x => x.id === o.id)
-                              ? { ...o, status: "paid", paymentType: "cash", paidAt: now }
+                              ? { ...o, status: "paid", paymentType: "cash", paidAt: now, stockDeducted: true }
                               : o
                           );
                           store.setOrders(() => updated);
+                          tOrders.forEach(o => deductOrderStock(store, o)); // v23
                           store.setTables(p => p.map(tb => tb.id === t.id ? { ...tb, status: "free", openedAt: null } : tb));
+                          logActivity({ action: "دفع طلب", details: `دفع كامل طاولة ${t.number} (${tOrders.length} طلب)`, userName: user?.name || "", userRole: user?.role || "admin", orderNum: "", amount: total, branch: "main" });
                           showToast(`✓ تم دفع طاولة ${t.number} — ${total.toLocaleString()} ${CUR}`);
                         }
                       }}
@@ -1920,32 +1930,33 @@ export function SettingsTab({store,showToast,dm,user}){
           <div className="card" style={{gridColumn:"1/-1",borderTop:"4px solid #c62828"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={async()=>{if(window.confirm("تصفير جميع الطلبات؟ لا يمكن التراجع!")){store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}showToast("تم تصفير المبيعات","warn");}}}
+              <button onClick={async()=>{if(confirmDanger("تصفير جميع الطلبات والمبيعات")){store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}logActivity({action:"تصفير بيانات",details:"الطلبات + سجل النقد",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير المبيعات","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المبيعات
               </button>
-              <button onClick={async()=>{if(window.confirm("تصفير الديون؟")){store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}showToast("تم","warn");}}}
+              <button onClick={async()=>{if(confirmDanger("تصفير الديون")){store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}logActivity({action:"تصفير بيانات",details:"الديون",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الديون
               </button>
-              <button onClick={async()=>{if(window.confirm("تصفير المصاريف؟")){store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}showToast("تم","warn");}}}
+              <button onClick={async()=>{if(confirmDanger("تصفير المصاريف")){store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}logActivity({action:"تصفير بيانات",details:"المصاريف",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المصاريف
               </button>
-              <button onClick={async()=>{if(window.confirm("تصفير سجل الضيافة؟")){store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}showToast("تم","warn");}}}
+              <button onClick={async()=>{if(confirmDanger("تصفير سجل الضيافة")){store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}logActivity({action:"تصفير بيانات",details:"سجل الضيافة",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#00897b",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الضيافة
               </button>
-              <button onClick={async()=>{if(window.confirm("تصفير بيانات الزبائن؟")){store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}showToast("تم","warn");}}}
+              <button onClick={async()=>{if(confirmDanger("تصفير بيانات الزبائن")){store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}logActivity({action:"تصفير بيانات",details:"الزبائن",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#1565c0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الزبائن
               </button>
-              <button onClick={async()=>{if(window.confirm("تصفير سجل الفواتير؟ لا يمكن التراجع!")){store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}showToast("تم تصفير الفواتير","warn");}}}
+              <button onClick={async()=>{if(confirmDanger("تصفير سجل الفواتير")){store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}logActivity({action:"تصفير بيانات",details:"الفواتير",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير الفواتير","warn");}}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#37474f",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الفواتير
               </button>
               <button onClick={async()=>{
-                if(!window.confirm("إعادة تعيين الإعدادات للافتراضية وحذف بيانات السحابة القديمة؟")) return;
+                if(!confirmDanger("إعادة تعيين الإعدادات للافتراضية")) return;
+                logActivity({action:"تصفير بيانات",details:"الإعدادات",userName:user?.name||"",userRole:"admin"});
                 // 1. احذف إعدادات السحابة القديمة
                 if(SUPABASE_READY){
                   try{ await sbUpsert("app_settings",{id:"main",data:{},updated_at:new Date().toISOString()},"id"); }catch(e){ console.warn(e); }
@@ -1977,7 +1988,7 @@ export function SettingsTab({store,showToast,dm,user}){
 // OUTDOOR ADMIN TAB — لوحة إدارة الحديقة للأدمن
 // ═══════════════════════════════════════════════════════════════
 
-export function OutdoorAdminTab({ store, showToast, dm, settings }) {
+export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
   const CUR = settings?.currency || "ل.س";
   const [adminTab, setAdminTab] = React.useState("overview"); // overview | orders | receipts | tables | reset
 
@@ -1999,7 +2010,8 @@ export function OutdoorAdminTab({ store, showToast, dm, settings }) {
 
   // ── تصفير الحديقة ──────────────────────────────────────────
   const resetOutdoorOrders = async () => {
-    if (!window.confirm("تصفير جميع طلبات الحديقة؟ لا يمكن التراجع!")) return;
+    if (!confirmDanger("تصفير جميع طلبات الحديقة")) return;
+    logActivity({action:"تصفير بيانات",details:"طلبات الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     store.setOrders(p => p.filter(o => o.branch !== "outdoor"));
     store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
     if (SUPABASE_READY) {
@@ -2011,7 +2023,8 @@ export function OutdoorAdminTab({ store, showToast, dm, settings }) {
   };
 
   const resetOutdoorReceipts = async () => {
-    if (!window.confirm("تصفير فواتير الحديقة؟")) return;
+    if (!confirmDanger("تصفير فواتير الحديقة")) return;
+    logActivity({action:"تصفير بيانات",details:"فواتير الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     store.setReceipts(p => p.filter(r => r.branch !== "outdoor"));
     const ids = outdoorReceipts.map(r => r.id);
     if (SUPABASE_READY) { for (const id of ids) { try { await sbDelete("receipts", id); } catch {} } }
@@ -2019,7 +2032,8 @@ export function OutdoorAdminTab({ store, showToast, dm, settings }) {
   };
 
   const resetOutdoorCash = async () => {
-    if (!window.confirm("تصفير كاش الحديقة؟")) return;
+    if (!confirmDanger("تصفير كاش الحديقة")) return;
+    logActivity({action:"تصفير بيانات",details:"كاش الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     const cashIds = outdoorCash.map(e => e.id);
     store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
     if (SUPABASE_READY) { for (const id of cashIds) { try { await sbDelete("cash_log", id); } catch {} } }
@@ -2033,7 +2047,8 @@ export function OutdoorAdminTab({ store, showToast, dm, settings }) {
   };
 
   const resetAllOutdoor = async () => {
-    if (!window.confirm("⚠️ تصفير كل بيانات الحديقة (طلبات + كاش + فواتير)؟")) return;
+    if (!confirmDanger("تصفير كل بيانات الحديقة (طلبات + كاش + فواتير)")) return;
+    logActivity({action:"تصفير بيانات",details:"كل بيانات الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     const oIds = outdoorOrders.map(o => o.id);
     const rIds = outdoorReceipts.map(r => r.id);
     const cIds = outdoorCash.map(e => e.id);
@@ -2228,15 +2243,9 @@ export function OutdoorAdminTab({ store, showToast, dm, settings }) {
                     )}
                     {isBusy && (
                       <button onClick={async () => {
-                        if (!window.confirm(`تحرير ${t.label} بدون دفع؟ سيتم إرجاع المخزون للبار`)) return;
+                        if (!window.confirm(`تحرير ${t.label} بدون دفع؟ سيُلغى الطلب المعلّق`)) return;
                         if (tOrder && tOrder.status === "pending") {
-                          store.setMenu(p => p.map(m => {
-                            const ci = tOrder.items?.find(c => c.itemId === m.id);
-                            if (!ci) return m;
-                            const newItem = { ...m, stock: (m.stock||0)+ci.qty, totalSold: Math.max(0,(m.totalSold||0)-ci.qty) };
-                            if (SUPABASE_READY) sbUpsert("menu_items",{id:newItem.id,stock:newItem.stock,total_sold:newItem.totalSold},"id").catch(()=>{});
-                            return newItem;
-                          }));
+                          restoreOrderStock(store, tOrder); // v23: يُرجع فقط إن كان قد خُصم
                           store.setOrders(p => p.map(o => o.id === tOrder.id ? {...o, status:"cancelled"} : o));
                         }
                         store.setOutdoorTables(p => p.map(x =>

@@ -5,8 +5,9 @@ import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity }
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
+import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
-import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt, generateZReportPDF } from "./receipts.js";
 
 export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [cart,setCart]=useState([]);
@@ -68,11 +69,15 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       });
       const newTotal=mergedItems.reduce((s,i)=>s+i.price*i.qty,0);
       store.setOrders(p=>p.map(o=>o.id===targetOrderId?{...o,items:mergedItems,total:newTotal,status:"pending"}:o));
-      store.setMenu(p=>p.map(m=>{
-        const ci=cart.find(c=>c.itemId===m.id);
-        if(!ci) return m;
-        return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
-      }));
+      // v23: إن كان الطلب الهدف من النظام القديم (مخصوم) نخصم الإضافات فوراً؛
+      // وإن كان v23 (غير مخصوم) فلا خصم الآن — يُخصم كاملاً عند الدفع.
+      if (isStockDeducted(target)) {
+        store.setMenu(p=>p.map(m=>{
+          const ci=cart.find(c=>c.itemId===m.id);
+          if(!ci) return m;
+          return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
+        }));
+      }
       const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
       const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
       if(hasDrinks) addNotification(`🍹 إضافة للطلب #${target.orderNum} — البار`,[ROLES.BAR],targetOrderId);
@@ -95,14 +100,10 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         paymentType:"cash",
         status:ORDER_STATUS.PENDING,
         createdAt:new Date().toISOString(),paymentStatus:"pending",
+        stockDeducted:false, // v23: الخصم عند الدفع لا عند الإنشاء
       };
       store.setOrders(p=>[newOrder,...p]);
       logActivity({ action: "إنشاء طلب", details: `${cart.length} صنف${tableNum.trim() ? ` — طاولة ${tableNum.trim()}` : ""}`, userName: user.name, userRole: user.role, orderNum, amount: finalTotal, branch: "main" });
-      store.setMenu(p=>p.map(m=>{
-        const ci=cart.find(c=>c.itemId===m.id);
-        if(!ci) return m;
-        return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
-      }));
       // إضافة الزبون لملف الزبائن — store.setCustomers يتولى المزامنة مع Supabase تلقائياً
       if(customerName.trim()){
         store.setCustomers(p=>{
@@ -333,11 +334,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   };
   const cancelOrder=(order)=>{
     store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled"}:o));
-    store.setMenu(p=>p.map(m=>{
-      const ci=order.items.find(i=>i.itemId===m.id);
-      if(!ci) return m;
-      return{...m,stock:m.stock+ci.qty,totalSold:Math.max(0,m.totalSold-ci.qty)};
-    }));
+    restoreOrderStock(store, order); // v23: يُرجع فقط إن كان قد خُصم
     logActivity({ action: "إلغاء طلب", details: "", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
     showToast(`تم إلغاء الطلب #${order.orderNum}`,"error");
   };
@@ -574,6 +571,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       paidAt: new Date().toISOString(), paidBy: user.id, paidByName: user.name,
       discount: disc, originalTotal: order.total, total: finalTotal,
       shiftId: openShift?.id || order.shiftId || null,
+      stockDeducted: true, // v23: يُخصم الآن عند الدفع
     };
     const cashEntry = {
       id: Date.now().toString(), orderId: order.id, orderNum: order.orderNum,
@@ -596,6 +594,9 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       setPayingId(null);
       return;
     }
+
+    // v23: خصم المخزون عند الدفع (للطلبات الجديدة غير المخصومة)
+    deductOrderStock(store, order);
 
     if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
       const cust = (store.customers || []).find(c => c.name === order.customerName);
@@ -652,9 +653,11 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     }
     const order = debtModal;
     const updated = store.orders.map(o =>
-      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse } : o
+      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse, stockDeducted: true } : o
     );
     store.setOrders(() => updated);
+    deductOrderStock(store, order); // v23: خصم عند تحويل الطلب لدين
+    logActivity({ action: "تسجيل دين", details: nameToUse, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
 
     if (debtMergeMode) {
       const existingDebt = store.debts.find(
@@ -717,14 +720,17 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     }
     if (compAmt <= 0) { showToast("⚠ لا توجد أصناف جديدة للضيافة", "warn"); setCompModal(null); return; }
     const remaining = order.total - compAmt;
+    const fullyComp = remaining <= 0;
     const updated = store.orders.map(o => o.id === order.id ? {
-      ...o, status: remaining <= 0 ? "complimentary" : "ready",
+      ...o, status: fullyComp ? "complimentary" : "ready",
       items: updatedItems, compAmount: (o.compAmount||0) + compAmt,
       total: Math.max(0, remaining), originalTotal: o.originalTotal || order.total,
-      isComplimentary: remaining <= 0,
+      isComplimentary: fullyComp,
       paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
+      stockDeducted: fullyComp ? true : (o.stockDeducted !== false), // v23
     } : o);
     store.setOrders(() => updated);
+    if (fullyComp) deductOrderStock(store, order); // v23: الضيافة الكاملة = تسليم
     store.setCompLog(p => [{
       id: "comp" + Date.now(),
       customerName: order.customerName || "زبون",
@@ -778,6 +784,10 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
       <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 12, color: "#c62828" }}>
         ⏳ طلبات جاهزة للدفع ({filteredReady.length})
+        <button onClick={() => { generateZReportPDF(store, settings, user); logActivity({ action: "تقرير إقفال", details: "تقرير اليوم", userName: user.name, userRole: user.role }); }}
+          style={{ float: "left", background: "#1a237e", color: "#fff", border: "none", borderRadius: 9, padding: "7px 14px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+          🧾 تقرير إقفال اليوم
+        </button>
       </h3>
 
       {!filteredReady.length ? (
@@ -905,8 +915,10 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                   paymentType: "cash", paidAt: new Date().toISOString(),
                   paidBy: user.id, paidByName: user.name,
                   partialPaid: paid, total: paid,
+                  stockDeducted: true, // v23
                 } : o);
                 store.setOrders(() => updated);
+                deductOrderStock(store, partialModal); // v23: خصم عند الدفع الجزئي
                 store.setCashLog(p => [{ id: Date.now().toString(), orderId: partialModal.id, orderNum: partialModal.orderNum, amount: paid, at: new Date().toISOString(), by: user.name, type: "partial" }, ...p]);
                 store.setDebts(p => [{ id: "d" + Date.now(), orderId: partialModal.id, orderNum: partialModal.orderNum, customerName: partialModal.customerName || "زبون", amount: remaining, remaining, date: new Date().toISOString(), settled: false, settledAt: null, createdBy: user.name, notes: `دفع جزئي — دفع ${paid.toLocaleString()} ${CUR}` }, ...p]);
                 saveReceiptRecord({ ...partialModal, total: paid, paymentType: "cash" }, settings, store, 0);

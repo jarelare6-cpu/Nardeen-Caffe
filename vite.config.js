@@ -29,6 +29,17 @@ export default defineConfig({
   ],
   publicDir: "public",
   define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
-  build: { outDir: "dist", assetsDir: "assets" },
+  build: {
+    outDir: "dist", assetsDir: "assets",
+    // v23: تقسيم المكتبات لملفات منفصلة — تحميل أولي أسرع وكاش أفضل
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+          supabase: ["@supabase/supabase-js"],
+        },
+      },
+    },
+  },
   server: { port: 3000, host: true },
 });

@@ -54,3 +54,85 @@ export const saveReceipt = (order, settings, store) => { if (store) saveReceiptR
 // ═══════════════════════════════════
 // GLOBAL CSS
 // ═══════════════════════════════════
+
+
+// ══════════════════════════════════════════════════════════════
+// v23: تقرير الإقفال اليومي (Z-Report) — PDF قابل للطباعة
+// ══════════════════════════════════════════════════════════════
+export const generateZReportPDF = (store, settings, user) => {
+  const CUR = settings?.currency || "ل.س";
+  const cafeName = settings?.cafeName || "Nardeen Caffe";
+  const now = new Date();
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const inToday = (iso) => iso && new Date(iso) >= dayStart;
+
+  const orders = store.orders || [];
+  const paidToday = orders.filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
+  const fullPaid = paidToday.filter(o => o.paymentStatus !== "partial");
+  const partials = paidToday.filter(o => o.paymentStatus === "partial");
+  const sum = (arr, f = (o) => o.total || 0) => arr.reduce((s, o) => s + f(o), 0);
+
+  const cashSales = sum(fullPaid.filter(o => o.paymentType === "cash"));
+  const cardSales = sum(fullPaid.filter(o => o.paymentType === "card"));
+  const tronSales = sum(fullPaid.filter(o => o.paymentType === "tron"));
+  const partialPaidAmt = sum(partials, o => o.partialPaid || o.total || 0);
+  const revenue = sum(paidToday);
+
+  const debtsToday = (store.debts || []).filter(d => inToday(d.date));
+  const debtsNew = sum(debtsToday, d => d.amount || 0);
+  const compToday = sum((store.compLog || []).filter(c => inToday(c.createdAt)), c => c.amount || 0);
+  const expToday = sum((store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inToday(e.date)), e => e.amount || 0);
+  const tronExtra = sum((store.receipts || []).filter(r => (r.tronAmount || 0) > 0 && inToday(r.createdAt)), r => r.tronAmount || 0);
+  const debtSettledCash = sum((store.cashLog || []).filter(c => c.type === "debt_settle" && inToday(c.at)), c => c.amount || 0);
+  // مطابق لمعادلة "جرد اليوم" في شاشة الكاشير
+  const netBox = revenue - expToday + tronExtra;
+
+  // أعلى 5 أصناف مبيعاً اليوم
+  const itemCount = {};
+  paidToday.forEach(o => (o.items || []).forEach(it => {
+    itemCount[it.itemName] = (itemCount[it.itemName] || 0) + it.qty;
+  }));
+  const topItems = Object.entries(itemCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  const branches = {};
+  paidToday.forEach(o => { const b = o.branch || "main"; branches[b] = (branches[b] || 0) + (o.total || 0); });
+
+  const row = (l, v, opts = "") => `<div class="r ${opts}"><span>${l}</span><span>${typeof v === "number" ? v.toLocaleString() + " " + CUR : v}</span></div>`;
+  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>تقرير إقفال — ${now.toLocaleDateString("ar-SY")}</title><style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;direction:rtl;color:#1a1a2e;background:#fff}
+.w{max-width:420px;margin:0 auto;padding:24px 20px}
+.h{text-align:center;background:linear-gradient(135deg,#1a237e,#3949ab);color:#fff;border-radius:12px;padding:18px 12px;margin-bottom:16px}
+.h h1{font-size:20px;margin-bottom:4px}.h p{font-size:12px;opacity:.85}
+.sec{background:#f8f9fb;border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.sec h3{font-size:13px;color:#3949ab;margin-bottom:8px;border-bottom:1px solid #e0e0e8;padding-bottom:6px}
+.r{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}
+.r.bold{font-weight:900;font-size:14px;border-top:1.5px solid #3949ab;margin-top:4px;padding-top:8px;color:#1a237e}
+.r.red span:last-child{color:#c62828}.r.green span:last-child{color:#2e7d32}
+.foot{text-align:center;border-top:1px dashed #ccc;padding-top:12px;font-size:11px;color:#888}
+@media print{body{background:white}}
+</style></head><body><div class="w">
+<div class="h"><h1>🧾 تقرير الإقفال اليومي</h1><p>${cafeName} — ${now.toLocaleDateString("ar-SY")} ${now.toLocaleTimeString("ar-SY",{hour:"2-digit",minute:"2-digit"})}</p></div>
+<div class="sec"><h3>💰 المبيعات (${paidToday.length} طلب مدفوع)</h3>
+${row("💵 نقدي", cashSales)}${row("💳 بطاقة", cardSales)}${row("💠 ترون", tronSales)}
+${partials.length ? row(`⏳ دفعات جزئية (${partials.length})`, partialPaidAmt) : ""}
+${row("إجمالي المبيعات", revenue, "bold")}</div>
+${Object.keys(branches).length > 1 ? `<div class="sec"><h3>🏪 حسب الفرع</h3>${Object.entries(branches).map(([b, v]) => row(b === "outdoor" ? "🌳 الحديقة" : "☕ الرئيسي", v)).join("")}</div>` : ""}
+<div class="sec"><h3>📒 حركات أخرى</h3>
+${row(`💳 ديون جديدة (${debtsToday.length})`, debtsNew, "red")}
+${debtSettledCash ? row("✅ تحصيل ديون", debtSettledCash, "green") : ""}
+${row("🎁 ضيافة", compToday)}
+${row("📤 مصاريف", expToday, "red")}
+${tronExtra ? row("💠 ترون إضافي", tronExtra) : ""}</div>
+<div class="sec"><h3>🏆 الأكثر مبيعاً اليوم</h3>
+${topItems.length ? topItems.map(([n, q]) => row(n, "×" + q)).join("") : '<div class="r"><span>—</span><span></span></div>'}</div>
+<div class="sec">${row("📦 صافي الصندوق (جرد اليوم)", netBox, "bold")}
+<div style="font-size:10.5px;color:#888;margin-top:4px">= إجمالي المبيعات − المصاريف + الترون الإضافي</div></div>
+<div class="foot"><p>أصدره: ${user?.name || "—"}</p><p style="margin-top:4px">${cafeName}</p></div>
+</div><script>window.addEventListener('load',()=>{window.print();});</script></body></html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank", "width=470,height=750");
+  if (win) { win.onafterprint = () => URL.revokeObjectURL(url); }
+  else { const a = document.createElement("a"); a.href = url; a.download = `تقرير_اقفال_${now.toISOString().slice(0,10)}.html`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+};

@@ -12,7 +12,19 @@ import ActivityLog from "./ActivityLog.jsx";
 
 import { BarTab, HookahTab } from "./StationScreens.jsx";
 import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./OperationScreens.jsx";
-import { DashboardTab, InventoryTab, MenuTab, TablesTab, CompLogTab, CustomerFileTab, ReceiptsTab, StaffTab, ReportsTab, SettingsTab, OutdoorAdminTab } from "./AdminScreens.jsx";
+// v23: شاشات الأدمن تُحمَّل كسولاً (chunk منفصل) — يسرّع فتح التطبيق للكاشير والعمال
+const lazyAdmin = (name) => React.lazy(() => import("./AdminScreens.jsx").then(m => ({ default: m[name] })));
+const DashboardTab    = lazyAdmin("DashboardTab");
+const InventoryTab    = lazyAdmin("InventoryTab");
+const MenuTab         = lazyAdmin("MenuTab");
+const TablesTab       = lazyAdmin("TablesTab");
+const CompLogTab      = lazyAdmin("CompLogTab");
+const CustomerFileTab = lazyAdmin("CustomerFileTab");
+const ReceiptsTab     = lazyAdmin("ReceiptsTab");
+const StaffTab        = lazyAdmin("StaffTab");
+const ReportsTab      = lazyAdmin("ReportsTab");
+const SettingsTab     = lazyAdmin("SettingsTab");
+const OutdoorAdminTab = lazyAdmin("OutdoorAdminTab");
 import { KitchenDisplayTab, ShiftCloseTab } from "./Features.jsx";
 
 // ── ErrorBoundary ──────────────────────────────────────────────────────────────
@@ -203,6 +215,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
       {/* Content */}
       <main style={{flex:1,padding:16,paddingBottom:96,maxWidth:1280,width:"100%",margin:"0 auto"}}>
         <ErrorBoundary key={tab}>
+        <React.Suspense fallback={<div style={{textAlign:"center",padding:40,color:"var(--sub)",fontSize:14}}>⏳ جارٍ التحميل...</div>}>
         {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} key={store.orders.length+"_"+store.orders.filter(o=>o.status==="paid").length}/>}
         {tab==="inventory"  &&canAccess(user.role,"dashboard") &&<InventoryTab   store={store} settings={settings}/>}
         {tab==="order"      &&canAccess(user.role,"order")     &&<NewOrderTab    store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
@@ -223,7 +236,8 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="customers"  &&canAccess(user.role,"customers") &&<CustomerFileTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")      &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
         {tab==="activity"   &&canAccess(user.role,"activity")      &&<div className="fade-in" style={{padding:16,maxWidth:720,margin:"0 auto"}}><ActivityLog/></div>}
-        {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings} user={user}/>}
+        </React.Suspense>
         </ErrorBoundary>
       </main>
       {user.role!=="customer" && <BottomNav navItems={navItems} tab={tab} setTab={setTab} role={user.role}/>}

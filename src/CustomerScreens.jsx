@@ -557,14 +557,10 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
         id:(Date.now().toString(36)+Math.random().toString(36).slice(2,7)),orderNum,
         customerId:user.id,customerName:user.name,
         table:tableInput.trim(),notes,items:cart,total:cartTotal,discount:0,
-        status:ORDER_STATUS.PENDING,createdAt:new Date().toISOString(),paymentStatus:"pending"
+        status:ORDER_STATUS.PENDING,createdAt:new Date().toISOString(),paymentStatus:"pending",
+        stockDeducted:false, // v23: الخصم عند الدفع لا عند الإنشاء
       };
       store.setOrders(p=>[newOrder,...p]);
-      store.setMenu(p=>p.map(m=>{
-        const ci=cart.find(c=>c.itemId===m.id);
-        if(!ci) return m;
-        return{...m,stock:Math.max(0,m.stock-ci.qty),totalSold:m.totalSold+ci.qty};
-      }));
       const hasDrinks=cart.some(c=>["hot_drinks","cold_drinks"].includes(store.menu.find(m=>m.id===c.itemId)?.category));
       const hasHookah=cart.some(c=>store.menu.find(m=>m.id===c.itemId)?.category==="hookah");
       if(hasDrinks) addNotification(`🍹 طلب زبون #${orderNum} للبار`,[ROLES.BAR],newOrder.id);

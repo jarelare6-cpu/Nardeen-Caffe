@@ -3,7 +3,8 @@
 // واجهة عامل الحديقة الخارجية — كاش منفصل + طاولات منفصلة
 // ══════════════════════════════════════════════════════════════
 import React, { useState, useCallback, useMemo } from "react";
-import { sbDelete, sbUpsert, SUPABASE_READY } from "./lib/supabase.js";
+import { sbDelete, sbUpsert, SUPABASE_READY, logActivity } from "./lib/supabase.js";
+import { deductOrderStock, restoreOrderStock } from "./lib/stock.js";
 
 // ── الفئات المسموح بها في الحديقة (بدون أراكيل) ─────────────
 const OUTDOOR_CATS = {
@@ -118,32 +119,10 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
       createdAt:    new Date().toISOString(),
       workerName:   user.name,
       branch:       "outdoor",
+      stockDeducted: false, // v23: الخصم عند الدفع لا عند الإنشاء
     };
 
     store.setOrders(p => [newOrder, ...p]);
-
-    // خصم المخزون من بار الكفتريا الرئيسي + مزامنة فورية مع Supabase
-    store.setMenu(p => {
-      const updated = p.map(m => {
-        const ci = cart.find(c => c.itemId === m.id);
-        if (!ci) return m;
-        const newItem = {
-          ...m,
-          stock: Math.max(0, (m.stock || 0) - ci.qty),
-          totalSold: (m.totalSold || 0) + ci.qty,
-        };
-        // مزامنة فورية مع Supabase بشكل مستقل عن store
-        if (SUPABASE_READY) {
-          sbUpsert("menu_items", {
-            id: newItem.id,
-            stock: newItem.stock,
-            total_sold: newItem.totalSold,
-          }, "id").catch(() => {});
-        }
-        return newItem;
-      });
-      return updated;
-    });
 
     // تحديث الطاولة → مشغولة
     store.setOutdoorTables(p => p.map(t =>
@@ -161,7 +140,11 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   };
 
   // ── تسديد الطلب (نقدي/بطاقة/ترون) — مطابق للكاش الرئيسي ──────
-  const payOrder = (order, pt, tronAmt = 0) => {
+  const payOrder = async (order, pt, tronAmt = 0) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error");
+      return;
+    }
     const now = new Date().toISOString();
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === "outdoor");
 
@@ -176,21 +159,28 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
       tronAmount:   tronAmt || 0,
       shiftId:      openShift?.id || null,
       branch:       "outdoor",
+      stockDeducted: true, // v23
     };
-    store.setOrders(p => p.map(o => o.id === order.id ? paidOrder : o));
-
-    // تحرير الطاولة
-    store.setOutdoorTables(p => p.map(t =>
-      t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t
-    ));
-
-    // cash log
-    store.setCashLog(p => [{
+    const cashEntry = {
       id: "cl_out_" + Date.now(), orderId: order.id, orderNum: order.orderNum,
       amount: order.total, at: now, by: user.name,
       type: pt === "tron" ? "tron" : "sale", branch: "outdoor",
       shiftId: openShift?.id || null,
-    }, ...p]);
+    };
+    try {
+      // v22/v23: السحابة أولاً (ذرّي) — تحرير الطاولة السحابية ضمن نفس العملية
+      await store.payOrder(paidOrder, cashEntry, { freeTable: true });
+    } catch (e) {
+      showToast("⚠ فشل الدفع: " + (e?.message || "خطأ في الاتصال — حاول مجدداً"), "error");
+      return;
+    }
+    deductOrderStock(store, order); // v23: خصم المخزون عند الدفع
+    logActivity({ action: "دفع طلب", details: pt === "card" ? "بطاقة" : pt === "tron" ? "ترون" : "نقدي", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: "outdoor" });
+
+    // تحرير الطاولة محلياً
+    store.setOutdoorTables(p => p.map(t =>
+      t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t
+    ));
 
     // receipt
     store.setReceipts(p => [{
@@ -209,7 +199,9 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   const debtOrder = (order, customerName) => {
     const now = new Date().toISOString();
     store.setOrders(p => p.map(o => o.id === order.id
-      ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName } : o));
+      ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName, stockDeducted: true } : o));
+    deductOrderStock(store, order); // v23: خصم عند تحويل الطلب لدين
+    logActivity({ action: "تسجيل دين", details: customerName, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: "outdoor" });
     store.setOutdoorTables(p => p.map(t =>
       t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t));
     store.setDebts(p => [{
@@ -369,30 +361,10 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                       )}
                       {isBusy && (
                         <button className="obtn" onClick={() => {
-                          if (!window.confirm("تحرير الطاولة بدون دفع؟ سيتم إرجاع المخزون للبار")) return;
-                          // إرجاع المخزون للبار إذا كان الطلب معلقاً
+                          if (!window.confirm("تحرير الطاولة بدون دفع؟ سيُلغى الطلب المعلّق")) return;
+                          // v23: إلغاء الطلب المعلّق — الإرجاع فقط إن كان المخزون قد خُصم (طلب قديم)
                           if (tableOrder && tableOrder.status === "pending") {
-                            store.setMenu(p => {
-                              const updated = p.map(m => {
-                                const ci = tableOrder.items?.find(c => c.itemId === m.id);
-                                if (!ci) return m;
-                                const newItem = {
-                                  ...m,
-                                  stock: (m.stock || 0) + ci.qty,
-                                  totalSold: Math.max(0, (m.totalSold || 0) - ci.qty),
-                                };
-                                if (SUPABASE_READY) {
-                                  sbUpsert("menu_items", {
-                                    id: newItem.id,
-                                    stock: newItem.stock,
-                                    total_sold: newItem.totalSold,
-                                  }, "id").catch(() => {});
-                                }
-                                return newItem;
-                              });
-                              return updated;
-                            });
-                            // إلغاء الطلب
+                            restoreOrderStock(store, tableOrder);
                             store.setOrders(p => p.map(o =>
                               o.id === tableOrder.id ? { ...o, status: "cancelled" } : o
                             ));

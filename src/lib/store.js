@@ -229,6 +229,7 @@ export const rowOfOrder = (o) => ({
   shift_id: o.shiftId || null,
   preparing_at: o.preparingAt || null,
   ready_at: o.readyAt || null,
+  stock_deducted: o.stockDeducted !== false, // v23
 });
 export const rowOfCash = (e) => ({
   id: e.id, order_id: e.orderId || null,
@@ -259,7 +260,11 @@ const sbWrite = {
   },
   deleteMenuItem: (id) => sbDelete("menu_items", id),
 
-  order: (o) => sbUpsert("orders", rowOfOrder(o)),
+  order: (o) => {
+    const row = rowOfOrder(o);
+    const { stock_deducted, ...legacy } = row;
+    return sbUpsert("orders", row, "id", legacy); // fallback لقاعدة لم تُرقَّ بعد
+  },
   deleteOrder: (id) => sbDelete("orders", id),
 
   table: (t) => sbUpsert("tables", {
@@ -392,6 +397,7 @@ const mapOrder = o => ({
   shiftId:      o.shift_id      ?? o.shiftId      ?? null,
   preparingAt:  o.preparing_at  ?? o.preparingAt  ?? null,
   readyAt:      o.ready_at       ?? o.readyAt      ?? null,
+  stockDeducted: (o.stock_deducted ?? o.stockDeducted) !== false, // v23: القديم = true
 });
 const mapMenu = m => ({
   ...m,

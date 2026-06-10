@@ -317,7 +317,11 @@ export const payOrderAtomic = async ({ orderRow, cashRow, freeTable, tableNum, b
     if (!/(function|does not exist|PGRST202|schema cache)/i.test(msg)) throw e;
   }
   // 2) fallback: تحديث الطلب أولاً (الحرِج) ثم النقد ثم الطاولة
-  const o = await withNet("pay:order", () => supabase.from("orders").upsert(orderRow, { onConflict: "id" }));
+  let o = await withNet("pay:order", () => supabase.from("orders").upsert(orderRow, { onConflict: "id" }));
+  if (o.error && /(column|schema|does not exist|could not find|cache)/i.test(o.error.message || "")) {
+    const { stock_deducted, ...legacyRow } = orderRow;
+    o = await withNet("pay:order", () => supabase.from("orders").upsert(legacyRow, { onConflict: "id" }));
+  }
   if (o.error) throw new Error("فشل تحديث الطلب: " + o.error.message);
   const c = await withNet("pay:cash", () => supabase.from("cash_log").upsert(cashRow, { onConflict: "id" }));
   if (c.error) reportSyncError("payOrder", "cash_log", c.error.message);

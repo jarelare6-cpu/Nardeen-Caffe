@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbHeartbeat, logActivity } from "./lib/supabase.js";
+import { SUPABASE_READY, sbHeartbeat, logActivity, supabase } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle, ImageStyleContext } from "./uikit.jsx";
 import { ROLES } from "./constants.js";
@@ -94,6 +94,21 @@ export default function NardeenCaffe(){
       window.removeEventListener("nc-sync-error",onSyncErr);
     };
   },[]);
+
+  // ── v23: أرشفة الطلبات القديمة (>90 يوم) — مرة يومياً من جهاز الأدمن ──
+  // آمنة الفشل: إن لم تكن دالة archive_old_orders منشأة بعد تُتجاهل بصمت.
+  useEffect(()=>{
+    if(!SUPABASE_READY||!supabase||!user||user.role!=="admin"||!navigator.onLine) return;
+    try{
+      const last=localStorage.getItem("nc_archive_at");
+      if(last&&Date.now()-new Date(last).getTime()<86400000) return;
+      supabase.rpc("archive_old_orders",{p_days:90}).then(({data,error})=>{
+        if(error){ if(!/(function|does not exist|PGRST202)/i.test(error.message||"")) console.warn("archive:",error.message); return; }
+        localStorage.setItem("nc_archive_at",new Date().toISOString());
+        if(data>0) logActivity({action:"أرشفة تلقائية",details:`نُقل ${data} طلب قديم للأرشيف`,userName:"النظام",userRole:"system"});
+      }).catch(()=>{});
+    }catch{}
+  },[user]);
 
   // ── Phase 4: مُسجّل أخطاء عام للتشخيص (لا يكسر الواجهة) ──
   useEffect(()=>{
