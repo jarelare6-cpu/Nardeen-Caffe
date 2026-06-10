@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
-import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, outboxCount, outboxFailedCount, outboxList, outboxFailed, outboxInProgress, lastSyncAt, retryFailed, flushOutbox, clearOutbox, sbHeartbeat } from "./lib/supabase.js";
+import { SUPABASE_READY, sbHeartbeat, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle, ImageStyleContext } from "./uikit.jsx";
 import { ROLES } from "./constants.js";
@@ -25,10 +25,9 @@ export default function NardeenCaffe(){
   const [toast,setToast]=useState(null);
   const [dm,setDm]=useState(()=>localStorage.getItem("nc_dark")==="1");
   const [offline,setOffline]=useState(()=>typeof navigator!=="undefined"&&!navigator.onLine);
-  const [pending,setPending]=useState(()=>{try{return outboxCount();}catch{return 0;}});
-  const [failed,setFailed]=useState(()=>{try{return outboxFailedCount();}catch{return 0;}});
-  const [syncing,setSyncing]=useState(false);
-  const [syncOpen,setSyncOpen]=useState(false);
+  const [rtStatus,setRtStatus]=useState("SUBSCRIBED"); // حالة المزامنة الفورية
+  const [slowMsg,setSlowMsg]=useState(null);           // تنبيه بطء الاستجابة (>3 ثوانٍ)
+  const [syncErr,setSyncErr]=useState(null);           // آخر خطأ مزامنة
   const [updateUrl,setUpdateUrl]=useState(null);
   const bannerRef=useRef(null);
   const [bannerH,setBannerH]=useState(0);
@@ -41,7 +40,7 @@ export default function NardeenCaffe(){
     const t=setTimeout(m,60);
     window.addEventListener("resize",m);
     return ()=>{ clearTimeout(t); window.removeEventListener("resize",m); };
-  },[offline,pending,failed,syncing]);
+  },[offline,rtStatus,store.syncing,syncErr]);
 
   // فحص التحديثات داخل تطبيق أندرويد: قارن وقت بناء النسخة بآخر إصدار منشور
   useEffect(()=>{
@@ -70,18 +69,29 @@ export default function NardeenCaffe(){
     return ()=>{ clearInterval(iv); window.removeEventListener("online",beat); };
   },[user]);
 
-  // ── offline-first: مؤشّر الاتصال + تفريغ الطابور الصادر عند العودة ──
+  // ── v22: أونلاين فقط — مؤشّر الاتصال + حالة المزامنة الفورية + تنبيه البطء ──
   useEffect(()=>{
     const upd=()=>setOffline(!navigator.onLine);
-    const onOutbox=(e)=>{ setPending(e.detail?.count ?? 0); setFailed(e.detail?.failed ?? 0); setSyncing(!!e.detail?.inProgress); };
+    const onRt=(e)=>setRtStatus(e.detail?.status||"SUBSCRIBED");
+    const onSlow=(e)=>{
+      setSlowMsg(`🐢 الاستجابة بطيئة (${((e.detail?.ms||0)/1000).toFixed(1)} ث) — تحقق من جودة الإنترنت`);
+      setTimeout(()=>setSlowMsg(null),5000);
+    };
+    const onSyncErr=(e)=>{
+      setSyncErr(`⚠ فشل حفظ (${e.detail?.table||"؟"}): ${e.detail?.message||""}`);
+      setTimeout(()=>setSyncErr(null),7000);
+    };
     window.addEventListener("online",upd);
     window.addEventListener("offline",upd);
-    window.addEventListener("nc-outbox",onOutbox);
-    if(navigator.onLine) flushOutbox();
+    window.addEventListener("nc-rt",onRt);
+    window.addEventListener("nc-slow",onSlow);
+    window.addEventListener("nc-sync-error",onSyncErr);
     return()=>{
       window.removeEventListener("online",upd);
       window.removeEventListener("offline",upd);
-      window.removeEventListener("nc-outbox",onOutbox);
+      window.removeEventListener("nc-rt",onRt);
+      window.removeEventListener("nc-slow",onSlow);
+      window.removeEventListener("nc-sync-error",onSyncErr);
     };
   },[]);
 
@@ -113,6 +123,7 @@ export default function NardeenCaffe(){
   const login=(u)=>{
     const u2=touchSession({...u,lastLogin:new Date().toISOString()});
     setUser(u2);setScreen("home");
+    logActivity({action:"تسجيل دخول",details:"",userName:u.name||u.username||"",userRole:u.role||"",branch:"main"});
   };
   const logout=()=>{
     setUser(null);setScreen("login");
@@ -160,15 +171,20 @@ export default function NardeenCaffe(){
       <GlobalStyle dm={dm} theme={store.settings?.appTheme||"default"}/>
       <Toast toast={toast}/>
       <PWABanner/>
-      {(offline||pending>0||failed>0)&&(
-        <div onClick={()=>setSyncOpen(true)} ref={bannerRef} style={{position:"sticky",top:0,zIndex:9999,cursor:"pointer",
-          background:offline?"#c62828":(failed>0?"#b71c1c":(pending>0?"#e65100":"#2e7d32")),color:"#fff",textAlign:"center",
+      {(offline||store.syncing||(SUPABASE_READY&&rtStatus!=="SUBSCRIBED")||slowMsg||syncErr)&&(
+        <div ref={bannerRef} style={{position:"sticky",top:0,zIndex:9999,
+          background:offline?"#c62828":(syncErr?"#b71c1c":(slowMsg?"#e65100":"#1565c0")),color:"#fff",textAlign:"center",
           padding:"6px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
           boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
-          {offline?"⚠ غير متصل — يعمل محليًا والبيانات محفوظة":(syncing?"🔄 جارٍ الرفع الآن":(pending>0?"⏳ بانتظار الرفع":"✓ متزامن"))}
-          {pending>0?` • ${pending} بانتظار`:""}
-          {failed>0?` • ⚠ ${failed} فشل`:""}
-          <span style={{opacity:.85,marginInlineStart:8,fontSize:11}}>(اضغط للتفاصيل)</span>
+          {offline
+            ? "⚠ لا يوجد اتصال بالإنترنت — التطبيق يتطلب اتصالاً للعمل"
+            : syncErr
+            ? syncErr
+            : slowMsg
+            ? slowMsg
+            : store.syncing
+            ? "🔄 جارٍ المزامنة مع السحابة..."
+            : "📡 جارٍ إعادة الاتصال بالمزامنة الفورية..."}
         </div>
       )}
       {updateUrl&&(
@@ -179,7 +195,6 @@ export default function NardeenCaffe(){
           🔄 تحديث متوفّر — اضغط للتنزيل والتثبيت
         </div>
       )}
-      {syncOpen&&<SyncPanel onClose={()=>setSyncOpen(false)}/>}
       {screen==="login"&&<LoginScreen store={store} onLogin={login} showToast={showToast} dm={dm}/>}
       {screen==="home"&&user&&(
         user.role===ROLES.CUSTOMER
@@ -193,62 +208,6 @@ export default function NardeenCaffe(){
       )}
     </div>
     </ImageStyleContext.Provider>
-  );
-}
-
-// ═══════════════════════════════════
-// لوحة حالة المزامنة (C) — تفاصيل الطابور الصادر
-// ═══════════════════════════════════
-function SyncPanel({onClose}){
-  const [,setTick]=useState(0);
-  useEffect(()=>{
-    const h=()=>setTick(t=>t+1);
-    window.addEventListener("nc-outbox",h);
-    const iv=setInterval(h,1500);
-    return()=>{window.removeEventListener("nc-outbox",h);clearInterval(iv);};
-  },[]);
-  let pend=[],fail=[],last=null,prog=false;
-  try{pend=outboxList()||[];}catch{} try{fail=outboxFailed()||[];}catch{}
-  try{last=lastSyncAt();}catch{} try{prog=outboxInProgress();}catch{}
-  const byTable=(arr)=>{const m={};arr.forEach(e=>{m[e.table]=(m[e.table]||0)+1;});return Object.entries(m);};
-  const fmt=(iso)=>{if(!iso)return "—";try{return new Date(iso).toLocaleString("ar");}catch{return iso;}};
-  return (
-    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:"var(--card,#1a1c33)",color:"var(--text,#eee)",borderRadius:14,padding:18,maxWidth:440,width:"100%",maxHeight:"85vh",overflow:"auto",fontFamily:"'Tajawal',sans-serif",direction:"rtl",border:"1px solid var(--border,#33365a)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <h3 style={{margin:0,fontSize:16,fontWeight:900}}>📡 حالة المزامنة</h3>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"inherit",fontSize:24,cursor:"pointer",lineHeight:1}}>×</button>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-          {[["⏳ بانتظار",pend.length,"#e65100"],["🔄 قيد الرفع",prog?"نعم":"لا","#2e7d32"],["⚠ فشل دائم",fail.length,"#ff6b6b"]].map(([l,v,c])=>(
-            <div key={l} style={{background:"rgba(255,255,255,.06)",borderRadius:10,padding:10,textAlign:"center"}}>
-              <div style={{fontSize:11,opacity:.7}}>{l}</div><div style={{fontSize:18,fontWeight:900,color:c}}>{v}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{fontSize:12,opacity:.85,marginBottom:12}}>آخر مزامنة ناجحة: <b>{fmt(last)}</b></div>
-        {pend.length>0&&(<div style={{marginBottom:12}}>
-          <div style={{fontSize:13,fontWeight:700,marginBottom:6}}>بانتظار الرفع (حسب الجدول):</div>
-          {byTable(pend).map(([t,n])=><div key={t} style={{fontSize:13,display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:"1px solid var(--border,#2a2c44)"}}><span>{t}</span><span style={{fontWeight:700}}>{n}</span></div>)}
-        </div>)}
-        {fail.length>0&&(<div style={{marginBottom:12}}>
-          <div style={{fontSize:13,fontWeight:700,marginBottom:6,color:"#ff9a9a"}}>فشل دائم (تجاوز {fail[0]?.tries||5} محاولات):</div>
-          {byTable(fail).map(([t,n])=><div key={t} style={{fontSize:13,display:"flex",justifyContent:"space-between",padding:"3px 0"}}><span>{t}</span><span style={{fontWeight:700}}>{n}</span></div>)}
-          <div style={{fontSize:11,opacity:.7,marginTop:4}}>سبب آخر فشل: {fail[fail.length-1]?.lastError||"—"}</div>
-        </div>)}
-        {(pend.length===0&&fail.length===0)&&<div style={{fontSize:13,opacity:.7,textAlign:"center",padding:"10px 0"}}>لا عمليات معلّقة — كل شيء مرفوع ✅</div>}
-        <div style={{display:"flex",gap:8,marginTop:10}}>
-          <button onClick={()=>{try{flushOutbox();}catch{}}} style={{flex:1,background:"#2e7d32",color:"#fff",border:"none",borderRadius:9,padding:"10px",fontWeight:700,cursor:"pointer"}}>محاولة الرفع الآن</button>
-          {fail.length>0&&<button onClick={()=>{try{retryFailed();}catch{}}} style={{flex:1,background:"#e65100",color:"#fff",border:"none",borderRadius:9,padding:"10px",fontWeight:700,cursor:"pointer"}}>إعادة الفاشلة</button>}
-        </div>
-        {(pend.length>0||fail.length>0)&&(
-          <button onClick={()=>{ if(window.confirm("مسح كل عمليات الرفع المعلّقة والفاشلة؟ (لن تُرفع هذه التغييرات للسحابة)")){ try{clearOutbox();}catch{} } }}
-            style={{width:"100%",marginTop:8,background:"transparent",color:"#ff6b6b",border:"1px solid #ff6b6b55",borderRadius:9,padding:"9px",fontWeight:700,cursor:"pointer"}}>
-            🗑 إلغاء/مسح الطابور
-          </button>
-        )}
-      </div>
-    </div>
   );
 }
 

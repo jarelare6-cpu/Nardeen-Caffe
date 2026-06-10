@@ -64,106 +64,47 @@ export const reportSyncError = (op, table, message) => {
   } catch {}
 };
 
-// ── الطابور الصادر (Outbox): يخزّن الكتابات الفاشلة ويعيد رفعها تلقائيًا.
-//    مع سقف محاولات + عزل العناصر الفاشلة دائمًا (dead-letter) + وقت آخر مزامنة. ──
-const OUTBOX_KEY = "nc_outbox";
-const FAILED_KEY = "nc_outbox_failed";
-const LASTSYNC_KEY = "nc_last_sync";
-const MAX_TRIES = 5;
-let _flushing = false;
-let _flushPromise = null;
-
-const readQ = (k) => { try { return JSON.parse(localStorage.getItem(k)) || []; } catch { return []; } };
-const writeQ = (k, q) => { try { localStorage.setItem(k, JSON.stringify(q)); } catch {} };
-const outboxKey = (e) => `${e.table}:${e.del || e.row?.id}`;
-const notifyOutbox = () => {
-  try {
-    window.dispatchEvent(new CustomEvent("nc-outbox", { detail: {
-      count: readQ(OUTBOX_KEY).length, failed: readQ(FAILED_KEY).length, inProgress: _flushing,
-    }}));
-  } catch {}
+// ── أونلاين فقط (v22): كتابة مباشرة بمهلة 10 ثوانٍ + رصد البطء (>3 ثوانٍ) ──
+const OP_TIMEOUT_MS = 10000;
+const SLOW_MS = 3000;
+const notifySlow = (op, ms) => {
+  try { window.dispatchEvent(new CustomEvent("nc-slow", { detail: { op, ms } })); } catch {}
 };
-const enqueue = (entry) => {
-  const q = readQ(OUTBOX_KEY).filter(e => outboxKey(e) !== outboxKey(entry));
-  q.push({ ...entry, tries: 0, ts: Date.now() });
-  writeQ(OUTBOX_KEY, q); notifyOutbox();
+export const withNet = async (label, factory) => {
+  const t0 = Date.now();
+  const res = await Promise.race([
+    factory(),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("انتهت المهلة — تحقق من الإنترنت")), OP_TIMEOUT_MS)),
+  ]);
+  const ms = Date.now() - t0;
+  if (ms > SLOW_MS) notifySlow(label, ms);
+  return res;
 };
-
-export const outboxCount = () => readQ(OUTBOX_KEY).length;
-export const outboxFailedCount = () => readQ(FAILED_KEY).length;
-export const outboxList = () => readQ(OUTBOX_KEY);
-export const outboxFailed = () => readQ(FAILED_KEY);
-export const outboxInProgress = () => _flushing;
-export const lastSyncAt = () => { try { return localStorage.getItem(LASTSYNC_KEY); } catch { return null; } };
-export const retryFailed = () => {
-  const failed = readQ(FAILED_KEY); if (!failed.length) return;
-  const q = readQ(OUTBOX_KEY);
-  failed.forEach(e => q.push({ ...e, tries: 0 }));
-  writeQ(OUTBOX_KEY, q); writeQ(FAILED_KEY, []); notifyOutbox(); flushOutbox();
-};
-
-// إلغاء/مسح كل الطابور (المعلّق + الفاشل) — لإيقاف محاولات رفع عالقة
-export const clearOutbox = () => {
-  writeQ(OUTBOX_KEY, []); writeQ(FAILED_KEY, []); notifyOutbox();
-};
-
-export const flushOutbox = async () => {
-  if (!supabase) return;
-  if (_flushing) return _flushPromise;
-  const q = readQ(OUTBOX_KEY);
-  if (!q.length) return;
-  _flushing = true; notifyOutbox();
-  _flushPromise = (async () => {
-    const remaining = []; const dead = readQ(FAILED_KEY); let anyOk = false;
-    for (const e of q) {
-      try {
-        const { error } = e.del
-          ? await supabase.from(e.table).delete().eq("id", e.del)
-          : await supabase.from(e.table).upsert(e.row, { onConflict: "id" });
-        if (error) {
-          const tries = (e.tries || 0) + 1;
-          (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: error.message });
-        } else anyOk = true;
-      } catch (err) {
-        const tries = (e.tries || 0) + 1;
-        (tries >= MAX_TRIES ? dead : remaining).push({ ...e, tries, lastError: String((err && err.message) || err) });
-      }
-    }
-    writeQ(OUTBOX_KEY, remaining); writeQ(FAILED_KEY, dead);
-    if (anyOk) { try { localStorage.setItem(LASTSYNC_KEY, new Date().toISOString()); } catch {} }
-  })();
-  try { await _flushPromise; } finally { _flushing = false; _flushPromise = null; notifyOutbox(); }
-};
-
-if (typeof window !== "undefined") {
-  window.addEventListener("online", () => {
-    // fix(sync): عند عودة الاتصال — انتظر 800ms ثم فرّغ الـ outbox
-    // (الشبكة تحتاج لحظة لتستقر قبل نجاح الطلبات)
-    setTimeout(() => { flushOutbox(); }, 800);
-  });
-  // fix(sync): interval 10s بدل 30s — اكتشاف أسرع للطلبات المتراكمة
-  setInterval(() => { if (navigator.onLine) flushOutbox(); }, 10000);
-}
 
 export const sbUpsert = async (table, row, conflict = "id", fallbackRow = null) => {
   if (!supabase) return;
-  if (typeof navigator !== "undefined" && navigator.onLine === false) { enqueue({ table, row }); return null; }
-  let { error } = await supabase.from(table).upsert(row, { onConflict: conflict });
-  if (error && fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(error.message || "")) {
-    // عمود جديد غير موجود بعد (قبل تشغيل الترحيل) → احفظ النسخة الأساسية بدل كسر الحفظ
-    const r2 = await supabase.from(table).upsert(fallbackRow, { onConflict: conflict });
-    if (!r2.error) return null;
-    error = r2.error; row = fallbackRow;
+  try {
+    let { error } = await withNet(`upsert:${table}`, () => supabase.from(table).upsert(row, { onConflict: conflict }));
+    if (error && fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(error.message || "")) {
+      const r2 = await withNet(`upsert:${table}`, () => supabase.from(table).upsert(fallbackRow, { onConflict: conflict }));
+      error = r2.error || null;
+    }
+    if (error) { reportSyncError("sbUpsert", table, error.message); return error; }
+    return null;
+  } catch (err) {
+    reportSyncError("sbUpsert", table, String(err?.message || err));
+    return err;
   }
-  if (error) { reportSyncError("sbUpsert", table, error.message); enqueue({ table, row }); }
-  return error || null;
 };
 
 export const sbDelete = async (table, id) => {
   if (!supabase) return;
-  if (typeof navigator !== "undefined" && navigator.onLine === false) { enqueue({ table, del: id }); return; }
-  const { error } = await supabase.from(table).delete().eq("id", id);
-  if (error) { reportSyncError("sbDelete", table, error.message); enqueue({ table, del: id }); }
+  try {
+    const { error } = await withNet(`delete:${table}`, () => supabase.from(table).delete().eq("id", id));
+    if (error) reportSyncError("sbDelete", table, error.message);
+  } catch (err) {
+    reportSyncError("sbDelete", table, String(err?.message || err));
+  }
 };
 
 export const sbDeleteAll = async (table) => {
@@ -222,7 +163,10 @@ export const subscribeOrders = (onInsert, onUpdate, onDelete) => {
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders" }, p => onInsert(p.new))
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, p => onUpdate(p.new))
     .on("postgres_changes", { event: "DELETE", schema: "public", table: "orders" }, p => onDelete(p.old))
-    .subscribe(s => { if (s === "CHANNEL_ERROR") console.warn("orders realtime error"); });
+    .subscribe(s => {
+      try { window.dispatchEvent(new CustomEvent("nc-rt", { detail: { status: s } })); } catch {}
+      if (s === "CHANNEL_ERROR") console.warn("orders realtime error");
+    });
   return () => supabase.removeChannel(ch);
 };
 
@@ -344,6 +288,86 @@ export const subscribeCashLog = (onInsert, onDelete) => {
   const ch = supabase.channel("cashlog-rt-v7")
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "cash_log" }, p => onInsert && onInsert(p.new))
     .on("postgres_changes", { event: "DELETE", schema: "public", table: "cash_log" }, p => onDelete && onDelete(p.old))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+// ══════════════════════════════════════════════════════════════
+// v22: دفع ذرّي — RPC pay_order (انظر db/pay_order.sql) مع fallback تسلسلي
+// ══════════════════════════════════════════════════════════════
+export const payOrderAtomic = async ({ orderRow, cashRow, freeTable, tableNum, branch }) => {
+  if (!supabase) throw new Error("Supabase غير مفعّل");
+  // 1) المسار الذرّي عبر RPC إن كانت الدالة منشأة في قاعدة البيانات
+  try {
+    const { error } = await withNet("rpc:pay_order", () => supabase.rpc("pay_order", {
+      p_order: orderRow,
+      p_cash: cashRow,
+      p_free_table: !!freeTable,
+      p_table_num: String(tableNum || ""),
+      p_branch: branch || "main",
+    }));
+    if (!error) return { atomic: true };
+    // الدالة غير موجودة بعد → fallback؛ أي خطأ آخر يُرمى للواجهة
+    if (!/(function|does not exist|PGRST202|schema cache)/i.test(error.message || "")) {
+      throw new Error(error.message);
+    }
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (/انتهت المهلة/.test(msg)) throw e;
+    if (!/(function|does not exist|PGRST202|schema cache)/i.test(msg)) throw e;
+  }
+  // 2) fallback: تحديث الطلب أولاً (الحرِج) ثم النقد ثم الطاولة
+  const o = await withNet("pay:order", () => supabase.from("orders").upsert(orderRow, { onConflict: "id" }));
+  if (o.error) throw new Error("فشل تحديث الطلب: " + o.error.message);
+  const c = await withNet("pay:cash", () => supabase.from("cash_log").upsert(cashRow, { onConflict: "id" }));
+  if (c.error) reportSyncError("payOrder", "cash_log", c.error.message);
+  if (freeTable && tableNum) {
+    const t = await withNet("pay:table", () => supabase.from("tables")
+      .update({ status: "free", order_id: null, opened_at: null })
+      .eq("num", String(tableNum)).eq("branch", branch || "main"));
+    if (t.error) reportSyncError("payOrder", "tables", t.error.message);
+  }
+  return { atomic: false };
+};
+
+// ══════════════════════════════════════════════════════════════
+// v22: سجل النشاط (activity_log) — كتابة آمنة الفشل + قراءة + realtime
+// (انظر db/activity_log.sql لإنشاء الجدول)
+// ══════════════════════════════════════════════════════════════
+export const logActivity = (entry) => {
+  if (!supabase) return;
+  const row = {
+    id: "act_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    action: entry.action || "",
+    details: entry.details || "",
+    user_name: entry.userName || "",
+    user_role: entry.userRole || "",
+    order_num: String(entry.orderNum || ""),
+    amount: entry.amount ?? null,
+    branch: entry.branch || "main",
+    created_at: new Date().toISOString(),
+  };
+  try {
+    supabase.from("activity_log").insert(row).then(({ error }) => {
+      if (error) console.warn("activity_log:", error.message);
+    });
+  } catch {}
+};
+
+export const fetchActivity = async (limit = 200) => {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await withNet("fetch:activity", () =>
+      supabase.from("activity_log").select("*").order("created_at", { ascending: false }).limit(limit));
+    if (error) { console.warn("fetchActivity:", error.message); return []; }
+    return data || [];
+  } catch { return []; }
+};
+
+export const subscribeActivity = (onInsert) => {
+  if (!supabase) return () => {};
+  const ch = supabase.channel("activity-rt-v22")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "activity_log" }, p => onInsert && onInsert(p.new))
     .subscribe();
   return () => supabase.removeChannel(ch);
 };
