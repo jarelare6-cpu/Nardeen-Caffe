@@ -83,7 +83,7 @@ export const generateZReportPDF = (store, settings, user) => {
   const compToday = sum((store.compLog || []).filter(c => inToday(c.createdAt)), c => c.amount || 0);
   const expToday = sum((store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inToday(e.date)), e => e.amount || 0);
   const tronExtra = sum((store.receipts || []).filter(r => (r.tronAmount || 0) > 0 && inToday(r.createdAt)), r => r.tronAmount || 0);
-  const debtSettledCash = sum((store.cashLog || []).filter(c => c.type === "debt_settle" && inToday(c.at)), c => c.amount || 0);
+  const debtSettledCash = sum((store.cashLog || []).filter(c => ["debt_payment", "debt_settle"].includes(c.type) && inToday(c.at)), c => c.amount || 0);
   // مطابق لمعادلة "جرد اليوم" في شاشة الكاشير
   const netBox = revenue - expToday + tronExtra;
 

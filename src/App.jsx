@@ -168,8 +168,9 @@ export default function NardeenCaffe(){
       if(soundOn) playOrderAlert(localStorage.getItem("nc_sound_tone")||store.settings?.soundTone||"bell");
     }catch{}
     // إشعار المتصفح
-    if(store.settings?.notifyBrowser&&Notification?.permission==="granted"){
-      new Notification("☕ ناردين كافيه",{body:msg,icon:"/favicon.ico"}).catch(()=>{});
+    // fix v23.1: Notification هو constructor وليس Promise — كان .catch يرمي TypeError
+    if(store.settings?.notifyBrowser&&typeof Notification!=="undefined"&&Notification.permission==="granted"){
+      try{ new Notification("☕ ناردين كافيه",{body:msg,icon:"/favicon.ico"}); }catch{}
     }
   },[store]);
 

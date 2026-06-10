@@ -45,6 +45,7 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes]       = useState("");
   const [showPay, setShowPay]   = useState(null); // order to pay
+  const [isPaying, setIsPaying] = useState(false); // v23.1: قفل النقر المزدوج أثناء الدفع
   const [payTronInput, setPayTronInput] = useState("");
   const [payDebtName, setPayDebtName]   = useState("");
   const [payMode, setPayMode]   = useState("pay"); // pay | debt
@@ -141,6 +142,7 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
 
   // ── تسديد الطلب (نقدي/بطاقة/ترون) — مطابق للكاش الرئيسي ──────
   const payOrder = async (order, pt, tronAmt = 0) => {
+    if (isPaying) return; // v23.1: منع التسديد المزدوج (نافذة الانتظار)
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error");
       return;
@@ -167,13 +169,16 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
       type: pt === "tron" ? "tron" : "sale", branch: "outdoor",
       shiftId: openShift?.id || null,
     };
+    setIsPaying(true);
     try {
       // v22/v23: السحابة أولاً (ذرّي) — تحرير الطاولة السحابية ضمن نفس العملية
       await store.payOrder(paidOrder, cashEntry, { freeTable: true });
     } catch (e) {
       showToast("⚠ فشل الدفع: " + (e?.message || "خطأ في الاتصال — حاول مجدداً"), "error");
+      setIsPaying(false);
       return;
     }
+    setIsPaying(false);
     deductOrderStock(store, order); // v23: خصم المخزون عند الدفع
     logActivity({ action: "دفع طلب", details: pt === "card" ? "بطاقة" : pt === "tron" ? "ترون" : "نقدي", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: "outdoor" });
 
@@ -220,7 +225,9 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
     store.setOrders(p => p.map(o => o.id === order.id
       ? { ...o, status: "complimentary", isComplimentary: true,
           compAmount: order.total, originalTotal: order.total, total: 0,
-          paidBy: user.id, paidByName: user.name, paidAt: now } : o));
+          paidBy: user.id, paidByName: user.name, paidAt: now, stockDeducted: true } : o));
+    deductOrderStock(store, order); // v23: الضيافة الكاملة = تسليم بضاعة
+    logActivity({ action: "ضيافة", details: "ضيافة كاملة", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: "outdoor" });
     store.setOutdoorTables(p => p.map(t =>
       t.orderId === order.id ? { ...t, status: "free", orderId: null, openedAt: null } : t));
     store.setCompLog(p => [{
@@ -697,9 +704,10 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <button className="obtn" onClick={() => { setShowPay(null); setPayType("cash"); setPayTronInput(""); }}
                     style={{ flex: 1, background: "#1a3a5c", color: "#8ab4d4" }}>إلغاء</button>
-                  <button className="obtn" onClick={() => payOrder(showPay, payType, payType === "tron" ? (+payTronInput || 0) : 0)}
-                    style={{ flex: 2, background: "#1b5e20", color: "#fff", fontSize: 15 }}>
-                    ✓ تأكيد التسديد
+                  <button className="obtn" disabled={isPaying}
+                    onClick={() => payOrder(showPay, payType, payType === "tron" ? (+payTronInput || 0) : 0)}
+                    style={{ flex: 2, background: "#1b5e20", color: "#fff", fontSize: 15, opacity: isPaying ? .6 : 1, cursor: isPaying ? "wait" : "pointer" }}>
+                    {isPaying ? "⏳ جارٍ التسديد..." : "✓ تأكيد التسديد"}
                   </button>
                 </div>
                 {/* خيارات إضافية: دين / ضيافة */}

@@ -17,7 +17,6 @@ const ACTION_STYLE = {
 export default function ActivityLog() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [filter, setFilter] = useState("all");
 
   useEffect(() => {
@@ -27,7 +26,6 @@ export default function ActivityLog() {
       if (!active) return;
       setRows(d);
       setLoading(false);
-      setError(SUPABASE_READY && d.length === 0 ? false : false);
     })();
     const unsub = subscribeActivity((r) => {
       setRows(p => [r, ...p.filter(x => x.id !== r.id)].slice(0, 300));
