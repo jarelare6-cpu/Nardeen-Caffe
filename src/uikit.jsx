@@ -146,7 +146,7 @@ export const GlobalStyle = ({dm,theme="default"}) => {
       --sp-1:6px;--sp-2:10px;--sp-3:14px;--sp-4:20px;--sp-5:28px;
       --radius:14px;--radius-sm:10px;--radius-lg:20px;
     }
-    body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);background-image:var(--grad-bg);background-attachment:fixed;color:var(--text);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+    body{font-family:'Tajawal',sans-serif;direction:rtl;background:var(--bg);background-image:var(--grad-bg);color:var(--text);overflow-x:hidden;-webkit-font-smoothing:antialiased}
     ${theme==="dark"?":root{--bg:#080810;--card:#0e0e1a;--card2:#141420;--border:#1e1e2e;--text:#e8eaf6;--sub:#7070a0;--shadow:0 4px 24px rgba(0,0,0,.7);}":""}
     button{cursor:pointer;font-family:inherit;direction:rtl}
     input,select,textarea{font-family:inherit;direction:rtl;background:var(--card);color:var(--text)}
