@@ -101,6 +101,7 @@ export const DEFAULT_SETTINGS = {
   mergeTableOrders: false,
   requireTableOnOrder: true,
   printOnNewOrder: false,
+  telegramTargets: [], // v27: وجهات تليجرام للإدارة [{id,name,token,chatId,events:{}}]
   // نظام الولاء
   loyaltyEnabled: true,
   loyaltyVisitsForReward: 10,  // عدد الزيارات للحصول على مكافأة

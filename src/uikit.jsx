@@ -243,10 +243,23 @@ export const GlobalStyle = ({dm,theme="default"}) => {
     @media(max-width:640px){
       .hide-mobile{display:none!important}
       .mobile-full{width:100%!important;grid-column:1/-1!important}
-      .order-grid{grid-template-columns:1fr!important;height:auto!important}
-      .order-cart{border-radius:var(--radius)!important;max-height:none!important}
+      .order-grid{grid-template-columns:1fr!important;height:auto!important;padding-bottom:74px!important}
+      /* v27: السلة كلوحة منزلقة من الأسفل */
+      .cart-minibar{position:fixed;inset-inline:0;bottom:0;z-index:1400;display:flex;align-items:center;justify-content:space-between;
+        background:linear-gradient(135deg,#c62828,#8e0000);color:#fff;padding:11px 16px;cursor:pointer;
+        box-shadow:0 -4px 20px rgba(0,0,0,.25);border-radius:16px 16px 0 0;margin-bottom:env(safe-area-inset-bottom,0)}
+      .sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1450;animation:fadeIn .2s}
+      .order-cart{position:fixed!important;inset-inline:0;bottom:0;z-index:1500;border-radius:18px 18px 0 0!important;
+        max-height:88vh!important;transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.7,.3,1);
+        box-shadow:0 -8px 30px rgba(0,0,0,.35)!important}
+      .order-cart.sheet-open{transform:translateY(0)}
+      .sheet-handle{position:relative;display:flex!important;justify-content:center;align-items:center;padding:10px 0 6px;cursor:pointer}
+      .sheet-grip{width:42px;height:5px;border-radius:3px;background:var(--border)}
     }
-    @media(min-width:641px){.show-mobile-only{display:none!important}}
+    @media(min-width:641px){
+      .show-mobile-only{display:none!important}
+      .cart-minibar,.sheet-overlay,.sheet-handle{display:none!important}
+    }
 
     /* ════════════════════════════════════════════════════════════
        هوية ناردين الدافئة (v8.3) — طبقة موحّدة تُلوّن الموقع كاملاً

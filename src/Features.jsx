@@ -7,6 +7,7 @@
 // ══════════════════════════════════════════════════════════════
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY } from "./lib/supabase.js";
+import { notifyTelegram, buildShiftReport, buildDailySummary } from "./lib/telegram.js";
 import {
   getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert,
 } from "./lib/utils.js";
@@ -270,6 +271,41 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       notes,
     };
     store.setShifts(p => p.map(s => s.id === openShift.id ? closed : s));
+
+    // v27: إرسال صامت لتليجرام — التقرير محفوظ في shifts بالفعل (شبكة أمان)
+    try {
+      const cafeName = settings?.cafeName || "ناردين كافيه";
+      const targets = settings?.telegramTargets || [];
+      notifyTelegram(targets, "shift", buildShiftReport(closed, cafeName, CUR));
+
+      // ملخص اليوم يُرسل عند إغلاق آخر وردية مسائية (الساعة 12–1 ليلاً)
+      const hr = new Date().getHours();
+      const isEndOfDay = hr >= 23 || hr <= 2;
+      if (isEndOfDay) {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const inToday = (iso) => iso && new Date(iso) >= today;
+        const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
+        const sum = (a, f = o => o.total || 0) => a.reduce((s, o) => s + f(o), 0);
+        const expToday = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inToday(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
+        const costToday = paidToday.reduce((s, o) => s + (o.items || []).reduce((a, it) => {
+          const m = (store.menu || []).find(x => x.id === it.itemId);
+          return a + ((m?.cost || 0) * (it.qty || 0));
+        }, 0), 0);
+        const revenue = sum(paidToday);
+        const daily = {
+          revenue, cash: sum(paidToday.filter(o => o.paymentType === "cash")),
+          card: sum(paidToday.filter(o => o.paymentType === "card")),
+          tron: sum(paidToday, o => o.tronAmount || 0),
+          expenses: expToday,
+          debts: sum((store.orders || []).filter(o => o.status === "debt" && inToday(o.createdAt))),
+          comp: sum(paidToday, o => o.compAmount || 0),
+          profit: revenue - costToday - expToday,
+          orders: paidToday.length,
+        };
+        notifyTelegram(targets, "daily", buildDailySummary(daily, cafeName, CUR));
+      }
+    } catch (e) { console.warn("telegram shift:", e); }
+
     setCountedCash("");
     setNotes("");
     setConfirmClose(false);

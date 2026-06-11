@@ -8,6 +8,7 @@ import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_CO
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt, generateZReportPDF } from "./receipts.js";
+import { notifyTelegram, buildEventMsg } from "./lib/telegram.js";
 
 export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [cart,setCart]=useState([]);
@@ -20,6 +21,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [discount,setDiscount]=useState(0);
   const [submitting,setSubmitting]=useState(false);
   const [printAsk,setPrintAsk]=useState(null); // v26: {order,orderNum} مودال طباعة الفاتورة
+  const [sheetOpen,setSheetOpen]=useState(false); // v27: السلة المنزلقة على الموبايل
   const [orderMode,setOrderMode]=useState("new"); // "new" | "addto"
   const [targetOrderId,setTargetOrderId]=useState(""); // للإضافة لطلب موجود
   const [tableError,setTableError]=useState("");
@@ -113,7 +115,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       if(hasDrinks) addNotification(`🍹 إضافة للطلب #${target.orderNum} — البار`,[ROLES.BAR],targetOrderId);
       if(hasHookah) addNotification(`💨 إضافة للطلب #${target.orderNum} — أراكيل`,[ROLES.HOOKAH],targetOrderId);
       addNotification(`📋 تم إضافة أصناف للطلب #${target.orderNum}`,[ROLES.CASHIER,ROLES.ADMIN],targetOrderId);
-      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);setTargetOrderId("");
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);setTargetOrderId("");setSheetOpen(false);
       showToast(`✓ تم الإضافة للطلب #${target.orderNum}`);
       return;
     }
@@ -170,7 +172,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
       // تحديث حالة الطاولة
       store.setTables(p=>p.map(t=>String(t.number)===String(tableNum.trim())?{...t,status:"occupied",openedAt:t.openedAt||new Date().toISOString()}:t));
-      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);
+      setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);setSheetOpen(false);
       setSubmitting(false);
       // ✅ الفاتورة تُحفظ فقط عند الدفع في CashierTab — لا تُحفظ هنا
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
@@ -234,9 +236,31 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         </div>
       </div>
 
+      {/* خلفية معتمة خلف اللوحة المنزلقة (موبايل فقط) */}
+      {sheetOpen&&<div className="sheet-overlay show-mobile-only" onClick={()=>setSheetOpen(false)}/>}
+
+      {/* شريط السلة المصغّر — يظهر دائماً أسفل الموبايل، نقره يفتح اللوحة */}
+      <div className="cart-minibar show-mobile-only" onClick={()=>setSheetOpen(true)}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:20}}>🛒</span>
+          <div style={{display:"flex",flexDirection:"column",lineHeight:1.2}}>
+            <span style={{fontWeight:900,fontSize:14}}>{cartCount>0?`${cartCount} صنف`:"السلة فارغة"}</span>
+            {cartCount>0&&<span style={{fontSize:12,opacity:.9}}>{cartTotal.toLocaleString()} {CUR}</span>}
+          </div>
+        </div>
+        <span style={{background:"rgba(255,255,255,.25)",borderRadius:10,padding:"8px 16px",fontWeight:900,fontSize:13}}>
+          {cartCount>0?"عرض وتسجيل ↑":"اطلب أصنافاً"}
+        </span>
+      </div>
+
       {/* Cart */}
-      <div className="order-cart" style={{background:"var(--card)",borderRadius:16,boxShadow:"var(--shadow)",
+      <div className={"order-cart"+(sheetOpen?" sheet-open":"")} style={{background:"var(--card)",borderRadius:16,boxShadow:"var(--shadow)",
         display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {/* مقبض السحب + إغلاق (موبايل) */}
+        <div className="sheet-handle show-mobile-only" onClick={()=>setSheetOpen(false)}>
+          <div className="sheet-grip"/>
+          <button onClick={(e)=>{e.stopPropagation();setSheetOpen(false);}} style={{position:"absolute",insetInlineEnd:14,top:10,background:"rgba(0,0,0,.08)",border:"none",borderRadius:8,width:30,height:30,fontSize:16,cursor:"pointer",color:"var(--text)"}}>✕</button>
+        </div>
         <div style={{padding:"14px 14px 10px",background:"linear-gradient(135deg,#c62828,#8e0000)"}}>
           <div style={{color:"#fff",fontWeight:900,fontSize:15}}>
             🛒 السلة {cartCount>0&&<span style={{background:"rgba(255,255,255,.3)",borderRadius:20,padding:"2px 8px",fontSize:12}}>{cartCount}</span>}
@@ -438,6 +462,8 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
     store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled",cancelReason:reason||""}:o));
     restoreOrderStock(store, order); // v23: يُرجع فقط إن كان قد خُصم
     logActivity({ action: "إلغاء طلب", details: reason||"بلا سبب", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
+    // v27: تنبيه تليجرام صامت
+    notifyTelegram(settings?.telegramTargets||[], "cancel", buildEventMsg("cancel", { orderNum: order.orderNum, customerName: order.customerName, amount: order.total, reason: reason||"بلا سبب", by: user.name }, settings?.cafeName||"ناردين كافيه", settings?.currency||"ل.س"));
     showToast(`تم إلغاء الطلب #${order.orderNum}`,"error");
   };
 
@@ -859,6 +885,8 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       createdBy: user.name, orderId: order.id, orderNum: order.orderNum,
     }, ...p]);
     if (remaining <= 0) autoFreeTable(order.table, updated);
+    logActivity({ action: "ضيافة", details: fullyComp ? "ضيافة كاملة" : "ضيافة جزئية", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: compAmt, branch: order.branch || "main" });
+    notifyTelegram(settings?.telegramTargets||[], "comp", buildEventMsg("comp", { orderNum: order.orderNum, customerName: order.customerName, amount: compAmt, details: fullyComp ? "ضيافة كاملة" : "ضيافة جزئية", by: user.name }, settings?.cafeName||"ناردين كافيه", settings?.currency||"ل.س"));
     showToast(`🎁 تم تسجيل الضيافة — ${compAmt.toLocaleString()} ${CUR}`, "warn");
     setCompModal(null);
   };
@@ -1247,6 +1275,8 @@ export function DebtsTab({store,user,showToast,dm,settings}){
       paidBy:user.name,discount:0,isDebtSettlement:true,
     };
     store.setOrders(p=>[revEntry,...p]);
+    logActivity({ action: "سداد دين", details: debt?.customerName||"", userName: user.name, userRole: user.role, orderNum: "", amount, branch: "main" });
+    notifyTelegram(settings?.telegramTargets||[], "debt", buildEventMsg("debt", { customerName: debt?.customerName||"زبون", amount, by: user.name }, settings?.cafeName||"ناردين كافيه", settings?.currency||"ل.س"));
     showToast(`✅ تم استيفاء الدين وإضافته للإيرادات`);
   };
 

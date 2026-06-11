@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
+import { notifyTelegram, buildEventMsg, testTelegramTarget, TELEGRAM_EVENTS } from "./lib/telegram.js";
 
 // v24.1: تأكيد كتابي عبر مودال داخلي موثوق (window.prompt معطّل في WebView/أندرويد)
 // يتسامح مع كتابة "تاكيد" بألف عادية أو "تأكيد" بهمزة.
@@ -1664,9 +1665,107 @@ function S({label,children}){
   );
 }
 
+// ══════════════════════════════════════════════════════════════
+// v27: إعدادات وجهات تليجرام — متعددة، لكل وجهة أحداث مختارة
+// إرسال صامت تماماً؛ الكاشير لا يرى شيئاً. تُحفظ ضمن settings.telegramTargets
+// ══════════════════════════════════════════════════════════════
+function TelegramSettings({ settings, setForm, showToast }) {
+  const targets = settings.telegramTargets || [];
+  const [testing, setTesting] = useState(null);
+
+  const update = (arr) => setForm({ ...settings, telegramTargets: arr });
+
+  const addTarget = () => {
+    const t = {
+      id: "tg_" + Date.now(),
+      name: "وجهة جديدة",
+      token: "",
+      chatId: "",
+      events: { shift: true, daily: true, cancel: true, comp: true, debt: false, reset: true },
+    };
+    update([...targets, t]);
+  };
+  const patch = (id, key, val) => update(targets.map(t => t.id === id ? { ...t, [key]: val } : t));
+  const patchEvent = (id, ev, val) => update(targets.map(t => t.id === id ? { ...t, events: { ...t.events, [ev]: val } } : t));
+  const remove = (id) => update(targets.filter(t => t.id !== id));
+
+  const test = async (t) => {
+    if (!t.token || !t.chatId) { showToast("أدخل التوكن ومعرّف المحادثة أولاً", "error"); return; }
+    setTesting(t.id);
+    const ok = await testTelegramTarget(t.token, t.chatId);
+    setTesting(null);
+    showToast(ok ? "✅ وصلت رسالة الاختبار بنجاح" : "⚠ فشل الإرسال — تحقق من التوكن والمعرّف", ok ? "success" : "error");
+  };
+
+  return (
+    <div style={{ marginTop: 24, borderTop: "2px solid var(--border)", paddingTop: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 900, margin: 0 }}>📨 تنبيهات تليجرام (إدارة فقط)</h3>
+        <button onClick={addTarget} style={{ background: "#0088cc", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+          ➕ إضافة وجهة
+        </button>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--sub)", marginBottom: 14, lineHeight: 1.6 }}>
+        إرسال صامت تلقائي لمجموعات/حسابات الإدارة. الكاشير لا يرى شيئاً. لكل وجهة اختر أي أحداث تصلها.
+      </p>
+
+      {targets.length === 0 && (
+        <div style={{ textAlign: "center", padding: 20, color: "var(--sub)", fontSize: 13, background: "var(--card2)", borderRadius: 12 }}>
+          لا توجد وجهات بعد. اضغط «➕ إضافة وجهة» لربط مجموعة تليجرام.
+        </div>
+      )}
+
+      {targets.map(t => (
+        <div key={t.id} style={{ background: "var(--card2)", borderRadius: 14, padding: 14, marginBottom: 12, border: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+            <input value={t.name} onChange={e => patch(t.id, "name", e.target.value)}
+              placeholder="اسم الوجهة (مثلاً: مجموعة الإدارة)"
+              style={{ flex: 1, padding: "9px 12px", fontSize: 14, fontWeight: 700, borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--card)", color: "var(--text)", fontFamily: "inherit", outline: "none" }} />
+            <button onClick={() => remove(t.id)} style={{ background: "rgba(198,40,40,.15)", color: "#c62828", border: "none", borderRadius: 8, padding: "8px 11px", cursor: "pointer", fontSize: 14 }}>🗑</button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 3 }}>توكن البوت (Bot Token)</label>
+              <input value={t.token} onChange={e => patch(t.id, "token", e.target.value.trim())}
+                placeholder="123456:ABC..." type="password"
+                style={{ width: "100%", padding: "8px 10px", fontSize: 12, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--card)", color: "var(--text)", fontFamily: "monospace", outline: "none" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 3 }}>معرّف المحادثة (Chat ID)</label>
+              <input value={t.chatId} onChange={e => patch(t.id, "chatId", e.target.value.trim())}
+                placeholder="-100123... للمجموعة"
+                style={{ width: "100%", padding: "8px 10px", fontSize: 12, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--card)", color: "var(--text)", fontFamily: "monospace", outline: "none" }} />
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--sub)", marginBottom: 6 }}>الأحداث المُرسَلة لهذه الوجهة:</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+            {Object.entries(TELEGRAM_EVENTS).map(([key, label]) => {
+              const on = !!(t.events && t.events[key]);
+              return (
+                <button key={key} onClick={() => patchEvent(t.id, key, !on)}
+                  style={{ border: "1.5px solid " + (on ? "#0088cc" : "var(--border)"), borderRadius: 16, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: on ? "#0088cc" : "transparent", color: on ? "#fff" : "var(--text)" }}>
+                  {on ? "✓ " : ""}{label}
+                </button>
+              );
+            })}
+          </div>
+
+          <button onClick={() => test(t)} disabled={testing === t.id}
+            style={{ background: "rgba(0,136,204,.15)", color: "#0088cc", border: "1px solid rgba(0,136,204,.3)", borderRadius: 9, padding: "8px 14px", fontWeight: 700, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit" }}>
+            {testing === t.id ? "⏳ جارٍ الاختبار..." : "🧪 اختبار الإرسال"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
   const { trigger: dangerConfirm, modal: dangerModal } = useDangerConfirm();
+  const notifyReset=(what)=>notifyTelegram(store.settings?.telegramTargets||[], "reset", buildEventMsg("reset", { details: "تم تصفير: "+what, by: user?.name||"الأدمن" }, store.settings?.cafeName||"ناردين كافيه", store.settings?.currency||"ل.س"));
   const [_formRaw,_setFormRaw]=useState({...store.settings});
   const _dirty=useRef(false);
   // wrapper: أي تغيير من المستخدم يضع _dirty=true
@@ -2007,32 +2106,32 @@ export function SettingsTab({store,showToast,dm,user}){
           <div className="card" style={{gridColumn:"1/-1",borderTop:"4px solid #c62828"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={async()=>{dangerConfirm("تصفير جميع الطلبات والمبيعات",async()=>{store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}logActivity({action:"تصفير بيانات",details:"الطلبات + سجل النقد",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير المبيعات","warn");})}}
+              <button onClick={async()=>{dangerConfirm("تصفير جميع الطلبات والمبيعات",async()=>{store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}logActivity({action:"تصفير بيانات",details:"الطلبات + سجل النقد",userName:user?.name||"",userRole:"admin"});notifyReset("الطلبات + سجل النقد");showToast("تم تصفير المبيعات","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المبيعات
               </button>
-              <button onClick={async()=>{dangerConfirm("تصفير الديون",async()=>{store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}logActivity({action:"تصفير بيانات",details:"الديون",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
+              <button onClick={async()=>{dangerConfirm("تصفير الديون",async()=>{store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}logActivity({action:"تصفير بيانات",details:"الديون",userName:user?.name||"",userRole:"admin"});notifyReset("الديون");showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الديون
               </button>
-              <button onClick={async()=>{dangerConfirm("تصفير المصاريف",async()=>{store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}logActivity({action:"تصفير بيانات",details:"المصاريف",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
+              <button onClick={async()=>{dangerConfirm("تصفير المصاريف",async()=>{store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}logActivity({action:"تصفير بيانات",details:"المصاريف",userName:user?.name||"",userRole:"admin"});notifyReset("المصاريف");showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المصاريف
               </button>
-              <button onClick={async()=>{dangerConfirm("تصفير سجل الضيافة",async()=>{store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}logActivity({action:"تصفير بيانات",details:"سجل الضيافة",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
+              <button onClick={async()=>{dangerConfirm("تصفير سجل الضيافة",async()=>{store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}logActivity({action:"تصفير بيانات",details:"سجل الضيافة",userName:user?.name||"",userRole:"admin"});notifyReset("سجل الضيافة");showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#00897b",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الضيافة
               </button>
-              <button onClick={async()=>{dangerConfirm("تصفير بيانات الزبائن",async()=>{store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}logActivity({action:"تصفير بيانات",details:"الزبائن",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
+              <button onClick={async()=>{dangerConfirm("تصفير بيانات الزبائن",async()=>{store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}logActivity({action:"تصفير بيانات",details:"الزبائن",userName:user?.name||"",userRole:"admin"});notifyReset("الزبائن");showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#1565c0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الزبائن
               </button>
-              <button onClick={async()=>{dangerConfirm("تصفير سجل الفواتير",async()=>{store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}logActivity({action:"تصفير بيانات",details:"الفواتير",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير الفواتير","warn");})}}
+              <button onClick={async()=>{dangerConfirm("تصفير سجل الفواتير",async()=>{store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}logActivity({action:"تصفير بيانات",details:"الفواتير",userName:user?.name||"",userRole:"admin"});notifyReset("الفواتير");showToast("تم تصفير الفواتير","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#37474f",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الفواتير
               </button>
               <button onClick={()=>dangerConfirm("إعادة تعيين الإعدادات للافتراضية",async()=>{
-                logActivity({action:"تصفير بيانات",details:"الإعدادات",userName:user?.name||"",userRole:"admin"});
+                logActivity({action:"تصفير بيانات",details:"الإعدادات",userName:user?.name||"",userRole:"admin"});notifyReset("الإعدادات");
                 // 1. احذف إعدادات السحابة القديمة
                 if(SUPABASE_READY){
                   try{ await sbUpsert("app_settings",{id:"main",data:{},updated_at:new Date().toISOString()},"id"); }catch(e){ console.warn(e); }
@@ -2069,6 +2168,8 @@ export function SettingsTab({store,showToast,dm,user}){
           </div>
         )}
       </div>
+
+      <TelegramSettings settings={form} setForm={setForm} showToast={showToast} />
 
       <div style={{marginTop:24,display:"flex",justifyContent:"flex-end"}}>
         <button className="btn btn-red" onClick={save} style={{padding:"12px 32px",fontSize:15}}>
