@@ -22,6 +22,12 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [submitting,setSubmitting]=useState(false);
   const [printAsk,setPrintAsk]=useState(null); // v26: {order,orderNum} مودال طباعة الفاتورة
   const [sheetOpen,setSheetOpen]=useState(false); // v27: السلة المنزلقة على الموبايل
+  const [barHidden,setBarHidden]=useState(false);  // v27.2: إخفاء الشريط المصغّر بالسحب لأسفل
+  const dragRef=useRef({startY:0,dy:0,dragging:false});
+  const [dragY,setDragY]=useState(0);
+  // v27.2: يعود الشريط للظهور تلقائياً عند إضافة صنف جديد للسلة
+  const prevCount=useRef(0);
+  useEffect(()=>{ if(cartCount>prevCount.current) setBarHidden(false); prevCount.current=cartCount; },[cartCount]);
   const [orderMode,setOrderMode]=useState("new"); // "new" | "addto"
   const [targetOrderId,setTargetOrderId]=useState(""); // للإضافة لطلب موجود
   const [tableError,setTableError]=useState("");
@@ -263,19 +269,35 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       {/* خلفية معتمة خلف اللوحة المنزلقة (موبايل فقط) */}
       {sheetOpen&&<div className="sheet-overlay show-mobile-only" onClick={()=>setSheetOpen(false)}/>}
 
-      {/* شريط السلة المصغّر — يظهر دائماً أسفل الموبايل، نقره يفتح اللوحة */}
-      <div className="cart-minibar show-mobile-only" onClick={()=>setSheetOpen(true)}>
+      {/* شريط السلة المصغّر — يظهر فقط حين فيه أصناف، قابل للسحب لأسفل ليختفي */}
+      {!barHidden && cartCount>0 && (
+      <div className="cart-minibar show-mobile-only"
+        style={{transform:dragY>0?`translateY(${dragY}px)`:undefined,transition:dragRef.current.dragging?"none":"transform .25s"}}
+        onClick={()=>{ if(Math.abs(dragRef.current.dy)<6) setSheetOpen(true); }}
+        onTouchStart={e=>{dragRef.current={startY:e.touches[0].clientY,dy:0,dragging:true};}}
+        onTouchMove={e=>{ if(!dragRef.current.dragging)return; const d=e.touches[0].clientY-dragRef.current.startY; dragRef.current.dy=d; if(d>0)setDragY(d); }}
+        onTouchEnd={()=>{ const d=dragRef.current.dy; dragRef.current.dragging=false; if(d>50){ setBarHidden(true); } setDragY(0); }}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:20}}>🛒</span>
           <div style={{display:"flex",flexDirection:"column",lineHeight:1.2}}>
-            <span style={{fontWeight:900,fontSize:14}}>{cartCount>0?`${cartCount} صنف`:"السلة فارغة"}</span>
-            {cartCount>0&&<span style={{fontSize:12,opacity:.9}}>{cartTotal.toLocaleString()} {CUR}</span>}
+            <span style={{fontWeight:900,fontSize:14}}>{cartCount} صنف</span>
+            <span style={{fontSize:12,opacity:.9}}>{cartTotal.toLocaleString()} {CUR}</span>
           </div>
         </div>
         <span style={{background:"rgba(255,255,255,.25)",borderRadius:10,padding:"8px 16px",fontWeight:900,fontSize:13}}>
-          {cartCount>0?"عرض وتسجيل ↑":"اطلب أصنافاً"}
+          عرض وتسجيل ↑
         </span>
       </div>
+      )}
+      {/* زر صغير لإعادة إظهار الشريط بعد إخفائه (يظهر فقط حين فيه أصناف) */}
+      {barHidden && cartCount>0 && (
+        <button className="show-mobile-only" onClick={()=>setBarHidden(false)}
+          style={{position:"fixed",insetInlineEnd:14,bottom:14,zIndex:1400,width:54,height:54,borderRadius:"50%",border:"none",
+            background:"linear-gradient(135deg,#c62828,#8e0000)",color:"#fff",fontSize:22,cursor:"pointer",
+            boxShadow:"0 4px 16px rgba(0,0,0,.35)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          🛒<span style={{position:"absolute",top:-2,insetInlineStart:-2,background:"#f9a825",color:"#1a0a00",borderRadius:"50%",minWidth:22,height:22,fontSize:12,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{cartCount}</span>
+        </button>
+      )}
 
       {/* Cart */}
       <div className={"order-cart"+(sheetOpen?" sheet-open":"")} style={{background:"var(--card)",borderRadius:16,boxShadow:"var(--shadow)",

@@ -1745,7 +1745,7 @@ function S({label,children}){
 
 // ══════════════════════════════════════════════════════════════
 // v27: إعدادات وجهات تليجرام — متعددة، لكل وجهة أحداث مختارة
-// إرسال صامت تماماً؛ الكاشير لا يرى شيئاً. تُحفظ ضمن settings.telegramTargets
+// تُحفظ ضمن settings.telegramTargets
 // ══════════════════════════════════════════════════════════════
 function TelegramSettings({ settings, setForm, showToast }) {
   const targets = settings.telegramTargets || [];
@@ -1785,13 +1785,13 @@ function TelegramSettings({ settings, setForm, showToast }) {
   return (
     <div style={{ marginTop: 24, borderTop: "2px solid var(--border)", paddingTop: 18 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 8 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 900, margin: 0 }}>📨 تنبيهات تليجرام (إدارة فقط)</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 900, margin: 0 }}>📨 تنبيهات تليجرام</h3>
         <button onClick={addTarget} style={{ background: "#0088cc", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
           ➕ إضافة وجهة
         </button>
       </div>
       <p style={{ fontSize: 12, color: "var(--sub)", marginBottom: 14, lineHeight: 1.6 }}>
-        إرسال صامت تلقائي لمجموعات/حسابات الإدارة. الكاشير لا يرى شيئاً. لكل وجهة اختر أي أحداث تصلها.
+        ربط مجموعات أو حسابات تليجرام لاستقبال تنبيهات تلقائية. لكل وجهة اختر أي أحداث تصلها.
       </p>
 
       {targets.length === 0 && (
