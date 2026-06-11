@@ -118,6 +118,11 @@ export const GlobalStyle = ({dm,theme="default"}) => {
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&family=El+Messiri:wght@500;600;700&family=Cairo:wght@400;600;700;900&display=swap');
     *{box-sizing:border-box;margin:0;padding:0}
+    /* v24.3: منع أي عنصر من تجاوز عرض الشاشة وضغط التخطيط (إصلاح عطل عرض الطاولات في WebView) */
+    html,body{max-width:100%;overflow-x:hidden}
+    #root{max-width:100vw;overflow-x:hidden}
+    main{min-width:0}
+    .card{min-width:0;max-width:100%;overflow-wrap:anywhere}
     :root{
       --red:${t.primary};--red-dark:${t.secondary};--green:#2e7d32;--gold:${t.accent};
       --bg:${dm?"#0b0b16":"#f7eee8"};

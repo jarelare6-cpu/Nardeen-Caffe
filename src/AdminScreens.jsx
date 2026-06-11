@@ -798,7 +798,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(155px,1fr))", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, width: "100%", minWidth: 0 }}>
         {store.tables
           .slice()
           .sort((a, b) => (a.number || 0) - (b.number || 0))
@@ -807,7 +807,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
             const total = orders.reduce((s, o) => s + (o.total || 0), 0);
             return (
               <div key={t.id} className="card"
-                style={{ borderTop: `4px solid ${t.status === "free" ? "#2e7d32" : "#c62828"}`, cursor: "pointer", transition: "all .2s" }}
+                style={{ borderTop: `4px solid ${t.status === "free" ? "#2e7d32" : "#c62828"}`, cursor: "pointer", transition: "box-shadow .2s, transform .2s" }}
                 onClick={() => toggleStatus(t.id)}>
                 <div style={{ textAlign: "center", fontSize: 26, marginBottom: 6 }}>🪑</div>
                 <div style={{ fontWeight: 900, textAlign: "center", fontSize: 14 }}>{t.label}</div>
