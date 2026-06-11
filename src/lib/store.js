@@ -789,7 +789,11 @@ export const useStore = () => {
     const fresh = branch === "outdoor" ? buildOutdoorTables(count) : buildDefaultTables(count);
     if (SUPABASE_READY && supabase) {
       // حذف طاولات هذا الفرع فقط من السحابة
-      const { error: delErr } = await supabase.from("tables").delete().eq("branch", branch);
+      const q = supabase.from("tables").delete();
+      // v25.1: الصالة تشمل الصفوف القديمة ذات branch فارغ (null) حتى لا تعود عبر Realtime
+      const { error: delErr } = branch === "main"
+        ? await q.or("branch.eq.main,branch.is.null")
+        : await q.eq("branch", branch);
       if (delErr) throw new Error("فشل حذف الطاولات: " + delErr.message);
       // رفع الطاولات النظيفة دفعة واحدة
       const rows = fresh.map(t => ({
