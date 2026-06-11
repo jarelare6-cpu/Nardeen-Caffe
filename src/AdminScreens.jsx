@@ -4,11 +4,50 @@ import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 
-// v23: تأكيد كتابي للإجراءات التي لا يمكن التراجع عنها
-const confirmDanger = (label) => {
-  const v = window.prompt(`⚠️ ${label}\nهذا الإجراء لا يمكن التراجع عنه!\nللمتابعة اكتب كلمة: تأكيد`);
-  return (v || "").trim() === "تأكيد";
-};
+// v24.1: تأكيد كتابي عبر مودال داخلي موثوق (window.prompt معطّل في WebView/أندرويد)
+// يتسامح مع كتابة "تاكيد" بألف عادية أو "تأكيد" بهمزة.
+const normalizeConfirm = (s) => (s || "").trim().replace(/[أإآ]/g, "ا");
+const isConfirmWord = (s) => normalizeConfirm(s) === "تاكيد";
+
+function DangerConfirmModal({ open, label, onConfirm, onCancel }) {
+  const [val, setVal] = useState("");
+  useEffect(() => { if (open) setVal(""); }, [open]);
+  if (!open) return null;
+  const ok = isConfirmWord(val);
+  return (
+    <div onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 100000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "var(--card,#1a1c2e)", color: "var(--text,#fff)", borderRadius: 16, padding: 22, width: "100%", maxWidth: 360, border: "2px solid #c62828" }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: "#ff5252", marginBottom: 6 }}>⚠️ {label}</div>
+        <div style={{ fontSize: 12.5, color: "var(--sub,#aaa)", marginBottom: 14, lineHeight: 1.6 }}>
+          هذا الإجراء لا يمكن التراجع عنه. للمتابعة اكتب كلمة <b style={{ color: "#ff5252" }}>تأكيد</b> ثم اضغط تنفيذ.
+        </div>
+        <input autoFocus value={val} onChange={e => setVal(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && ok) onConfirm(); }}
+          placeholder="اكتب: تأكيد"
+          style={{ width: "100%", padding: "11px 12px", fontSize: 15, fontWeight: 700, textAlign: "center", borderRadius: 10, border: ok ? "2px solid #2e7d32" : "2px solid var(--border,#33365a)", background: "var(--card2,#23253a)", color: "var(--text,#fff)", fontFamily: "'Tajawal',sans-serif", marginBottom: 14, outline: "none" }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border,#33365a)", background: "var(--card2,#23253a)", color: "var(--text,#fff)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>إلغاء</button>
+          <button onClick={() => ok && onConfirm()} disabled={!ok} style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: ok ? "#c62828" : "#555", color: "#fff", fontWeight: 900, fontSize: 14, cursor: ok ? "pointer" : "not-allowed", opacity: ok ? 1 : .6, fontFamily: "inherit" }}>🗑 تنفيذ التصفير</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// hook: يعطي trigger(label, action) + عنصر المودال للعرض
+function useDangerConfirm() {
+  const [state, setState] = useState(null); // { label, action }
+  const trigger = (label, action) => setState({ label, action });
+  const modal = (
+    <DangerConfirmModal
+      open={!!state}
+      label={state?.label || ""}
+      onCancel={() => setState(null)}
+      onConfirm={() => { const a = state?.action; setState(null); if (a) a(); }}
+    />
+  );
+  return { trigger, modal };
+}
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
@@ -1590,6 +1629,7 @@ function S({label,children}){
 
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
+  const { trigger: dangerConfirm, modal: dangerModal } = useDangerConfirm();
   const [_formRaw,_setFormRaw]=useState({...store.settings});
   const _dirty=useRef(false);
   // wrapper: أي تغيير من المستخدم يضع _dirty=true
@@ -1930,32 +1970,31 @@ export function SettingsTab({store,showToast,dm,user}){
           <div className="card" style={{gridColumn:"1/-1",borderTop:"4px solid #c62828"}}>
             <h3 style={{fontSize:15,fontWeight:800,marginBottom:14,color:"#c62828"}}>⚠️ منطقة الأدمن — تصفير</h3>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <button onClick={async()=>{if(confirmDanger("تصفير جميع الطلبات والمبيعات")){store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}logActivity({action:"تصفير بيانات",details:"الطلبات + سجل النقد",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير المبيعات","warn");}}}
+              <button onClick={async()=>{dangerConfirm("تصفير جميع الطلبات والمبيعات",async()=>{store.setOrders([]);store.setCashLog([]);if(SUPABASE_READY){await sbDeleteAll("orders");await sbDeleteAll("cash_log");}logActivity({action:"تصفير بيانات",details:"الطلبات + سجل النقد",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير المبيعات","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#c62828",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المبيعات
               </button>
-              <button onClick={async()=>{if(confirmDanger("تصفير الديون")){store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}logActivity({action:"تصفير بيانات",details:"الديون",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
+              <button onClick={async()=>{dangerConfirm("تصفير الديون",async()=>{store.setDebts([]);if(SUPABASE_READY){await sbDeleteAll("debts");}logActivity({action:"تصفير بيانات",details:"الديون",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#6a1b9a",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الديون
               </button>
-              <button onClick={async()=>{if(confirmDanger("تصفير المصاريف")){store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}logActivity({action:"تصفير بيانات",details:"المصاريف",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
+              <button onClick={async()=>{dangerConfirm("تصفير المصاريف",async()=>{store.setExpenses([]);if(SUPABASE_READY){await sbDeleteAll("expenses");}logActivity({action:"تصفير بيانات",details:"المصاريف",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#e65100",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير المصاريف
               </button>
-              <button onClick={async()=>{if(confirmDanger("تصفير سجل الضيافة")){store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}logActivity({action:"تصفير بيانات",details:"سجل الضيافة",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
+              <button onClick={async()=>{dangerConfirm("تصفير سجل الضيافة",async()=>{store.setCompLog([]);if(SUPABASE_READY){await sbDeleteAll("comp_log");}logActivity({action:"تصفير بيانات",details:"سجل الضيافة",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#00897b",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الضيافة
               </button>
-              <button onClick={async()=>{if(confirmDanger("تصفير بيانات الزبائن")){store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}logActivity({action:"تصفير بيانات",details:"الزبائن",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");}}}
+              <button onClick={async()=>{dangerConfirm("تصفير بيانات الزبائن",async()=>{store.setCustomers([]);if(SUPABASE_READY){await sbDeleteAll("customers");}logActivity({action:"تصفير بيانات",details:"الزبائن",userName:user?.name||"",userRole:"admin"});showToast("تم","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#1565c0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الزبائن
               </button>
-              <button onClick={async()=>{if(confirmDanger("تصفير سجل الفواتير")){store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}logActivity({action:"تصفير بيانات",details:"الفواتير",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير الفواتير","warn");}}}
+              <button onClick={async()=>{dangerConfirm("تصفير سجل الفواتير",async()=>{store.setReceipts([]);if(SUPABASE_READY){await sbDeleteAll("receipts");}logActivity({action:"تصفير بيانات",details:"الفواتير",userName:user?.name||"",userRole:"admin"});showToast("تم تصفير الفواتير","warn");})}}
                 style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#37474f",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🗑️ تصفير الفواتير
               </button>
-              <button onClick={async()=>{
-                if(!confirmDanger("إعادة تعيين الإعدادات للافتراضية")) return;
+              <button onClick={()=>dangerConfirm("إعادة تعيين الإعدادات للافتراضية",async()=>{
                 logActivity({action:"تصفير بيانات",details:"الإعدادات",userName:user?.name||"",userRole:"admin"});
                 // 1. احذف إعدادات السحابة القديمة
                 if(SUPABASE_READY){
@@ -1968,7 +2007,7 @@ export function SettingsTab({store,showToast,dm,user}){
                 store.setSettings(fresh);
                 setForm({...fresh});
                 showToast("✅ تم تصفير الإعدادات وحذف البيانات القديمة","warn");
-              }} style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#004d40",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+              })} style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#004d40",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🔄 تصفير الإعدادات
               </button>
             </div>
@@ -1981,6 +2020,7 @@ export function SettingsTab({store,showToast,dm,user}){
           💾 حفظ الإعدادات
         </button>
       </div>
+      {dangerModal}
     </div>
   );
 }
@@ -1989,6 +2029,7 @@ export function SettingsTab({store,showToast,dm,user}){
 // ═══════════════════════════════════════════════════════════════
 
 export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
+  const { trigger: dangerConfirm, modal: dangerModal } = useDangerConfirm();
   const CUR = settings?.currency || "ل.س";
   const [adminTab, setAdminTab] = React.useState("overview"); // overview | orders | receipts | tables | reset
 
@@ -2009,8 +2050,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
     .reduce((s, e) => s + (e.amount || 0), 0);
 
   // ── تصفير الحديقة ──────────────────────────────────────────
-  const resetOutdoorOrders = async () => {
-    if (!confirmDanger("تصفير جميع طلبات الحديقة")) return;
+  const resetOutdoorOrders = () => dangerConfirm("تصفير جميع طلبات الحديقة", async () => {
     logActivity({action:"تصفير بيانات",details:"طلبات الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     store.setOrders(p => p.filter(o => o.branch !== "outdoor"));
     store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
@@ -2020,25 +2060,23 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
       for (const id of ids) { try { await sbDelete("orders", id); } catch {} }
     }
     showToast("تم تصفير مبيعات الحديقة", "warn");
-  };
+  });
 
-  const resetOutdoorReceipts = async () => {
-    if (!confirmDanger("تصفير فواتير الحديقة")) return;
+  const resetOutdoorReceipts = () => dangerConfirm("تصفير فواتير الحديقة", async () => {
     logActivity({action:"تصفير بيانات",details:"فواتير الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     store.setReceipts(p => p.filter(r => r.branch !== "outdoor"));
     const ids = outdoorReceipts.map(r => r.id);
     if (SUPABASE_READY) { for (const id of ids) { try { await sbDelete("receipts", id); } catch {} } }
     showToast("تم تصفير فواتير الحديقة", "warn");
-  };
+  });
 
-  const resetOutdoorCash = async () => {
-    if (!confirmDanger("تصفير كاش الحديقة")) return;
+  const resetOutdoorCash = () => dangerConfirm("تصفير كاش الحديقة", async () => {
     logActivity({action:"تصفير بيانات",details:"كاش الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     const cashIds = outdoorCash.map(e => e.id);
     store.setCashLog(p => p.filter(e => e.branch !== "outdoor"));
     if (SUPABASE_READY) { for (const id of cashIds) { try { await sbDelete("cash_log", id); } catch {} } }
     showToast("تم تصفير كاش الحديقة", "warn");
-  };
+  });
 
   const resetOutdoorTables = () => {
     if (!window.confirm("تحرير جميع طاولات الحديقة؟")) return;
@@ -2046,8 +2084,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
     showToast("تم تحرير جميع طاولات الحديقة", "warn");
   };
 
-  const resetAllOutdoor = async () => {
-    if (!confirmDanger("تصفير كل بيانات الحديقة (طلبات + كاش + فواتير)")) return;
+  const resetAllOutdoor = () => dangerConfirm("تصفير كل بيانات الحديقة (طلبات + كاش + فواتير)", async () => {
     logActivity({action:"تصفير بيانات",details:"كل بيانات الحديقة",userName:user?.name||"",userRole:"admin",branch:"outdoor"});
     const oIds = outdoorOrders.map(o => o.id);
     const rIds = outdoorReceipts.map(r => r.id);
@@ -2062,7 +2099,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
       for (const id of cIds) { try { await sbDelete("cash_log", id); } catch {} }
     }
     showToast("تم التصفير الشامل للحديقة", "warn");
-  };
+  });
 
   const Card = ({ icon, label, val, sub, color }) => (
     <div className="card" style={{ borderTop: `4px solid ${color}` }}>
@@ -2312,6 +2349,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
           </div>
         </div>
       )}
+    {dangerModal}
     </div>
   );
 }
