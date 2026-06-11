@@ -1201,6 +1201,7 @@ export function DebtsTab({store,user,showToast,dm,settings}){
   const [filter,setFilter]=useState("unsettled");
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({customerName:"",amount:"",notes:""});
+  const [partialDebt,setPartialDebt]=useState(null); // v25.1: {id, remaining, amount} مودال استيفاء جزئي
 
   const debts=store.debts||[];
   const filtered=debts.filter(d=>filter==="all"?true:filter==="settled"?d.settled:!d.settled)
@@ -1312,12 +1313,8 @@ export function DebtsTab({store,user,showToast,dm,settings}){
                     style={{flex:1,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontWeight:700,fontSize:12}}>
                     ✅ استيفاء كامل ({d.remaining.toLocaleString()} {CUR})
                   </button>
-                  <button onClick={()=>{
-                    const v=window.prompt(`استيفاء جزئي (المتبقي: ${d.remaining.toLocaleString()} ${CUR}):`);
-                    const n=+v;
-                    if(v&&n>0&&n<=d.remaining) settleDebt(d.id,n);
-                    else if(v) showToast("مبلغ غير صحيح","error");
-                  }} style={{background:"rgba(46,125,50,.2)",color:"#2e7d32",border:"none",borderRadius:8,padding:"9px 12px",fontWeight:700,fontSize:12}}>
+                  <button onClick={()=>setPartialDebt({id:d.id,remaining:d.remaining,amount:""})}
+                    style={{background:"rgba(46,125,50,.2)",color:"#2e7d32",border:"none",borderRadius:8,padding:"9px 12px",fontWeight:700,fontSize:12}}>
                     جزئي
                   </button>
                 </div>
@@ -1329,6 +1326,24 @@ export function DebtsTab({store,user,showToast,dm,settings}){
               )}
             </div>
           ))}
+        </div>
+      )}
+      {partialDebt&&(
+        <div onClick={e=>{if(e.target===e.currentTarget)setPartialDebt(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:340}}>
+            <div style={{fontWeight:900,fontSize:16,marginBottom:6}}>💵 استيفاء جزئي</div>
+            <div style={{fontSize:12,color:"var(--sub)",marginBottom:14}}>المتبقي: <b style={{color:"#c62828"}}>{partialDebt.remaining.toLocaleString()} {CUR}</b></div>
+            <input className="input" type="number" min="0" inputMode="numeric" autoFocus
+              placeholder="المبلغ المستوفى" value={partialDebt.amount}
+              onChange={e=>setPartialDebt({...partialDebt,amount:e.target.value})}
+              onKeyDown={e=>{if(e.key==="Enter"){const n=+partialDebt.amount;if(n>0&&n<=partialDebt.remaining){settleDebt(partialDebt.id,n);setPartialDebt(null);}else showToast("مبلغ غير صحيح","error");}}}
+              style={{fontSize:16,fontWeight:700,marginBottom:14}}/>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setPartialDebt(null)} style={{flex:1,background:"var(--card2)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:10,padding:"11px",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>إلغاء</button>
+              <button onClick={()=>{const n=+partialDebt.amount;if(n>0&&n<=partialDebt.remaining){settleDebt(partialDebt.id,n);setPartialDebt(null);}else showToast("مبلغ غير صحيح — يجب أن يكون بين 1 والمتبقي","error");}}
+                style={{flex:2,background:"#2e7d32",color:"#fff",border:"none",borderRadius:10,padding:"11px",fontWeight:900,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>✓ استيفاء</button>
+            </div>
+          </div>
         </div>
       )}
       {showAdd&&(
