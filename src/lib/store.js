@@ -432,14 +432,22 @@ const mapExpense = e => ({
   orderNum:     e.order_num ?? e.orderNum ?? "",
   isComplimentary: e.is_complimentary ?? e.isComplimentary ?? false,
 });
+// v25: تعقيم نصوص الطاولة — يزيل المحارف الفاسدة (U+FFFD وأشباهها) ويقصّ الطول.
+// حماية دائمة: حتى لو تلفت البيانات في القاعدة مستقبلاً، لا تصل للواجهة أبداً.
+const sanitizeTableText = (v, max) => {
+  let s = String(v ?? "");
+  s = s.replace(/[\uFFFD\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ""); // محارف بديلة/تحكم
+  if (s.length > max) s = s.slice(0, max);
+  return s.trim();
+};
 const mapTable = t => ({
   id:       t.id,
   number:   t.number || +t.num || 0,
   num:      String(t.num || t.number || ""),
-  label:    t.label || `طاولة ${t.num || t.number}`,
+  label:    sanitizeTableText(t.label, 40) || `طاولة ${t.num || t.number}`,
   seats:    t.seats || 4,
   status:   t.status || "free",
-  note:     t.note || "",
+  note:     sanitizeTableText(t.note, 200),
   orderId:  t.order_id || null,
   openedAt: t.opened_at || null,
   branch:   t.branch || "main",
@@ -773,6 +781,33 @@ export const useStore = () => {
     });
   }, []);
 
+  // ══════════════════════════════════════════════════════════
+  // v25: إعادة ضبط الطاولات بالكامل — حذف كل صفوف tables من السحابة
+  // ثم توليد طاولات نظيفة ورفعها. يحل تلف بيانات الطاولات جذرياً.
+  // ══════════════════════════════════════════════════════════
+  const resetTables = useCallback(async (branch = "main", count = 20) => {
+    const fresh = branch === "outdoor" ? buildOutdoorTables(count) : buildDefaultTables(count);
+    if (SUPABASE_READY && supabase) {
+      // حذف طاولات هذا الفرع فقط من السحابة
+      const { error: delErr } = await supabase.from("tables").delete().eq("branch", branch);
+      if (delErr) throw new Error("فشل حذف الطاولات: " + delErr.message);
+      // رفع الطاولات النظيفة دفعة واحدة
+      const rows = fresh.map(t => ({
+        id: t.id, number: t.number, num: t.num, label: t.label,
+        seats: t.seats, status: t.status, note: t.note,
+        order_id: null, opened_at: null, branch: t.branch,
+      }));
+      const { error: insErr } = await supabase.from("tables").upsert(rows, { onConflict: "id" });
+      if (insErr) throw new Error("فشل إنشاء الطاولات: " + insErr.message);
+    }
+    if (branch === "outdoor") {
+      setOutdoorTablesRaw(fresh); broadcast("nc_outdoor_tables", fresh);
+    } else {
+      setTablesRaw(fresh); broadcast("nc_tables", fresh);
+    }
+    return fresh.length;
+  }, []);
+
   const setOutdoorTables = useCallback((v) => {
     setOutdoorTablesRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
@@ -1096,7 +1131,7 @@ export const useStore = () => {
     orders, setOrders,
     notifications, setNotifications,
     cashLog, setCashLog,
-    tables, setTables, addTable,
+    tables, setTables, addTable, resetTables,
     outdoorTables, setOutdoorTables, addOutdoorTable,
     debts, setDebts,
     expenses, setExpenses,

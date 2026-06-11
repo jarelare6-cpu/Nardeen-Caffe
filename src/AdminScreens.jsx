@@ -2047,6 +2047,24 @@ export function SettingsTab({store,showToast,dm,user}){
               })} style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#004d40",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
                 🔄 تصفير الإعدادات
               </button>
+              <button onClick={()=>dangerConfirm("إعادة ضبط الطاولات (حذف وتوليد 20 نظيفة)",async()=>{
+                try{
+                  const n=await store.resetTables("main",20);
+                  logActivity({action:"تصفير بيانات",details:`إعادة ضبط الطاولات (${n})`,userName:user?.name||"",userRole:"admin"});
+                  showToast(`✅ أُعيد توليد ${n} طاولة نظيفة`,"warn");
+                }catch(e){ showToast("⚠ "+(e?.message||"فشل إعادة الضبط"),"error"); }
+              })} style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#4a148c",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🪑 إعادة ضبط الطاولات
+              </button>
+              <button onClick={()=>dangerConfirm("إعادة ضبط طاولات الحديقة (حذف وتوليد 10 نظيفة)",async()=>{
+                try{
+                  const n=await store.resetTables("outdoor",10);
+                  logActivity({action:"تصفير بيانات",details:`إعادة ضبط طاولات الحديقة (${n})`,userName:user?.name||"",userRole:"admin",branch:"outdoor"});
+                  showToast(`✅ أُعيد توليد ${n} طاولة حديقة نظيفة`,"warn");
+                }catch(e){ showToast("⚠ "+(e?.message||"فشل إعادة الضبط"),"error"); }
+              })} style={{flex:1,padding:12,borderRadius:12,border:"none",background:"#1b5e20",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",minWidth:130}}>
+                🌳 إعادة ضبط طاولات الحديقة
+              </button>
             </div>
           </div>
         )}
