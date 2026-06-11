@@ -807,9 +807,9 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
             const total = orders.reduce((s, o) => s + (o.total || 0), 0);
             return (
               <div key={t.id} className="card"
-                style={{ borderTop: `4px solid ${t.status === "free" ? "#2e7d32" : "#c62828"}`, cursor: "pointer", transition: "box-shadow .2s, transform .2s" }}
+                style={{ borderTop: `4px solid ${t.status === "free" ? "#2e7d32" : "#c62828"}`, cursor: "pointer", transition: "box-shadow .2s, transform .2s", background: dm ? "#181a30" : "#ffffff", maxHeight: 360, overflow: "hidden", contain: "content" }}
                 onClick={() => toggleStatus(t.id)}>
-                <div style={{ textAlign: "center", fontSize: 26, marginBottom: 6 }}>🪑</div>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ display: "block", margin: "0 auto 6px" }}><path d="M6 3v8m12-8v8M5 11h14l-1 5H6l-1-5zM7 16v5m10-5v5" stroke={t.status==="free"?"#2e7d32":"#c62828"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 <div style={{ fontWeight: 900, textAlign: "center", fontSize: 14 }}>{t.label}</div>
                 <div style={{ textAlign: "center", marginTop: 6 }}>
                   <span style={{
