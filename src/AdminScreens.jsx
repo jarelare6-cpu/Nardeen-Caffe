@@ -1770,9 +1770,16 @@ function TelegramSettings({ settings, setForm, showToast }) {
   const test = async (t) => {
     if (!t.token || !t.chatId) { showToast("أدخل التوكن ومعرّف المحادثة أولاً", "error"); return; }
     setTesting(t.id);
-    const ok = await testTelegramTarget(t.token, t.chatId);
+    const r = await testTelegramTarget(t.token, t.chatId);
     setTesting(null);
-    showToast(ok ? "✅ وصلت رسالة الاختبار بنجاح" : "⚠ فشل الإرسال — تحقق من التوكن والمعرّف", ok ? "success" : "error");
+    if (r.ok) { showToast("✅ وصلت رسالة الاختبار بنجاح", "success"); return; }
+    // ترجمة أشهر أخطاء تليجرام لرسائل واضحة
+    let msg = r.error || "فشل غير معروف";
+    if (/chat not found/i.test(msg)) msg = "المجموعة غير موجودة — تأكد أن البوت عضو فيها وأن المعرّف صحيح (يبدأ بـ -100 للمجموعات الكبيرة)";
+    else if (/unauthorized/i.test(msg)) msg = "التوكن غير صحيح — انسخه من جديد من @BotFather";
+    else if (/bot.*kicked|not a member|not enough rights/i.test(msg)) msg = "البوت ليس عضواً في المجموعة أو لا يملك صلاحية الإرسال";
+    else if (/parse/i.test(msg)) msg = "خطأ في تنسيق الرسالة";
+    showToast("⚠ " + msg, "error");
   };
 
   return (
@@ -1805,13 +1812,13 @@ function TelegramSettings({ settings, setForm, showToast }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 3 }}>توكن البوت (Bot Token)</label>
-              <input value={t.token} onChange={e => patch(t.id, "token", e.target.value.trim())}
+              <input value={t.token} onChange={e => patch(t.id, "token", e.target.value.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00A0]/g, "").trim())}
                 placeholder="123456:ABC..." type="password"
                 style={{ width: "100%", padding: "8px 10px", fontSize: 12, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--card)", color: "var(--text)", fontFamily: "monospace", outline: "none" }} />
             </div>
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 3 }}>معرّف المحادثة (Chat ID)</label>
-              <input value={t.chatId} onChange={e => patch(t.id, "chatId", e.target.value.trim())}
+              <input value={t.chatId} onChange={e => patch(t.id, "chatId", e.target.value.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00A0]/g, "").trim())}
                 placeholder="-100123... للمجموعة"
                 style={{ width: "100%", padding: "8px 10px", fontSize: 12, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--card)", color: "var(--text)", fontFamily: "monospace", outline: "none" }} />
             </div>

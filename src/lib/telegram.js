@@ -17,15 +17,29 @@ export const TELEGRAM_EVENTS = {
   reset:  "🗑 تصفير بيانات",
 };
 
+// v27.1: تنظيف عميق — يزيل المحارف الخفية (RTL marks, zero-width) والمسافات
+// التي تلتصق عند النسخ من تطبيقات عربية وتفسد التوكن/المعرّف.
+const cleanField = (v) => String(v ?? "")
+  .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00A0]/g, "")
+  .trim();
+
+// chat_id: إن كان رقماً (موجب/سالب) نرسله كرقم؛ المجموعات تتطلب رقماً سالباً.
+const normChatId = (v) => {
+  const c = cleanField(v);
+  return /^-?\d+$/.test(c) ? Number(c) : c;
+};
+
 // إرسال رسالة لوجهة واحدة عبر Telegram Bot API. صامت: لا يرمي استثناءً للأعلى.
 const sendToTarget = async (token, chatId, text) => {
-  if (!token || !chatId) return false;
+  const tk = cleanField(token);
+  const cid = normChatId(chatId);
+  if (!tk || cid === "" || cid == null) return false;
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${tk}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: chatId,
+        chat_id: cid,
         text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
@@ -51,7 +65,28 @@ export const notifyTelegram = (targets, eventKey, text) => {
 
 // اختبار وجهة (يُستخدم بزر "اختبار" في الإعدادات فقط — للأدمن)
 export const testTelegramTarget = async (token, chatId) => {
-  return sendToTarget(token, chatId, "✅ <b>اختبار ناجح</b>\nتم ربط ناردين كافيه بهذه الوجهة بنجاح.");
+  const tk = cleanField(token);
+  const cid = normChatId(chatId);
+  if (!tk) return { ok: false, error: "التوكن فارغ" };
+  if (cid === "" || cid == null) return { ok: false, error: "معرّف المحادثة فارغ" };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${tk}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: cid,
+        text: "✅ <b>اختبار ناجح</b>\nتم ربط ناردين كافيه بهذه الوجهة بنجاح.",
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) return { ok: true };
+    // تليجرام يعيد description مفيدة: chat not found / unauthorized / ...
+    return { ok: false, error: data.description || `HTTP ${res.status}`, code: data.error_code };
+  } catch (e) {
+    return { ok: false, error: "تعذّر الاتصال — تحقق من الإنترنت/الـ VPN", network: true };
+  }
 };
 
 // ── تنسيق الرسائل ──────────────────────────────────────────────
