@@ -27,7 +27,6 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [dragY,setDragY]=useState(0);
   // v27.2: يعود الشريط للظهور تلقائياً عند إضافة صنف جديد للسلة
   const prevCount=useRef(0);
-  useEffect(()=>{ if(cartCount>prevCount.current) setBarHidden(false); prevCount.current=cartCount; },[cartCount]);
   const [orderMode,setOrderMode]=useState("new"); // "new" | "addto"
   const [targetOrderId,setTargetOrderId]=useState(""); // للإضافة لطلب موجود
   const [tableError,setTableError]=useState("");
@@ -91,6 +90,8 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
     .slice(0,6),[store.menu]);
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
+  // v27.2: يعود الشريط للظهور تلقائياً عند إضافة صنف جديد للسلة
+  useEffect(()=>{ if(cartCount>prevCount.current) setBarHidden(false); prevCount.current=cartCount; },[cartCount]);
   const discountAmt=Math.round(cartTotal*Math.min(discount,maxDiscount)/100);
   const finalTotal=cartTotal-discountAmt;
 
