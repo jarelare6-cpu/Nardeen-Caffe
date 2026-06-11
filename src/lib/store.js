@@ -133,6 +133,9 @@ export const getHashedDefaultUsers = async () => {
 };
 
 export const DEFAULT_MENU = [
+  // ── v24: أصناف خدمية خاصة — لا تلمس المخزون، السعر يُحدّده الكاشير ──
+  { id:"svc_session", name:"رسم جلسة / دراسة", nameEn:"Session Fee", price:0, category:"services", stock:0, minStock:0, totalSold:0, emoji:"🎟️", active:true, noStock:true, isSession:true },
+  { id:"svc_custom",  name:"طلب خاص (شراء وبيع)", nameEn:"Special Order", price:0, category:"services", stock:0, minStock:0, totalSold:0, emoji:"🛒", active:true, noStock:true, isCustom:true },
   { id:"ck1",  name:'كوكتيل فواكه',            nameEn:"Fruit Cocktail",           price:200, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
   { id:"ck2",  name:'كوكتيل "ناردين"',          nameEn:"Nardeen Cocktail",         price:200, category:"cold_drinks", stock:40,  minStock:5,  totalSold:0, emoji:"🍹", active:true },
   { id:"ck3",  name:"كوكتيل موز حليب وفريز",    nameEn:"Banana Milk Strawberry",   price:200, category:"cold_drinks", stock:30,  minStock:5,  totalSold:0, emoji:"🍹", active:true },

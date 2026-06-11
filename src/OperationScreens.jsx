@@ -11,6 +11,7 @@ import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt, generat
 
 export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [cart,setCart]=useState([]);
+  const [specialModal,setSpecialModal]=useState(null); // v24: {item, name, price, cost}
   const [search,setSearch]=useState("");
   const [cat,setCat]=useState("all");
   const [tableNum,setTableNum]=useState("");
@@ -31,20 +32,48 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const filtered=store.menu.filter(m=>{
     const ms=m.name.toLowerCase().includes(search.toLowerCase())||(m.nameEn||"").toLowerCase().includes(search.toLowerCase());
     const mc=cat==="all"||m.category===cat;
-    return ms&&mc&&m.stock>0;
+    return ms&&mc&&(m.noStock||m.stock>0); // v24: الأصناف الخدمية تظهر دائماً
   });
 
-  const addToCart=(item)=>setCart(p=>{
-    const ex=p.find(c=>c.itemId===item.id);
-    if(ex) return p.map(c=>c.itemId===item.id?{...c,qty:c.qty+1}:c);
-    return [...p,{itemId:item.id,itemName:item.name,price:item.price,qty:1,emoji:item.emoji}];
+  const addToCart=(item)=>{
+    // v24: الأصناف الخدمية تفتح مودال لإدخال السعر (والاسم/التكلفة للطلب الخاص)
+    if(item.isSession||item.isCustom){
+      setSpecialModal({ item, name:item.isCustom?"":item.name, price:"", cost:"" });
+      return;
+    }
+    setCart(p=>{
+      const ex=p.find(c=>c.itemId===item.id);
+      if(ex) return p.map(c=>c.itemId===item.id?{...c,qty:c.qty+1}:c);
+      return [...p,{itemId:item.id,itemName:item.name,price:item.price,qty:1,emoji:item.emoji}];
+    });
+  };
+  // v24: تأكيد صنف خاص → يُضاف للسلة كسطر مستقل (qty=1، سعر وتكلفة مخصصان)
+  const confirmSpecial=()=>{
+    const m=specialModal; if(!m) return;
+    const price=Math.round(+m.price||0);
+    const cost=Math.round(+m.cost||0);
+    const nm=(m.name||"").trim()||m.item.name;
+    if(price<=0){ showToast("أدخل سعراً صحيحاً","error"); return; }
+    if(m.item.isCustom && cost<=0){ showToast("أدخل تكلفة الشراء","error"); return; }
+    setCart(p=>[...p,{
+      itemId:m.item.id, itemName:nm, price, qty:1, emoji:m.item.emoji,
+      special:m.item.isCustom?"custom":"session",
+      customCost: m.item.isCustom?cost:0,
+      lineId:"sp_"+Date.now()+Math.random().toString(36).slice(2,6), // سطر فريد
+    }]);
+    setSpecialModal(null);
+  };
+  const lineKey=(c)=>c.lineId||c.itemId;
+  const removeLine=(c)=>setCart(p=>{
+    const ex=p.find(x=>lineKey(x)===lineKey(c));
+    if(ex&&!ex.special&&ex.qty>1) return p.map(x=>lineKey(x)===lineKey(c)?{...x,qty:x.qty-1}:x);
+    return p.filter(x=>lineKey(x)!==lineKey(c)); // الأصناف الخاصة تُحذف كاملة
   });
-  const removeFromCart=(id)=>setCart(p=>{
-    const ex=p.find(c=>c.itemId===id);
-    if(ex&&ex.qty>1) return p.map(c=>c.itemId===id?{...c,qty:c.qty-1}:c);
-    return p.filter(c=>c.itemId!==id);
-  });
-  const setItemNote=(id,note)=>setCart(p=>p.map(c=>c.itemId===id?{...c,note}:c));
+  const incLine=(c)=>{
+    if(c.special) return; // لا تكرار للأصناف الخاصة (كل سطر فريد)
+    setCart(p=>p.map(x=>lineKey(x)===lineKey(c)?{...x,qty:x.qty+1}:x));
+  };
+  const setItemNote=(key,note)=>setCart(p=>p.map(c=>lineKey(c)===key?{...c,note}:c));
 
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
@@ -246,20 +275,20 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
               <div style={{fontSize:12}}>اضغط على الأصناف</div>
             </div>
           ):cart.map(item=>(
-            <div key={item.itemId} style={{padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
+            <div key={lineKey(item)} style={{padding:"7px 0",borderBottom:"1px solid var(--border)"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={34} round={8}/>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:12,fontWeight:600}}>{item.itemName}</div>
-                  <div style={{fontSize:11,color:"#c62828",fontWeight:700}}>{(item.price*item.qty).toLocaleString()} {CUR}</div>
+                  <div style={{fontSize:12,fontWeight:600}}>{item.itemName}{item.special==="custom"?<span style={{fontSize:10,color:"#e65100",marginInlineStart:4}}>🛒 خاص</span>:item.special==="session"?<span style={{fontSize:10,color:"#6a1b9a",marginInlineStart:4}}>🎟️</span>:null}</div>
+                  <div style={{fontSize:11,color:"#c62828",fontWeight:700}}>{(item.price*item.qty).toLocaleString()} {CUR}{item.special==="custom"&&item.customCost?<span style={{color:"var(--sub)",fontWeight:400}}> · تكلفة {item.customCost.toLocaleString()}</span>:null}</div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:6,background:"var(--card2)",borderRadius:20,padding:"3px 8px"}}>
-                  <button onClick={()=>removeFromCart(item.itemId)} style={{background:"none",border:"none",fontSize:15,color:"#c62828",fontWeight:900,lineHeight:1}}>−</button>
+                  <button onClick={()=>removeLine(item)} style={{background:"none",border:"none",fontSize:15,color:"#c62828",fontWeight:900,lineHeight:1}}>−</button>
                   <span style={{fontWeight:900,fontSize:13,minWidth:18,textAlign:"center"}}>{item.qty}</span>
-                  <button onClick={()=>addToCart(store.menu.find(m=>m.id===item.itemId))} style={{background:"none",border:"none",fontSize:15,color:"#2e7d32",fontWeight:900,lineHeight:1}}>+</button>
+                  <button onClick={()=>incLine(item)} disabled={item.special} style={{background:"none",border:"none",fontSize:15,color:item.special?"var(--sub)":"#2e7d32",fontWeight:900,lineHeight:1,opacity:item.special?.4:1}}>+</button>
                 </div>
               </div>
-              <input value={item.note||""} onChange={e=>setItemNote(item.itemId,e.target.value)}
+              <input value={item.note||""} onChange={e=>setItemNote(lineKey(item),e.target.value)}
                 placeholder="📝 ملاحظة (مثال: بدون سكر، إكسترا...)"
                 style={{width:"100%",marginTop:5,padding:"5px 8px",fontSize:11,borderRadius:7,
                   border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontFamily:"'Tajawal',sans-serif"}}/>
@@ -289,6 +318,66 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
           </button>
         </div>
       </div>
+
+      {/* v24: مودال الصنف الخاص — رسم جلسة / طلب خاص */}
+      {specialModal&&(
+        <div onClick={()=>setSpecialModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--card)",borderRadius:16,padding:20,width:"100%",maxWidth:360}}>
+            <div style={{fontSize:16,fontWeight:900,marginBottom:4}}>
+              {specialModal.item.isCustom?"🛒 طلب خاص (شراء وبيع)":"🎟️ رسم جلسة / دراسة"}
+            </div>
+            <div style={{fontSize:12,color:"var(--sub)",marginBottom:14}}>
+              {specialModal.item.isCustom
+                ?"مادة تُشترى للزبون — تُسجَّل تكلفتها كمصروف تلقائياً عند الدفع"
+                :"السعر يحدده الكاشير حسب عدد الطلاب ومدة الجلسة"}
+            </div>
+
+            {specialModal.item.isCustom&&(
+              <div style={{marginBottom:10}}>
+                <label style={{fontSize:12,fontWeight:700,display:"block",marginBottom:4}}>اسم المادة</label>
+                <input className="input" autoFocus placeholder="مثال: ببسي كبير، عصير معلّب..."
+                  value={specialModal.name} onChange={e=>setSpecialModal({...specialModal,name:e.target.value})}
+                  style={{fontSize:14}}/>
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10,marginBottom:specialModal.item.isCustom?10:16}}>
+              <div style={{flex:1}}>
+                <label style={{fontSize:12,fontWeight:700,display:"block",marginBottom:4}}>سعر البيع ({CUR})</label>
+                <input className="input" type="number" min="0" inputMode="numeric"
+                  autoFocus={!specialModal.item.isCustom}
+                  value={specialModal.price} onChange={e=>setSpecialModal({...specialModal,price:e.target.value})}
+                  style={{fontSize:15,fontWeight:700}}/>
+              </div>
+              {specialModal.item.isCustom&&(
+                <div style={{flex:1}}>
+                  <label style={{fontSize:12,fontWeight:700,display:"block",marginBottom:4,color:"#e65100"}}>تكلفة الشراء ({CUR})</label>
+                  <input className="input" type="number" min="0" inputMode="numeric"
+                    value={specialModal.cost} onChange={e=>setSpecialModal({...specialModal,cost:e.target.value})}
+                    style={{fontSize:15,fontWeight:700}}/>
+                </div>
+              )}
+            </div>
+
+            {specialModal.item.isCustom&&(+specialModal.price>0)&&(+specialModal.cost>0)&&(
+              <div style={{fontSize:12,fontWeight:700,color:"#2e7d32",marginBottom:14,textAlign:"center",background:"#e8f5e9",borderRadius:8,padding:"6px"}}>
+                الربح المتوقع: {(Math.round(+specialModal.price)-Math.round(+specialModal.cost)).toLocaleString()} {CUR}
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setSpecialModal(null)}
+                style={{flex:1,background:"var(--card2)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:10,padding:"11px",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                إلغاء
+              </button>
+              <button onClick={confirmSpecial}
+                style={{flex:2,background:"#c62828",color:"#fff",border:"none",borderRadius:10,padding:"11px",fontWeight:900,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+                ✓ إضافة للسلة
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
@@ -597,6 +686,20 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
     // v23: خصم المخزون عند الدفع (للطلبات الجديدة غير المخصومة)
     deductOrderStock(store, order);
+
+    // v24: تسجيل مصروف تلقائي لتكلفة شراء "الطلبات الخاصة" (شراء وبيع)
+    const customLines = (order.items || []).filter(it => it.special === "custom" && (it.customCost || 0) > 0);
+    if (customLines.length) {
+      const exps = customLines.map(it => ({
+        id: "exp_sp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        label: "شراء: " + it.itemName, description: "تكلفة طلب خاص — " + it.itemName,
+        amount: (it.customCost || 0) * (it.qty || 1), category: "purchases",
+        date: new Date().toISOString(), by: user.name, createdBy: user.name,
+        orderId: order.id, orderNum: order.orderNum, isSecondary: false,
+      }));
+      store.setExpenses(p => [...exps, ...p]);
+      logActivity({ action: "مصروف تلقائي", details: `تكلفة طلب خاص (${customLines.length})`, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: exps.reduce((a, e) => a + e.amount, 0), branch: order.branch || "main" });
+    }
 
     if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
       const cust = (store.customers || []).find(c => c.name === order.customerName);

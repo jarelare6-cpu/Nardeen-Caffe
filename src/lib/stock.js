@@ -19,6 +19,7 @@ export const deductOrderStock = (store, order) => {
   const items = order.items || [];
   if (items.length) {
     store.setMenu(p => p.map(m => {
+      if (m.noStock) return m; // v24: أصناف خدمية لا تُخصم
       const ci = items.find(c => c.itemId === m.id);
       if (!ci) return m;
       return {
@@ -37,6 +38,7 @@ export const restoreOrderStock = (store, order) => {
   const items = order.items || [];
   if (items.length) {
     store.setMenu(p => p.map(m => {
+      if (m.noStock) return m; // v24: أصناف خدمية لا تُرجَّع
       const ci = items.find(c => c.itemId === m.id);
       if (!ci) return m;
       return {

@@ -36,10 +36,11 @@ export const CAT_LABELS = {
   hot_drinks:"☕ مشروبات ساخنة",
   cold_drinks:"🧊 مشروبات باردة",
   food:"🍔 طعام",
-  hookah:"💨 نرجيلة"
+  hookah:"💨 نرجيلة",
+  services:"🎟️ خدمات وطلبات خاصة"
 };
 
-export const CAT_ORDER = ["hot_drinks","cold_drinks","food","hookah"];
+export const CAT_ORDER = ["hot_drinks","cold_drinks","food","hookah","services"];
 
 // ── محطات التحضير: حالة منفصلة لكل صنف عبر علم prepared ──────────
 // تحلّ المشكلتين 3 و4: كل محطة تُحضّر أصنافها فقط، والطلب يصبح

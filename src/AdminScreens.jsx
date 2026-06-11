@@ -57,7 +57,7 @@ export function DashboardTab({store,dm,settings}){
   const preparing=store.orders.filter(o=>o.status==="preparing").length;
   const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
-  const lowStock=store.menu.filter(m=>m.stock<=m.minStock);
+  const lowStock=store.menu.filter(m=>!m.noStock&&m.stock<=m.minStock); // v24: استثناء الأصناف الخدمية
   const todayProfit=calcNetProfit(store.orders,store.menu,today);
   const totalProfit=calcNetProfit(store.orders,store.menu);
   const topItems=store.menu.slice().sort((a,b)=>b.totalSold-a.totalSold).slice(0,5);
@@ -413,7 +413,7 @@ export function MenuTab({store,showToast,dm,settings}){
   const [form,setForm]=useState({name:"",nameEn:"",price:"",category:"hot_drinks",stock:"",minStock:"10",cost:"",emoji:"☕",image:"",imageIcon:""});
   const [cat,setCat]=useState("all");
 
-  const filtered=cat==="all"?store.menu:store.menu.filter(m=>m.category===cat);
+  const filtered=(cat==="all"?store.menu:store.menu.filter(m=>m.category===cat)).filter(m=>!m.noStock||cat==="services"); // v24
 
   const save=()=>{
     if(!form.name||!form.price){showToast("يرجى ملء الحقول الأساسية","error");return}
