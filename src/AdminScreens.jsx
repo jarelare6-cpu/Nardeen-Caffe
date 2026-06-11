@@ -611,6 +611,7 @@ export function MenuTab({store,showToast,dm,settings}){
 
 export function TablesTab({ store, user, showToast, dm, settings }) {
   const [clearModal, setClearModal] = useState(null);
+  const [payModal, setPayModal] = useState(null); // v24.2: تأكيد الدفع الكامل (بدل window.confirm المعطّل بأندرويد)
   const CUR = settings?.currency || "ل.س";
   const canManage = user && ["admin", "cashier"].includes(user.role);
   const isAdmin = user?.role === "admin";
@@ -676,12 +677,36 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
     showToast(`🪑 تم تفريغ ${t.label} وإعادة المخزون`);
   };
 
+  // v24.2: تنفيذ الدفع الكامل بعد التأكيد من المودال
+  const doPayFull = () => {
+    if (!payModal) return;
+    const { table: t, tOrders, total } = payModal;
+    setPayModal(null);
+    if (typeof navigator !== "undefined" && navigator.onLine === false) { showToast("⚠ لا يوجد اتصال — لا يمكن الدفع", "error"); return; }
+    const now = new Date().toISOString();
+    const updated = store.orders.map(o =>
+      tOrders.find(x => x.id === o.id)
+        ? { ...o, status: "paid", paymentType: "cash", paidAt: now, stockDeducted: true }
+        : o
+    );
+    store.setOrders(() => updated);
+    tOrders.forEach(o => deductOrderStock(store, o));
+    store.setTables(p => p.map(tb => tb.id === t.id ? { ...tb, status: "free", openedAt: null } : tb));
+    logActivity({ action: "دفع طلب", details: `دفع كامل طاولة ${t.number} (${tOrders.length} طلب)`, userName: user?.name || "", userRole: user?.role || "admin", orderNum: "", amount: total, branch: "main" });
+    showToast(`✓ تم دفع طاولة ${t.number} — ${total.toLocaleString()} ${CUR}`);
+  };
+
   const TableTimer = ({ openedAt }) => {
-    const [elapsed, setElapsed] = useState(Math.floor((Date.now() - new Date(openedAt)) / 1000));
+    const safeStart = () => {
+      const t = new Date(openedAt).getTime();
+      return isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / 1000));
+    };
+    const [elapsed, setElapsed] = useState(safeStart);
     useEffect(() => {
+      setElapsed(safeStart());
       const t = setInterval(() => setElapsed(e => e + 1), 1000);
       return () => clearInterval(t);
-    }, []);
+    }, [openedAt]);
     const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
     const overLimit = tableTimerAlert && m + h * 60 >= alertMinutes;
     return (
@@ -700,6 +725,30 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
 
   return (
     <div className="fade-in">
+      {/* v24.2: Modal تأكيد الدفع الكامل */}
+      {payModal && (
+        <div onClick={e => { if (e.target === e.currentTarget) setPayModal(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 950, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", fontSize: 40, marginBottom: 10 }}>💵</div>
+            <h3 style={{ textAlign: "center", fontWeight: 900, marginBottom: 6 }}>دفع كامل {payModal.table.label}</h3>
+            <p style={{ textAlign: "center", fontSize: 13, color: "var(--sub)", marginBottom: 14 }}>
+              {payModal.tOrders.length} طلب جاهز — الإجمالي <b style={{ color: "#c62828" }}>{payModal.total.toLocaleString()} {CUR}</b>
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setPayModal(null)}
+                style={{ flex: 1, background: "var(--card2)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px", fontWeight: 700, cursor: "pointer", color: "var(--text)", fontFamily: "inherit" }}>
+                إلغاء
+              </button>
+              <button onClick={doPayFull}
+                style={{ flex: 2, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "12px", fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>
+                ✓ تأكيد الدفع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal تفريغ الطاولة */}
       {clearModal && (
         <div onClick={e => { if (e.target === e.currentTarget) setClearModal(null); }}
@@ -751,6 +800,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(155px,1fr))", gap: 12 }}>
         {store.tables
+          .slice()
           .sort((a, b) => (a.number || 0) - (b.number || 0))
           .map(t => {
             const orders = activeOrders(t.number);
@@ -801,20 +851,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
                         // دفع كامل الطاولة
                         const tOrders = orders.filter(o => o.status === "ready");
                         if (!tOrders.length) { showToast("لا توجد طلبات جاهزة للدفع", "warn"); return; }
-                        if (window.confirm(`دفع كامل طاولة ${t.number}؟ (${total.toLocaleString()} ${CUR})`)) {
-                          if (typeof navigator !== "undefined" && navigator.onLine === false) { showToast("⚠ لا يوجد اتصال — لا يمكن الدفع", "error"); return; }
-                          const now = new Date().toISOString();
-                          const updated = store.orders.map(o =>
-                            tOrders.find(x => x.id === o.id)
-                              ? { ...o, status: "paid", paymentType: "cash", paidAt: now, stockDeducted: true }
-                              : o
-                          );
-                          store.setOrders(() => updated);
-                          tOrders.forEach(o => deductOrderStock(store, o)); // v23
-                          store.setTables(p => p.map(tb => tb.id === t.id ? { ...tb, status: "free", openedAt: null } : tb));
-                          logActivity({ action: "دفع طلب", details: `دفع كامل طاولة ${t.number} (${tOrders.length} طلب)`, userName: user?.name || "", userRole: user?.role || "admin", orderNum: "", amount: total, branch: "main" });
-                          showToast(`✓ تم دفع طاولة ${t.number} — ${total.toLocaleString()} ${CUR}`);
-                        }
+                        setPayModal({ table: t, tOrders, total });
                       }}
                         style={{ flex: 1, background: "rgba(46,125,50,.15)", border: "1.5px solid rgba(46,125,50,.3)", borderRadius: 7, padding: "5px 4px", fontSize: 10, color: "#2e7d32", fontWeight: 700, cursor: "pointer" }}>
                         💵 دفع كامل
