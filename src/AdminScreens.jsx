@@ -1647,6 +1647,84 @@ export function ReportsTab({store,dm,settings}){
           </div>
         );
       })()}
+
+      {/* 9. v27: مصفوفة ربحية الأصناف (Menu Engineering Matrix) */}
+      {(() => {
+        const items=(store.menu||[]).filter(m=>!m.noStock && (m.totalSold||0)>0);
+        if(!items.length) return (
+          <div className="card" style={{marginBottom:16}}>
+            <h3 style={{fontSize:14,fontWeight:800,marginBottom:8}}>📊 مصفوفة ربحية الأصناف</h3>
+            <div style={{fontSize:12,color:"var(--sub)",lineHeight:1.7}}>
+              لا توجد بيانات بعد. أدخل <b>تكلفة</b> كل صنف من «تعديل المنيو»، وبعد أيام من المبيعات ستظهر هنا
+              مصفوفة تصنّف أصنافك (نجوم / أحصنة / ألغاز / خاسرة) لتعرف ماذا تروّج وماذا تحذف.
+            </div>
+          </div>
+        );
+        // الربح لكل صنف = (سعر − تكلفة) × المبيع ؛ والهامش %
+        const enriched=items.map(m=>{
+          const margin=m.price>0?((m.price-(m.cost||0))/m.price)*100:0;
+          const unitProfit=m.price-(m.cost||0);
+          return {...m, margin, unitProfit, totalProfit:unitProfit*(m.totalSold||0)};
+        });
+        const avgSold=enriched.reduce((s,m)=>s+(m.totalSold||0),0)/enriched.length;
+        const avgMargin=enriched.reduce((s,m)=>s+m.margin,0)/enriched.length;
+        const classify=(m)=>{
+          const hi=m.totalSold>=avgSold, good=m.margin>=avgMargin;
+          if(hi&&good) return {key:"star",label:"⭐ نجم",color:"#2e7d32",hint:"روّج له — مبيع وربح عاليان"};
+          if(hi&&!good) return {key:"horse",label:"🐴 حصان",color:"#1565c0",hint:"مبيع عالٍ ربح قليل — ارفع السعر/قلّل التكلفة"};
+          if(!hi&&good) return {key:"puzzle",label:"🧩 لغز",color:"#f9a825",hint:"ربح عالٍ مبيع قليل — روّج وأبرزه"};
+          return {key:"dog",label:"🐌 خاسر",color:"#c62828",hint:"مبيع وربح ضعيفان — فكّر بحذفه"};
+        };
+        const noCost=enriched.filter(m=>!m.cost).length;
+        const sorted=enriched.slice().sort((a,b)=>b.totalProfit-a.totalProfit);
+        return (
+          <div className="card" style={{marginBottom:16}}>
+            <h3 style={{fontSize:14,fontWeight:800,marginBottom:4}}>📊 مصفوفة ربحية الأصناف</h3>
+            <div style={{fontSize:11,color:"var(--sub)",marginBottom:12}}>
+              التصنيف مقارنةً بمتوسط مقهاك (مبيع {Math.round(avgSold)} • هامش {Math.round(avgMargin)}%).
+              {noCost>0 && <span style={{color:"#f9a825"}}> ⚠ {noCost} صنف بلا تكلفة — أدخلها لدقة أعلى.</span>}
+            </div>
+            <div style={{overflowX:"auto"}} className="scroll-hide">
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5,minWidth:420}}>
+                <thead>
+                  <tr style={{color:"var(--sub)",fontSize:11,textAlign:"right"}}>
+                    <th style={{padding:"6px 8px"}}>الصنف</th>
+                    <th style={{padding:"6px 8px"}}>التصنيف</th>
+                    <th style={{padding:"6px 8px"}}>مبيع</th>
+                    <th style={{padding:"6px 8px"}}>هامش</th>
+                    <th style={{padding:"6px 8px"}}>ربح كلي</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map(m=>{
+                    const c=classify(m);
+                    return (
+                      <tr key={m.id} style={{borderTop:"1px solid var(--border)"}}>
+                        <td style={{padding:"7px 8px",fontWeight:700}}>{m.emoji||"🍽"} {m.name}</td>
+                        <td style={{padding:"7px 8px"}}><span style={{color:c.color,fontWeight:800,fontSize:11.5}}>{c.label}</span></td>
+                        <td style={{padding:"7px 8px"}}>{m.totalSold||0}</td>
+                        <td style={{padding:"7px 8px",color:m.margin>=avgMargin?"#2e7d32":"#c62828",fontWeight:700}}>{Math.round(m.margin)}%</td>
+                        <td style={{padding:"7px 8px",fontWeight:800}}>{Math.round(m.totalProfit).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{marginTop:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
+              {[["star","⭐ نجوم","#2e7d32"],["horse","🐴 أحصنة","#1565c0"],["puzzle","🧩 ألغاز","#f9a825"],["dog","🐌 خاسرة","#c62828"]].map(([k,lbl,col])=>{
+                const list=enriched.filter(m=>classify(m).key===k);
+                return (
+                  <div key={k} style={{background:"var(--card2)",borderRadius:10,padding:"8px 10px",borderInlineStart:`3px solid ${col}`}}>
+                    <div style={{fontSize:12,fontWeight:800,color:col}}>{lbl} ({list.length})</div>
+                    <div style={{fontSize:10.5,color:"var(--sub)",marginTop:2}}>{classify(list[0]||{totalSold:0,margin:0}).hint}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -78,6 +78,11 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   };
   const setItemNote=(key,note)=>setCart(p=>p.map(c=>lineKey(c)===key?{...c,note}:c));
 
+  // v27: الطلبات السريعة الذكية — تترتب تلقائياً حسب تراكم المبيعات (totalSold)
+  const quickItems=useMemo(()=>(store.menu||[])
+    .filter(m=>m.active!==false && !m.noStock && (m.noStock||m.stock>0) && (m.totalSold||0)>0)
+    .sort((a,b)=>(b.totalSold||0)-(a.totalSold||0))
+    .slice(0,6),[store.menu]);
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
   const discountAmt=Math.round(cartTotal*Math.min(discount,maxDiscount)/100);
@@ -212,6 +217,25 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
             ))}
           </div>
         </div>
+        {quickItems.length>0 && cat==="all" && !search && (
+          <div className="card" style={{padding:"10px 12px"}}>
+            <div style={{fontSize:11,fontWeight:800,color:"var(--sub)",marginBottom:8,display:"flex",alignItems:"center",gap:5}}>
+              ⚡ الأكثر طلباً <span style={{fontSize:9,fontWeight:600,opacity:.7}}>(يترتّب تلقائياً)</span>
+            </div>
+            <div style={{display:"flex",gap:8,overflowX:"auto"}} className="scroll-hide">
+              {quickItems.map((item,i)=>(
+                <button key={item.id} onClick={()=>addToCart(item)}
+                  style={{flexShrink:0,display:"flex",alignItems:"center",gap:6,padding:"8px 12px",borderRadius:12,border:"1.5px solid var(--border)",
+                    background:i===0?"linear-gradient(135deg,#f9a825,#f57f17)":"var(--card2)",color:i===0?"#fff":"var(--text)",
+                    fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                  <span style={{fontSize:16}}>{item.emoji||"🍽"}</span>
+                  {item.name}
+                  {i===0&&<span style={{fontSize:9,background:"rgba(255,255,255,.3)",borderRadius:8,padding:"1px 5px"}}>الأعلى</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{flex:1,overflowY:"auto",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(135px,1fr))",gap:8,paddingBottom:10}} className="scroll-hide">
           {filtered.map(item=>{
             const inCart=cart.find(c=>c.itemId===item.id);
