@@ -6,7 +6,7 @@ import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
-import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
+import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt, generateZReportPDF } from "./receipts.js";
 
 export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
@@ -19,6 +19,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [customerName,setCustomerName]=useState("");
   const [discount,setDiscount]=useState(0);
   const [submitting,setSubmitting]=useState(false);
+  const [printAsk,setPrintAsk]=useState(null); // v26: {order,orderNum} مودال طباعة الفاتورة
   const [orderMode,setOrderMode]=useState("new"); // "new" | "addto"
   const [targetOrderId,setTargetOrderId]=useState(""); // للإضافة لطلب موجود
   const [tableError,setTableError]=useState("");
@@ -173,14 +174,24 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       setSubmitting(false);
       // ✅ الفاتورة تُحفظ فقط عند الدفع في CashierTab — لا تُحفظ هنا
       showToast(`تم تسجيل الطلب #${orderNum} ✓`);
-      if(window.confirm(`🖨️ طباعة فاتورة الطلب #${orderNum}؟`)){
-        printOrder(newOrder,store.menu,1,settings);
-        setTimeout(()=>printOrder(newOrder,store.menu,2,settings),800);
-      }
+      setPrintAsk({ order: newOrder, orderNum }); // v26: مودال طباعة بدل window.confirm المعطّل في WebView
     },800);
   };
 
   return(
+    <>
+    {printAsk&&(
+      <div onClick={e=>{if(e.target===e.currentTarget)setPrintAsk(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div onClick={e=>e.stopPropagation()} className="card fade-in" style={{width:"100%",maxWidth:320}}>
+          <div style={{fontWeight:900,fontSize:16,marginBottom:6}}>🖨️ طباعة الفاتورة؟</div>
+          <div style={{fontSize:12,color:"var(--sub)",marginBottom:14}}>الطلب #{printAsk.orderNum}</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setPrintAsk(null)} style={{flex:1,background:"var(--card2)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:10,padding:"11px",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>لاحقاً</button>
+            <button onClick={()=>{const o=printAsk.order;printOrder(o,store.menu,1,settings);setTimeout(()=>printOrder(o,store.menu,2,settings),800);setPrintAsk(null);}} style={{flex:2,background:"#1565c0",color:"#fff",border:"none",borderRadius:10,padding:"11px",fontWeight:900,cursor:"pointer",fontFamily:"inherit"}}>🖨️ طباعة</button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="fade-in order-grid" style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:14,height:"calc(100vh - 130px)"}}>
       {/* Menu */}
       <div style={{display:"flex",flexDirection:"column",gap:10,overflow:"hidden"}}>
@@ -380,6 +391,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       )}
 
     </div>
+    </>
   );
 }
 
@@ -391,6 +403,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   const [filter,setFilter]=useState("active");
   const [search,setSearch]=useState("");
   const [editOrder,setEditOrder]=useState(null);
+  const [cancelModal,setCancelModal]=useState(null); // v26: {order} تأكيد إلغاء الطلب
   const CUR=settings?.currency||"ل.س";
   const canManage=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
   const isBarOrHookah=[ROLES.BAR,ROLES.HOOKAH].includes(user.role);
@@ -421,10 +434,10 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
     if(newStatus==="ready") addNotification(`✅ طلب #${order.orderNum} جاهز`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
     showToast(`تم تحديث الطلب #${order.orderNum}`);
   };
-  const cancelOrder=(order)=>{
-    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled"}:o));
+  const cancelOrder=(order,reason="")=>{
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled",cancelReason:reason||""}:o));
     restoreOrderStock(store, order); // v23: يُرجع فقط إن كان قد خُصم
-    logActivity({ action: "إلغاء طلب", details: "", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
+    logActivity({ action: "إلغاء طلب", details: reason||"بلا سبب", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
     showToast(`تم إلغاء الطلب #${order.orderNum}`,"error");
   };
 
@@ -480,6 +493,9 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   return(
     <div className="fade-in">
       {editOrder&&<EditModal order={editOrder} onClose={()=>setEditOrder(null)}/>}
+      {cancelModal&&<CancelOrderModal order={cancelModal.order} cur={settings?.currency||"ل.س"}
+        onConfirm={(reason)=>{cancelOrder(cancelModal.order,reason);setCancelModal(null);}}
+        onClose={()=>setCancelModal(null)}/>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
         <h2 style={{fontSize:18,fontWeight:900}}>📋 الطلبات ({filtered.length})</h2>
         <input className="input" placeholder="🔍 بحث..." value={search} onChange={e=>setSearch(e.target.value)} style={{maxWidth:200,fontSize:13}}/>
@@ -552,7 +568,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                       style={{background:"rgba(25,118,210,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#1565c0"}}>
                       ✏
                     </button>
-                    <button onClick={()=>cancelOrder(order)}
+                    <button onClick={()=>setCancelModal({order})}
                       style={{background:"rgba(198,40,40,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#c62828"}}>
                       🚫
                     </button>

@@ -6,6 +6,46 @@ import { NAV_ICONS } from "./NardeenIcons.jsx";
 // النمط العام للصور: "real" (افتراضي) أو "icon" — يتحكّم به زر التبديل
 export const ImageStyleContext = createContext("real");
 
+// v26: مودال تأكيد إلغاء الطلب — مشترك بين الكاشير والحديقة
+// أسباب سريعة + سبب مخصص اختياري؛ السبب يُسجّل في سجل النشاط.
+const CANCEL_REASONS = ["خطأ في الطلب", "الزبون انسحب", "صنف غير متوفر", "تكرار", "أخرى"];
+export function CancelOrderModal({ order, cur = "ل.س", onConfirm, onClose }) {
+  const [reason, setReason] = useState("");
+  const [custom, setCustom] = useState("");
+  if (!order) return null;
+  const finalReason = reason === "أخرى" ? (custom.trim() || "أخرى") : reason;
+  const items = (order.items || []).reduce((s, i) => s + (i.qty || 0), 0);
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "var(--card,#1a1c2e)", color: "var(--text,#fff)", borderRadius: 16, padding: 20, width: "100%", maxWidth: 360, border: "2px solid #c62828" }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: "#ff5252", marginBottom: 4 }}>🚫 إلغاء الطلب</div>
+        <div style={{ fontSize: 13, color: "var(--sub,#aaa)", marginBottom: 14, lineHeight: 1.6 }}>
+          الطلب <b>#{order.orderNum}</b>{order.customerName ? ` — ${order.customerName}` : ""}<br />
+          {items} صنف — <b style={{ color: "#c62828" }}>{Number(order.total || 0).toLocaleString()} {cur}</b>
+          {order.stockDeducted !== false ? <><br /><span style={{ fontSize: 11, color: "#f9a825" }}>↩ سيُرجَع المخزون للبار</span></> : null}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>سبب الإلغاء (اختياري):</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {CANCEL_REASONS.map(r => (
+            <button key={r} onClick={() => setReason(r)}
+              style={{ border: "1.5px solid " + (reason === r ? "#c62828" : "var(--border,#33365a)"), borderRadius: 18, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", background: reason === r ? "#c62828" : "transparent", color: reason === r ? "#fff" : "var(--text)" }}>{r}</button>
+          ))}
+        </div>
+        {reason === "أخرى" && (
+          <input autoFocus value={custom} onChange={e => setCustom(e.target.value)} placeholder="اكتب السبب..."
+            style={{ width: "100%", padding: "9px 12px", fontSize: 13, borderRadius: 10, border: "1.5px solid var(--border,#33365a)", background: "var(--card2,#23253a)", color: "var(--text,#fff)", fontFamily: "inherit", marginBottom: 12, outline: "none" }} />
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border,#33365a)", background: "var(--card2,#23253a)", color: "var(--text,#fff)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>تراجع</button>
+          <button onClick={() => onConfirm(finalReason)} style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: "#c62828", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>🚫 تأكيد الإلغاء</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export function ItemVisual({ item, size = 40, round = 12 }) {
   const style = useContext(ImageStyleContext);
   const real = (item?.image || "").trim();

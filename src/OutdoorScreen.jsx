@@ -5,6 +5,7 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { sbDelete, sbUpsert, SUPABASE_READY, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock } from "./lib/stock.js";
+import { CancelOrderModal } from "./uikit.jsx";
 
 // ── الفئات المسموح بها في الحديقة (بدون أراكيل) ─────────────
 const OUTDOOR_CATS = {
@@ -45,6 +46,9 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   const [discount, setDiscount] = useState(0);
   const [notes, setNotes]       = useState("");
   const [showPay, setShowPay]   = useState(null); // order to pay
+  const [releaseModal, setReleaseModal] = useState(null); // v26: {table, order} تأكيد تحرير+إلغاء
+  const [delTableModal, setDelTableModal] = useState(null); // v26: {table} تأكيد حذف طاولة
+  const [compConfirm, setCompConfirm] = useState(null); // v26: تأكيد ضيافة كاملة
   const [isPaying, setIsPaying] = useState(false); // v23.1: قفل النقر المزدوج أثناء الدفع
   const [payTronInput, setPayTronInput] = useState("");
   const [payDebtName, setPayDebtName]   = useState("");
@@ -367,28 +371,13 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                         </button>
                       )}
                       {isBusy && (
-                        <button className="obtn" onClick={() => {
-                          if (!window.confirm("تحرير الطاولة بدون دفع؟ سيُلغى الطلب المعلّق")) return;
-                          // v23: إلغاء الطلب المعلّق — الإرجاع فقط إن كان المخزون قد خُصم (طلب قديم)
-                          if (tableOrder && tableOrder.status === "pending") {
-                            restoreOrderStock(store, tableOrder);
-                            store.setOrders(p => p.map(o =>
-                              o.id === tableOrder.id ? { ...o, status: "cancelled" } : o
-                            ));
-                          }
-                          store.setOutdoorTables(p => p.map(x =>
-                            x.id === t.id ? { ...x, status: "free", orderId: null, openedAt: null } : x
-                          ));
-                          showToast("تم تحرير الطاولة وإرجاع المخزون", "warn");
-                        }} style={{ background: "#37474f", color: "#fff", width: "100%", fontSize: 11, padding: "6px 0" }}>
+                        <button className="obtn" onClick={() => setReleaseModal({ table: t, order: tableOrder })}
+                          style={{ background: "#37474f", color: "#fff", width: "100%", fontSize: 11, padding: "6px 0" }}>
                           تحرير
                         </button>
                       )}
-                      <button className="obtn" onClick={() => {
-                        if (!window.confirm(`حذف ${t.label}؟`)) return;
-                        store.setOutdoorTables(p => p.filter(x => x.id !== t.id));
-                        if (SUPABASE_READY) sbDelete("tables", t.id);
-                      }} style={{ background: "rgba(198,40,40,.15)", color: "#ef9a9a", width: "100%", fontSize: 11, padding: "5px 0", border: "1px solid rgba(198,40,40,.3)" }}>
+                      <button className="obtn" onClick={() => setDelTableModal({ table: t })}
+                        style={{ background: "rgba(198,40,40,.15)", color: "#ef9a9a", width: "100%", fontSize: 11, padding: "5px 0", border: "1px solid rgba(198,40,40,.3)" }}>
                         حذف
                       </button>
                     </div>
@@ -654,6 +643,59 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
       </main>
 
       {/* ── نافذة التسديد — كاملة مثل الكاش الرئيسي ── */}
+      {/* v26: تأكيد تحرير الطاولة (مع إلغاء الطلب المعلّق وسببه) */}
+      {releaseModal && releaseModal.order && releaseModal.order.status === "pending" && (
+        <CancelOrderModal order={releaseModal.order} cur={CUR}
+          onConfirm={(reason) => {
+            const ord = releaseModal.order, tb = releaseModal.table;
+            restoreOrderStock(store, ord);
+            store.setOrders(p => p.map(o => o.id === ord.id ? { ...o, status: "cancelled", cancelReason: reason || "" } : o));
+            store.setOutdoorTables(p => p.map(x => x.id === tb.id ? { ...x, status: "free", orderId: null, openedAt: null } : x));
+            logActivity({ action: "إلغاء طلب", details: reason || "تحرير طاولة حديقة", userName: user.name, userRole: user.role, orderNum: ord.orderNum, amount: ord.total, branch: "outdoor" });
+            showToast("تم تحرير الطاولة وإرجاع المخزون", "warn");
+            setReleaseModal(null);
+          }}
+          onClose={() => setReleaseModal(null)} />
+      )}
+      {/* تحرير طاولة بلا طلب معلّق — تأكيد بسيط */}
+      {releaseModal && (!releaseModal.order || releaseModal.order.status !== "pending") && (
+        <div onClick={e => { if (e.target === e.currentTarget) setReleaseModal(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340 }}>
+            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>تحرير {releaseModal.table.label}؟</div>
+            <div style={{ fontSize: 12, color: "var(--sub)", marginBottom: 14 }}>ستعود الطاولة لحالة شاغرة.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setReleaseModal(null)} style={{ flex: 1, background: "var(--card2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>تراجع</button>
+              <button onClick={() => { const tb = releaseModal.table; store.setOutdoorTables(p => p.map(x => x.id === tb.id ? { ...x, status: "free", orderId: null, openedAt: null } : x)); showToast("تم تحرير الطاولة", "warn"); setReleaseModal(null); }} style={{ flex: 2, background: "#37474f", color: "#fff", border: "none", borderRadius: 10, padding: "11px", fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>✓ تحرير</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* حذف طاولة حديقة — تأكيد بسيط (بدل window.confirm المعطّل في WebView) */}
+      {delTableModal && (
+        <div onClick={e => { if (e.target === e.currentTarget) setDelTableModal(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340, border: "2px solid #c62828" }}>
+            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6, color: "#ff5252" }}>🗑 حذف {delTableModal.table.label}؟</div>
+            <div style={{ fontSize: 12, color: "var(--sub)", marginBottom: 14 }}>لا يمكن التراجع عن حذف الطاولة.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setDelTableModal(null)} style={{ flex: 1, background: "var(--card2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>تراجع</button>
+              <button onClick={() => { const tb = delTableModal.table; store.setOutdoorTables(p => p.filter(x => x.id !== tb.id)); if (SUPABASE_READY) sbDelete("tables", tb.id); setDelTableModal(null); showToast("تم حذف الطاولة", "warn"); }} style={{ flex: 2, background: "#c62828", color: "#fff", border: "none", borderRadius: 10, padding: "11px", fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>🗑 حذف</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {compConfirm && (
+        <div onClick={e => { if (e.target === e.currentTarget) setCompConfirm(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 2100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340 }}>
+            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>🎁 ضيافة كامل الطلب؟</div>
+            <div style={{ fontSize: 12, color: "var(--sub)", marginBottom: 14 }}>الطلب #{compConfirm.orderNum} — {Number(compConfirm.total||0).toLocaleString()} {CUR} بلا مقابل.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setCompConfirm(null)} style={{ flex: 1, background: "var(--card2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>تراجع</button>
+              <button onClick={() => { compOrder(compConfirm); setCompConfirm(null); setShowPay(null); }} style={{ flex: 2, background: "#00897b", color: "#fff", border: "none", borderRadius: 10, padding: "11px", fontWeight: 900, cursor: "pointer", fontFamily: "inherit" }}>🎁 تأكيد الضيافة</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showPay && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", zIndex: 999,
@@ -716,7 +758,7 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
                     style={{ flex: 1, background: "rgba(106,27,154,.25)", color: "#ce93d8", fontSize: 12, border: "1px solid rgba(106,27,154,.4)" }}>
                     💳 تسجيل دين
                   </button>
-                  <button className="obtn" onClick={() => { if (window.confirm("ضيافة كامل الطلب؟")) compOrder(showPay); }}
+                  <button className="obtn" onClick={() => setCompConfirm(showPay)}
                     style={{ flex: 1, background: "rgba(0,137,123,.25)", color: "#80cbc4", fontSize: 12, border: "1px solid rgba(0,137,123,.4)" }}>
                     🎁 ضيافة كاملة
                   </button>
