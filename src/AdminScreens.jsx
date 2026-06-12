@@ -2870,44 +2870,6 @@ const _norm = (s) => (s||"").toString()
 const _round10 = (n) => Math.round((+n||0)/10)*10;
 const _target  = (cost) => _round10((+cost||0)*1.2);
 
-// خطة التكلفة المتّفق عليها (بحسب المعرّف)
-const COST_BY_ID = {
-  // ساخنة
-  m1:70,  m2:80,  m3:70,  m4:70,  m5:70,  m6:70,  m7:70,  m8:70,  m9:60,
-  m10:60, m11:60, m12:60, m13:60, m14:60, m15:75, m16:70, m17:80, m18:80,
-  // باردة معلّبة
-  mc1:110, mc2:110, mc3:110, mc4:110, mc5:90, mc6:70,
-  // عصائر (كلها 100 عدا توت 130 وفريز-وتوت 125)
-  j1:100, j2:100, j3:100, j4:100, j5:100, j6:100, j7:130, j8:100, j9:100, j10:125, j11:100,
-  // كوكتيلات (كلها 160 عدا موز-حليب 130 وموز-حليب-فريز 150)
-  ck1:160, ck2:160, ck3:150, ck4:130, ck5:160, ck6:160, ck7:160, ck8:160, ck9:160,
-  // ميلك شيك / أيسات
-  ms1:150, ms2:150, ms3:150, ms4:150, ms5:150, ms6:150, ms7:150, ms8:150,
-  ic1:115, ic2:115, ic3:115, ic4:115, ic5:115, ic6:115, ic7:115, ic8:115,
-  // أراكيل
-  hk1:150, hk2:125, hk3:125, hk4:125, hk5:125,
-};
-// تكلفة البوظة بالاسم (صنف مُضاف يدوياً في القاعدة الحيّة)
-const COST_BY_NAME = { "بوظه":140 };
-
-// جرد هذا الشهر (بحسب المعرّف) — قيم مقترحة قابلة للتعديل
-const STOCK_BY_ID = {
-  m13:352, m4:35, m3:103, m1:41, m10:318, m11:40, m15:91, m12:99, m7:22, m5:32, m8:17,
-  mc1:18, mc2:21, mc3:23, mc4:49, mc5:36, mc6:36,
-  j1:24, j2:7, j4:41,
-  hk1:150, hk2:3, hk3:3, hk4:3, hk5:0,
-};
-const STOCK_BY_NAME = { "بوظه":1000 };
-
-// الأصناف المقترح تتبّعها كـ«حقيقي» (مفتاح TRUE). الباقي يُقترح مفتوحاً.
-const TRACKED_IDS = new Set([
-  "m1","m3","m4","m5","m7","m8","m10","m11","m12","m13","m15",
-  "mc1","mc2","mc3","mc4","mc5","mc6",
-  "j1","j2","j4",
-  "hk1","hk2","hk3","hk4","hk5",
-]);
-const TRACKED_NAMES = new Set(["بوظه"]);
-
 // الأصناف الجديدة المتّفق على إضافتها (إن غابت بالاسم)
 const NEW_ITEMS = [
   { key:"slush",  name:"سلس برتقال",        nameEn:"Slush",        category:"cold_drinks", cost:105, stock:8,  emoji:"🥤" },
@@ -2916,28 +2878,23 @@ const NEW_ITEMS = [
   { key:"hkvar",  name:"أركيلة طعمات متنوعة", nameEn:"Assorted Hookah", category:"hookah",  cost:125, stock:5,  emoji:"💨" },
 ];
 
-export function StockImportTab({ store, showToast, settings }){
+export function StockImportTab({ store, user, showToast, settings }){
   const CUR = settings?.currency || "ل.س";
   const menu = store.menu || [];
 
   // بناء صفوف الإدخال من المنيو الحيّ مع تعبئة الخطة المقترحة
+  // v30.2: الشاشة مرآة للبيانات الحيّة فقط — لا خطة مكتوبة تتعارض مع الواقع
   const buildRows = (src = menu) => src
     .filter(m => !m.noStock) // الأصناف الخدمية svc لا تُجرد
-    .map(m => {
-      const nk = _norm(m.name);
-      const planCost = COST_BY_ID[m.id] ?? COST_BY_NAME[nk] ?? (m.cost ?? "");
-      const hasStockPlan = (m.id in STOCK_BY_ID) || (nk in STOCK_BY_NAME);
-      const planStock = STOCK_BY_ID[m.id] ?? STOCK_BY_NAME[nk] ?? m.stock ?? 0;
-      const planTrack = TRACKED_IDS.has(m.id) || TRACKED_NAMES.has(nk)
-        ? true
-        : (m.trackStock !== false ? false : false); // مقترح: غير المخطّط = مفتوح
-      return {
-        id:m.id, name:m.name, emoji:m.emoji||"", category:m.category,
-        cost:String(planCost ?? ""), stock:String(planStock ?? 0),
-        price:String(m.price ?? 0), track:planTrack, hasStockPlan,
-        origStock:m.stock??0, origPrice:m.price??0, origCost:m.cost??0, origTrack:m.trackStock!==false,
-      };
-    });
+    .map(m => ({
+      id:m.id, name:m.name, emoji:m.emoji||"", category:m.category,
+      cost:String(m.cost ?? 0),
+      stock:String(Math.round(+m.stock||0)),
+      track: m.trackStock !== false,
+      origStock: Math.round(+m.stock||0),
+      origCost:  Math.round(+m.cost||0),
+      origTrack: m.trackStock !== false,
+    }));
 
   const [rows, setRows] = useState(buildRows);
   const [onlyTracked, setOnlyTracked] = useState(false);
@@ -2972,29 +2929,50 @@ export function StockImportTab({ store, showToast, settings }){
   ).length;
 
   const save = () => {
-    const byId = Object.fromEntries(rows.map(r=>[r.id,r]));
-    let next = menu.map(m => {
-      const r = byId[m.id];
-      if(!r) return m;
-      return {
-        ...m,
-        stock: Math.max(0, Math.round(+r.stock||0)),
-        cost:  Math.max(0, Math.round(+r.cost||0)),
-        trackStock: !!r.track,
-        // ملاحظة: السعر لا يُكتب من هنا إطلاقاً — يُدار حصراً من المنيو (منع التعارض)
-      };
+    // فروقات المخزون = نيّتك (المُدخَل − ما رأيته)، تُطبَّق على الرصيد الحيّ لحظة الحفظ
+    const stockIntent = {};   // id -> فرق نسبي (للأصناف المتعقّبة التي بقيت متعقّبة)
+    const stockAbsolute = {}; // id -> قيمة مطلقة (لصنف صار متعقّباً الآن)
+    const costBy = {}; const trackBy = {};
+    const auditLines = [];
+    rows.forEach(r => {
+      const enteredStock = Math.round(+r.stock||0);
+      const enteredCost  = Math.round(+r.cost||0);
+      if (r.track !== r.origTrack) { trackBy[r.id] = r.track; }
+      if (enteredCost !== r.origCost) { costBy[r.id] = enteredCost; }
+      if (r.track && !r.origTrack) {
+        stockAbsolute[r.id] = enteredStock; // صار متعقّباً الآن → القيمة المُدخَلة مطلقة
+        auditLines.push(`${r.name}: تتبّع + رصيد ${enteredStock}`);
+      } else if (r.track && enteredStock !== r.origStock) {
+        stockIntent[r.id] = enteredStock - r.origStock; // فرق نسبي
+        auditLines.push(`${r.name}: ${enteredStock - r.origStock > 0 ? "+" : ""}${enteredStock - r.origStock}`);
+      }
     });
-    // إضافة الأصناف الجديدة المختارة والغائبة
     const toAdd = missingNew.filter(n=>newSel[n.key]).map(n=>({
       id:"m"+Date.now()+"_"+n.key, name:n.name, nameEn:n.nameEn,
       price:_target(n.cost), category:n.category, stock:n.stock, minStock:5,
       cost:n.cost, totalSold:0, emoji:n.emoji, active:true, trackStock:true,
     }));
-    next = [...next, ...toAdd];
-    store.setMenu(next);
-    try{ logActivity({action:"استيراد جرد",details:`عُدّل ${changedCount} صنف، أُضيف ${toAdd.length} صنف جديد`,userName:"أدمن",userRole:"admin",branch:"main"}); }catch{}
-    showToast(`✅ حُفظ الجرد — ${changedCount} تعديل${toAdd.length?` + ${toAdd.length} صنف جديد`:""}`,"success");
-    setRows(buildRows(next)); // v29: إعادة البناء من المحفوظ فعلاً (لا من القيم القديمة)
+
+    const nChanges = Object.keys({...stockIntent,...stockAbsolute,...costBy,...trackBy}).length;
+    if (!nChanges && !toAdd.length) { showToast("لا توجد تعديلات للحفظ","info"); return; }
+
+    // قراءة-ثم-كتابة ذرّية: نقرأ الرصيد الحيّ داخل المُحدِّث لحظة التطبيق
+    store.setMenu(prev => {
+      const next = prev.map(m => {
+        let out = m;
+        if (m.id in trackBy) out = { ...out, trackStock: trackBy[m.id] };
+        if (m.id in costBy)  out = { ...out, cost: costBy[m.id] };
+        if (m.id in stockAbsolute) out = { ...out, stock: Math.max(0, stockAbsolute[m.id]) };
+        else if (m.id in stockIntent) out = { ...out, stock: Math.max(0, (out.stock||0) + stockIntent[m.id]) }; // الفرق على الحيّ
+        return out;
+      });
+      return [...next, ...toAdd];
+    });
+
+    auditLines.forEach(line=>{ try{ logActivity({action:"جرد مخزون",details:line,userName:user?.name||"أدمن",userRole:user?.role||"admin",branch:"main"}); }catch{} });
+    if (toAdd.length) { try{ logActivity({action:"إضافة أصناف (جرد)",details:toAdd.map(a=>a.name).join("، "),userName:user?.name||"أدمن",userRole:user?.role||"admin",branch:"main"}); }catch{} }
+    showToast(`✅ حُفظ الجرد — ${nChanges} تعديل${toAdd.length?` + ${toAdd.length} صنف جديد`:""}`,"success");
+    built.current=false; setRows([]); // إعادة المرآة من البيانات الحيّة المحدّثة
   };
 
   const catLabel = { hot_drinks:"☕ ساخنة", cold_drinks:"🧊 باردة", food:"🍔 طعام", hookah:"💨 أراكيل", services:"🎟️ خدمات" };

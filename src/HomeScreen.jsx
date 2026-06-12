@@ -135,7 +135,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v30.1</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v30.2</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>
@@ -230,7 +230,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="kds"        &&canAccess(user.role,"kds")       &&<KitchenDisplayTab store={store} user={user} showToast={showToast} addNotification={addNotification} settings={settings}/>}
         {tab==="shift"      &&canAccess(user.role,"shift")     &&<ShiftCloseTab  store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings}/>}
-        {tab==="stockimport"&&canAccess(user.role,"stockimport")&&<StockImportTab store={store} showToast={showToast} settings={settings}/>}
+        {tab==="stockimport"&&canAccess(user.role,"stockimport")&&<StockImportTab store={store} user={user} showToast={showToast} settings={settings}/>}
         {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
