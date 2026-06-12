@@ -19,7 +19,7 @@ export const deductOrderStock = (store, order) => {
   const items = order.items || [];
   if (items.length) {
     store.setMenu(p => p.map(m => {
-      if (m.noStock) return m; // v24: أصناف خدمية لا تُخصم
+      if (m.noStock || m.trackStock === false) return m; // v24 خدمي / v28 مخزون مفتوح: لا يُخصم
       const ci = items.find(c => c.itemId === m.id);
       if (!ci) return m;
       return {
@@ -38,7 +38,7 @@ export const restoreOrderStock = (store, order) => {
   const items = order.items || [];
   if (items.length) {
     store.setMenu(p => p.map(m => {
-      if (m.noStock) return m; // v24: أصناف خدمية لا تُرجَّع
+      if (m.noStock || m.trackStock === false) return m; // v24 خدمي / v28 مخزون مفتوح: لا يُرجَّع
       const ci = items.find(c => c.itemId === m.id);
       if (!ci) return m;
       return {

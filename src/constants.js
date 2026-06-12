@@ -71,6 +71,7 @@ export const PERMISSIONS = {
   kds:          ["admin","bar","hookah","cashier"],
   shift:        ["admin","cashier"],
   menu:         ["admin"],
+  stockimport:  ["admin"],
   tables:       ["admin","cashier"],
   staff:        ["admin"],
   reports:      ["admin"],

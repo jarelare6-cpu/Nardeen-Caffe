@@ -40,7 +40,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const filtered=store.menu.filter(m=>{
     const ms=m.name.toLowerCase().includes(search.toLowerCase())||(m.nameEn||"").toLowerCase().includes(search.toLowerCase());
     const mc=cat==="all"||m.category===cat;
-    return ms&&mc&&(m.noStock||m.stock>0); // v24: الأصناف الخدمية تظهر دائماً
+    return ms&&mc&&(m.noStock||m.trackStock===false||m.stock>0); // v24 خدمي / v28 مفتوح: يظهر دائماً
   });
 
   const addToCart=(item)=>{

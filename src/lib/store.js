@@ -260,7 +260,7 @@ const sbWrite = {
       outdoor_price: m.outdoorPrice ?? null,
       image_url: m.image || m.imageUrl || "",
     };
-    return sbUpsert("menu_items", { ...core, image_icon: m.imageIcon || "", cost: m.cost ?? 0 }, "id", core);
+    return sbUpsert("menu_items", { ...core, image_icon: m.imageIcon || "", cost: m.cost ?? 0, track_stock: m.trackStock !== false }, "id", core);
   },
   deleteMenuItem: (id) => sbDelete("menu_items", id),
 
@@ -412,6 +412,7 @@ const mapMenu = m => ({
   image:        m.image_url    ?? m.image       ?? "",
   imageIcon:    m.image_icon   ?? m.imageIcon   ?? "",
   cost:         m.cost         ?? 0,
+  trackStock:   (m.track_stock ?? m.trackStock) !== false, // v28: مخزون مرن — غير معرّف = حقيقي
 });
 const mapDebt = d => ({
   ...d,
