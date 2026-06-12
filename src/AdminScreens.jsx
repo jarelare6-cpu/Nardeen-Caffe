@@ -97,7 +97,7 @@ export function DashboardTab({store,dm,settings}){
   const preparing=store.orders.filter(o=>o.status==="preparing").length;
   const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
   const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
-  const lowStock=store.menu.filter(m=>!m.noStock&&m.stock<=m.minStock); // v24: استثناء الأصناف الخدمية
+  const lowStock=checkStockAlerts(store.menu); // v28: موحّد — حقيقي فقط وعند النفاد (<1)
   const todayProfit=calcNetProfit(store.orders,store.menu,today);
   const totalProfit=calcNetProfit(store.orders,store.menu);
   const topItems=store.menu.slice().sort((a,b)=>b.totalSold-a.totalSold).slice(0,5);
