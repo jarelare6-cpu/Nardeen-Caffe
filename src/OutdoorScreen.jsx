@@ -259,7 +259,7 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   return (
     <div style={{ minHeight: "100vh", background: "#0a1628", color: "#e8f4fd", fontFamily: "'Tajawal',sans-serif", direction: "rtl" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap');
+        /* v29.2: الخط مُضمّن محلياً عبر @fontsource — لا CDN */
         *{box-sizing:border-box;margin:0;padding:0}
         .otab{padding:10px 14px;border:none;background:none;color:#8ab4d4;font-family:inherit;
           font-size:13px;font-weight:700;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap;transition:all .2s}

@@ -1,5 +1,18 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+// v29.2: تضمين الخطوط العربية محلياً (تُخزَّن مع التطبيق) — يحلّ تقطّع الحروف
+// في PWA دون اتصال، بدل الاعتماد على Google Fonts CDN.
+import "@fontsource/cairo/arabic-400.css";
+import "@fontsource/cairo/arabic-600.css";
+import "@fontsource/cairo/arabic-700.css";
+import "@fontsource/cairo/arabic-900.css";
+import "@fontsource/tajawal/arabic-400.css";
+import "@fontsource/tajawal/arabic-500.css";
+import "@fontsource/tajawal/arabic-700.css";
+import "@fontsource/tajawal/arabic-900.css";
+import "@fontsource/el-messiri/arabic-500.css";
+import "@fontsource/el-messiri/arabic-600.css";
+import "@fontsource/el-messiri/arabic-700.css";
 import App from "./App.jsx";
 
 // داخل تطبيق أندرويد (APK): ألغِ أي Service Worker حتى يُحمَّل دائمًا الإصدار

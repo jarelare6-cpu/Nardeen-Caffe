@@ -156,7 +156,7 @@ export const GlobalStyle = ({dm,theme="default"}) => {
   const t = THEMES[theme]||THEMES.default;
   return (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&family=El+Messiri:wght@500;600;700&family=Cairo:wght@400;600;700;900&display=swap');
+    /* v29.2: الخطوط مُضمّنة محلياً عبر @fontsource في main.jsx — لا CDN (يعمل أوفلاين) */
     *{box-sizing:border-box;margin:0;padding:0}
     /* v24.3: منع أي عنصر من تجاوز عرض الشاشة وضغط التخطيط (إصلاح عطل عرض الطاولات في WebView) */
     html,body{max-width:100%;overflow-x:hidden}
