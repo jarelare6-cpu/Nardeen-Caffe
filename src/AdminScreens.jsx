@@ -2822,7 +2822,7 @@ export function StockImportTab({ store, showToast, settings }){
   const menu = store.menu || [];
 
   // بناء صفوف الإدخال من المنيو الحيّ مع تعبئة الخطة المقترحة
-  const buildRows = () => menu
+  const buildRows = (src = menu) => src
     .filter(m => !m.noStock) // الأصناف الخدمية svc لا تُجرد
     .map(m => {
       const nk = _norm(m.name);
@@ -2895,7 +2895,7 @@ export function StockImportTab({ store, showToast, settings }){
     store.setMenu(next);
     try{ logActivity({action:"استيراد جرد",details:`عُدّل ${changedCount} صنف، أُضيف ${toAdd.length} صنف جديد`,userName:"أدمن",userRole:"admin",branch:"main"}); }catch{}
     showToast(`✅ حُفظ الجرد — ${changedCount} تعديل${toAdd.length?` + ${toAdd.length} صنف جديد`:""}`,"success");
-    setRows(buildRows()); // إعادة ضبط الأصل
+    setRows(buildRows(next)); // v29: إعادة البناء من المحفوظ فعلاً (لا من القيم القديمة)
   };
 
   const catLabel = { hot_drinks:"☕ ساخنة", cold_drinks:"🧊 باردة", food:"🍔 طعام", hookah:"💨 أراكيل", services:"🎟️ خدمات" };
