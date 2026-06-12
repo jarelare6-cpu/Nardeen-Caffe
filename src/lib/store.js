@@ -321,7 +321,7 @@ const sbWrite = {
     table_num: String(c.tableNum || c.table || ""),
     items: c.items || [], amount: c.amount || 0,
     reason: c.reason || "", created_by: c.createdBy || c.by || "",
-    created_at: c.createdAt || c.at || new Date().toISOString(),
+    created_at: c.createdAt || c.at || c.date || new Date().toISOString(),
     branch: c.branch || "main",
   }),
 
@@ -481,6 +481,7 @@ const mapCompLog = c => ({
   tableNum:     c.table_num     ?? c.tableNum     ?? "",
   createdBy:    c.created_by    ?? c.createdBy    ?? c.by ?? "",
   createdAt:    c.created_at    ?? c.createdAt    ?? c.at ?? new Date().toISOString(),
+  date:         c.created_at    ?? c.createdAt    ?? c.at ?? c.date ?? new Date().toISOString(), // v28: توحيد حقل التاريخ مع شاشات العرض
   branch:       c.branch        ?? "main",
 });
 const mapCustomer = c => ({
