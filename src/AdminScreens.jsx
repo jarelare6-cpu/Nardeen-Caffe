@@ -2613,7 +2613,6 @@ const _norm = (s) => (s||"").toString()
 // قاعدة السعر: تقريب لأقرب 10، ورفع فقط (لا يخفض سعراً هامشه أعلى من 20%)
 const _round10 = (n) => Math.round((+n||0)/10)*10;
 const _target  = (cost) => _round10((+cost||0)*1.2);
-const _raiseOnly = (cur, cost) => Math.max(Math.round(+cur||0), _target(cost));
 
 // خطة التكلفة المتّفق عليها (بحسب المعرّف)
 const COST_BY_ID = {
@@ -2698,12 +2697,6 @@ export function StockImportTab({ store, showToast, settings }){
   const liveNames = new Set(menu.map(m=>_norm(m.name)));
   const missingNew = NEW_ITEMS.filter(n => !liveNames.has(_norm(n.name)));
 
-  // تطبيق قاعدة 20% (رفع فقط) على كل الصفوف
-  const apply20 = () => {
-    setRows(p => p.map(r => ({...r, price:String(_raiseOnly(r.price, r.cost))})));
-    showToast("طُبّقت قاعدة 20% (رفع فقط)","success");
-  };
-
   // عدّاد الفحم المساعد — رؤوس الأراكيل المباعة هذا الشهر (طلبات مدفوعة) ÷ 6
   const charcoal = useMemo(()=>{
     const now=new Date(); const mStart=new Date(now.getFullYear(),now.getMonth(),1);
@@ -2766,10 +2759,6 @@ export function StockImportTab({ store, showToast, settings }){
 
       {/* شريط أدوات */}
       <div className="card" style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",marginBottom:12}}>
-        <button onClick={apply20} style={{padding:"8px 14px",borderRadius:10,border:"none",
-          background:"#1565c0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer"}}>
-          ⚙ تطبيق قاعدة 20% (رفع فقط)
-        </button>
         <button onClick={()=>setOnlyTracked(s=>!s)} style={{padding:"8px 14px",borderRadius:10,
           border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:13,cursor:"pointer"}}>
           {onlyTracked?"عرض الكل":"المتعقّبة فقط"}
@@ -2824,8 +2813,10 @@ export function StockImportTab({ store, showToast, settings }){
                 <div><span style={lbl}>سعر</span>
                   <input value={r.price} onChange={e=>upd(r.id,"price",e.target.value)} inputMode="numeric" style={ipt}/></div>
                 <div><span style={lbl}>مخزون</span>
-                  <input value={r.stock} onChange={e=>upd(r.id,"stock",e.target.value)} inputMode="numeric"
-                    disabled={!r.track} style={{...ipt,opacity:r.track?1:.45}}/></div>
+                  {r.track
+                    ? <input value={r.stock} onChange={e=>upd(r.id,"stock",e.target.value)} inputMode="numeric" style={ipt}/>
+                    : <div style={{...ipt,opacity:.5,lineHeight:"22px"}}>—</div>}
+                </div>
                 <button onClick={()=>upd(r.id,"track",!r.track)}
                   style={{padding:"6px 10px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:800,
                     background:r.track?"#2e7d32":"#90a4ae",color:"#fff",minWidth:62}}>

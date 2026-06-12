@@ -94,14 +94,15 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
               <ItemVisual item={item} size={40} round={10}/>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,fontSize:12}}>{item.name}</div>
-                <div style={{fontSize:10,color:item.stock<=item.minStock?"#c62828":"var(--sub)"}}>
-                  {item.stock<=item.minStock?"⚠ منخفض":"✓ متوفر"} — {item.stock}
+                <div style={{fontSize:10,color:item.trackStock===false?"#90a4ae":((item.stock||0)<1?"#c62828":"var(--sub)")}}>
+                  {item.trackStock===false ? "⊘ مفتوح (بلا عدّ)" : `${(item.stock||0)<1?"⚠ نفد":"✓ متوفر"} — ${item.stock}`}
                 </div>
               </div>
             </div>
+            {item.trackStock!==false && (<>
             <div style={{height:5,background:"var(--border)",borderRadius:4,marginBottom:10}}>
               <div style={{height:"100%",width:`${Math.min(100,(item.stock/Math.max(item.minStock*2,1))*100)}%`,
-                background:item.stock<=item.minStock?"#c62828":"#2e7d32",borderRadius:4}}/>
+                background:(item.stock||0)<1?"#c62828":"#2e7d32",borderRadius:4}}/>
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
               {canDecrease&&(
@@ -116,6 +117,7 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
                 +
               </button>
             </div>
+            </>)}
           </div>
         ))}
       </div>
@@ -239,9 +241,12 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
           <div key={item.id} className="card">
             <div style={{textAlign:"center",marginBottom:6}}><ItemVisual item={item} size={40} round={10}/></div>
             <div style={{fontWeight:700,fontSize:12,textAlign:"center",marginBottom:6}}>{item.name}</div>
+            {item.trackStock===false ? (
+              <div style={{fontSize:11,color:"#90a4ae",textAlign:"center",fontWeight:700}}>⊘ مفتوح (بلا عدّ)</div>
+            ) : (<>
             <div style={{height:5,background:"var(--border)",borderRadius:4,marginBottom:10}}>
               <div style={{height:"100%",width:`${Math.min(100,(item.stock/Math.max(item.minStock*2,1))*100)}%`,
-                background:item.stock<=item.minStock?"#c62828":"#6a1b9a",borderRadius:4}}/>
+                background:(item.stock||0)<1?"#c62828":"#6a1b9a",borderRadius:4}}/>
             </div>
             <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
               {canDecrease&&(
@@ -256,6 +261,7 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
                 +
               </button>
             </div>
+            </>)}
           </div>
         ))}
       </div>

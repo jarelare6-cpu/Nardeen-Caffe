@@ -254,9 +254,11 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
                 <div style={{textAlign:"center",marginBottom:5}}><ItemVisual item={item} size={54} round={12}/></div>
                 <div style={{fontSize:11,fontWeight:700,textAlign:"center",marginBottom:3,lineHeight:1.3}}>{item.name}</div>
                 <div style={{fontSize:11,fontWeight:900,color:"#c62828",textAlign:"center"}}>{item.price.toLocaleString()} {CUR}</div>
-                <div style={{fontSize:9,color:item.stock<=item.minStock?"#ff9800":"var(--sub)",textAlign:"center",marginTop:2}}>
-                  مخزون: {item.stock}
-                </div>
+                {item.trackStock!==false && !item.noStock && (
+                  <div style={{fontSize:9,color:(item.stock||0)<1?"#ff9800":"var(--sub)",textAlign:"center",marginTop:2}}>
+                    مخزون: {item.stock}
+                  </div>
+                )}
                 {inCart&&<div style={{position:"absolute",top:6,left:6,background:"#c62828",color:"#fff",
                   borderRadius:"50%",width:20,height:20,fontSize:11,fontWeight:900,
                   display:"flex",alignItems:"center",justifyContent:"center"}}>{inCart.qty}</div>}

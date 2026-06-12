@@ -74,8 +74,8 @@ export const SOUND_TONES = [
  * @returns {Array} lowItems
  */
 export const checkStockAlerts = (menu) => {
-  // v28: الأصناف المفتوحة (trackStock=false) والخدمية لا تُنبّه
-  return menu.filter(m => m.active && m.trackStock !== false && !m.noStock && m.stock <= (m.minStock || 5));
+  // v28: تنبيه فقط عند نفاد فعلي (أقل من 1) للأصناف الحقيقية — المفتوحة/الخدمية لا تُنبّه
+  return menu.filter(m => m.active && m.trackStock !== false && !m.noStock && (m.stock || 0) < 1);
 };
 
 /**
