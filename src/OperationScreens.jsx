@@ -1293,6 +1293,7 @@ export function DebtsTab({store,user,showToast,dm,settings}){
   const [filter,setFilter]=useState("unsettled");
   const [showAdd,setShowAdd]=useState(false);
   const [form,setForm]=useState({customerName:"",amount:"",notes:""});
+  const [editDebtId,setEditDebtId]=useState(null); // v30: تعديل دين
   const [partialDebt,setPartialDebt]=useState(null); // v25.1: {id, remaining, amount} مودال استيفاء جزئي
 
   const debts=store.debts||[];
@@ -1330,6 +1331,18 @@ export function DebtsTab({store,user,showToast,dm,settings}){
 
   const addManualDebt=()=>{
     if(!form.customerName||!form.amount){showToast("يرجى ملء الحقول","error");return}
+    if(editDebtId){
+      const old=(store.debts||[]).find(d=>d.id===editDebtId);
+      const untouched = old && !old.settled && old.remaining===old.amount; // المبلغ يُعدَّل فقط إن لم يُسدَّد شيء
+      store.setDebts(p=>p.map(d=>d.id===editDebtId?{
+        ...d, customerName:form.customerName, notes:form.notes,
+        ...(untouched ? { amount:+form.amount, remaining:+form.amount } : {}),
+      }:d));
+      try{ logActivity({action:"تعديل دين",details:`${old?.customerName||""}→${form.customerName}${untouched?` • ${old?.amount}→${+form.amount}`:" • (المبلغ مقفل بعد السداد)"}`,userName:user.name,userRole:user.role,amount:+form.amount,branch:"main"}); }catch{}
+      showToast(untouched?"✓ حُفظ التعديل":"✓ حُفظ (المبلغ مقفل بعد بدء السداد)");
+      setShowAdd(false);setEditDebtId(null);setForm({customerName:"",amount:"",notes:""});
+      return;
+    }
     store.setDebts(p=>[{
       id:"d"+Date.now(),orderId:null,orderNum:"يدوي",
       customerName:form.customerName,amount:+form.amount,remaining:+form.amount,
@@ -1337,6 +1350,11 @@ export function DebtsTab({store,user,showToast,dm,settings}){
       createdBy:user.name,notes:form.notes,
     },...p]);
     showToast("تم تسجيل الدين");setShowAdd(false);setForm({customerName:"",amount:"",notes:""});
+  };
+
+  const startEditDebt=(d)=>{
+    setForm({customerName:d.customerName||"",amount:String(d.amount||""),notes:d.notes||""});
+    setEditDebtId(d.id); setShowAdd(true);
   };
 
   return(
@@ -1390,6 +1408,9 @@ export function DebtsTab({store,user,showToast,dm,settings}){
                   {d.settled?"✅ مستوفى":"⏳ معلق"}
                 </span>
               </div>
+              {!d.settled&&(
+                <button onClick={()=>startEditDebt(d)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",marginBottom:8}}>✏ تعديل</button>
+              )}
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
                 <span style={{color:"var(--sub)"}}>المبلغ الأصلي:</span>
                 <span style={{fontWeight:700}}>{d.amount.toLocaleString()} {CUR}</span>
@@ -1443,22 +1464,30 @@ export function DebtsTab({store,user,showToast,dm,settings}){
       {showAdd&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:380}}>
-            <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>➕ تسجيل دين يدوي</div>
+            <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>{editDebtId?"✏ تعديل دين":"➕ تسجيل دين يدوي"}</div>
             <div style={{marginBottom:12}}>
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>اسم الزبون</label>
               <input className="input" value={form.customerName} onChange={e=>setForm(f=>({...f,customerName:e.target.value}))}/>
             </div>
             <div style={{marginBottom:12}}>
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>المبلغ ({CUR})</label>
-              <input className="input" type="number" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/>
+              {(() => {
+                const ed = editDebtId ? (store.debts||[]).find(d=>d.id===editDebtId) : null;
+                const locked = ed && (ed.settled || ed.remaining!==ed.amount);
+                return <>
+                  <input className="input" type="number" value={form.amount} disabled={locked}
+                    onChange={e=>setForm(f=>({...f,amount:e.target.value}))} style={locked?{opacity:.5}:undefined}/>
+                  {locked&&<div style={{fontSize:11,color:"#e65100",marginTop:4}}>🔒 المبلغ مقفل لأن السداد بدأ — يمكن تعديل الاسم والملاحظات فقط</div>}
+                </>;
+              })()}
             </div>
             <div style={{marginBottom:16}}>
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>ملاحظات</label>
               <textarea className="input" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={{height:60,resize:"none"}}/>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn btn-red" style={{flex:1}} onClick={addManualDebt}>تسجيل</button>
-              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setShowAdd(false)}>إلغاء</button>
+              <button className="btn btn-red" style={{flex:1}} onClick={addManualDebt}>{editDebtId?"حفظ التعديل":"تسجيل"}</button>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>{setShowAdd(false);setEditDebtId(null);setForm({customerName:"",amount:"",notes:""});}}>إلغاء</button>
             </div>
           </div>
         </div>
@@ -1471,6 +1500,7 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
   const today=new Date();today.setHours(0,0,0,0);
   const [showAdd,setShowAdd]=useState(false);
+  const [editId,setEditId]=useState(null); // v30: تعديل مصروف بدل الحذف
   const [period,setPeriod]=useState("today");
   const [form,setForm]=useState({description:"",amount:"",category:"other",notes:"",isSecondary:false});
 
@@ -1497,6 +1527,17 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
 
   const addExpense=()=>{
     if(!form.description||!form.amount){showToast("يرجى ملء الحقول","error");return}
+    if(editId){
+      const old=(store.expenses||[]).find(e=>e.id===editId);
+      store.setExpenses(p=>p.map(e=>e.id===editId?{
+        ...e, description:form.description, label:form.description, amount:+form.amount,
+        category:form.category, notes:form.notes, isSecondary:form.isSecondary||false,
+      }:e));
+      try{ logActivity({action:"تعديل مصروف",details:`${old?.description||""}: ${old?.amount||0}→${+form.amount} • ${old?.isSecondary?"ثانوي":"يومي"}→${form.isSecondary?"ثانوي":"يومي"}`,userName:user.name,userRole:user.role,amount:+form.amount,branch:"main"}); }catch{}
+      showToast("✓ حُفظ التعديل");
+      setShowAdd(false);setEditId(null);setForm({description:"",amount:"",category:"other",notes:"",isSecondary:false});
+      return;
+    }
     store.setExpenses(p=>[{
       id:"exp"+Date.now(),description:form.description,label:form.description,amount:+form.amount,
       category:form.category,notes:form.notes,
@@ -1505,6 +1546,11 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
     },...p]);
     showToast(form.isSecondary?"تم تسجيل المصروف الثانوي ⭐":"تم تسجيل المصروف");
     setShowAdd(false);setForm({description:"",amount:"",category:"other",notes:"",isSecondary:false});
+  };
+
+  const startEditExp=(e)=>{
+    setForm({description:e.description||"",amount:String(e.amount||""),category:e.category||"other",notes:e.notes||"",isSecondary:!!e.isSecondary});
+    setEditId(e.id); setShowAdd(true);
   };
 
   return(
@@ -1539,13 +1585,18 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
               <div key={e.id} className="card" style={{display:"flex",alignItems:"center",gap:12}}>
                 <div style={{fontSize:28}}>{cat.label.split(" ")[0]}</div>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14}}>{e.description}</div>
+                  <div style={{fontWeight:700,fontSize:14}}>{e.description}
+                    {e.isSecondary&&<span style={{fontSize:10,background:"rgba(249,168,37,.2)",color:"#f9a825",borderRadius:6,padding:"1px 6px",marginInlineStart:6,fontWeight:800}}>⭐ ثانوي</span>}
+                  </div>
                   <div style={{fontSize:11,color:"var(--sub)"}}>
                     {cat.label.split(" ").slice(1).join(" ")} • {new Date(e.date).toLocaleDateString("ar-SY")} • {e.createdBy}
                   </div>
                   {e.notes&&<div style={{fontSize:11,color:"var(--sub)"}}>📝 {e.notes}</div>}
                 </div>
-                <div style={{fontWeight:900,color:"#e65100",fontSize:15}}>{e.amount.toLocaleString()} {CUR}</div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+                  <div style={{fontWeight:900,color:"#e65100",fontSize:15}}>{e.amount.toLocaleString()} {CUR}</div>
+                  <button onClick={()=>startEditExp(e)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>✏ تعديل</button>
+                </div>
               </div>
             );
           })}
@@ -1554,7 +1605,7 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
       {showAdd&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
           <div className="card fade-in" style={{width:"100%",maxWidth:380,maxHeight:"88vh",overflowY:"auto"}}>
-            <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>➕ مصروف جديد</div>
+            <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>{editId?"✏ تعديل مصروف":"➕ مصروف جديد"}</div>
             {[["الوصف","description","text"],["المبلغ","amount","number"]].map(([label,key,type])=>(
               <div key={key} style={{marginBottom:12}}>
                 <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>{label}</label>
@@ -1585,8 +1636,8 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
               </label>
             </div>
             <div style={{display:"flex",gap:10}}>
-              <button className="btn btn-red" style={{flex:2,whiteSpace:"nowrap",background:form.isSecondary?"#f9a825":undefined}} onClick={addExpense}>تسجيل</button>
-              <button className="btn btn-ghost" style={{flex:1,whiteSpace:"nowrap"}} onClick={()=>setShowAdd(false)}>إلغاء</button>
+              <button className="btn btn-red" style={{flex:2,whiteSpace:"nowrap",background:form.isSecondary?"#f9a825":undefined}} onClick={addExpense}>{editId?"حفظ التعديل":"تسجيل"}</button>
+              <button className="btn btn-ghost" style={{flex:1,whiteSpace:"nowrap"}} onClick={()=>{setShowAdd(false);setEditId(null);setForm({description:"",amount:"",category:"other",notes:"",isSecondary:false});}}>إلغاء</button>
             </div>
           </div>
         </div>

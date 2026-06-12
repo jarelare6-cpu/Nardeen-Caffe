@@ -36,7 +36,7 @@ export const CAT_LABELS = {
   hot_drinks:"☕ مشروبات ساخنة",
   cold_drinks:"🧊 مشروبات باردة",
   food:"🍔 طعام",
-  hookah:"💨 نرجيلة",
+  hookah:"💨 أراكيل",
   services:"🎟️ خدمات وطلبات خاصة"
 };
 

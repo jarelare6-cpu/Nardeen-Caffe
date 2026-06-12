@@ -613,6 +613,8 @@ export function MenuTab({store,showToast,dm,settings}){
 export function TablesTab({ store, user, showToast, dm, settings }) {
   const [clearModal, setClearModal] = useState(null);
   const [payModal, setPayModal] = useState(null); // v24.2: تأكيد الدفع الكامل (بدل window.confirm المعطّل بأندرويد)
+  const [xferModal, setXferModal] = useState(false); // v30: نقل فاتورة بين الطاولات
+  const [xFrom, setXFrom] = useState(""); const [xTo, setXTo] = useState(""); const [xPicked, setXPicked] = useState({});
   const CUR = settings?.currency || "ل.س";
   const canManage = user && ["admin", "cashier"].includes(user.role);
   const isAdmin = user?.role === "admin";
@@ -697,6 +699,31 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
     showToast(`✓ تم دفع طاولة ${t.number} — ${total.toLocaleString()} ${CUR}`);
   };
 
+  // v30: نقل فاتورة/فواتير من طاولة إلى أخرى (يتبع الفاتورة لا الطاولة كاملة)
+  const ACTIVE_ST = ["paid", "cancelled", "debt", "complimentary"];
+  const xferFromOrders = store.orders.filter(o => String(o.table) === String(xFrom.trim()) && !ACTIVE_ST.includes(o.status));
+  const doTransfer = () => {
+    const from = xFrom.trim(), to = xTo.trim();
+    if (!from || !to) { showToast("أدخل الطاولة الحالية والجديدة", "error"); return; }
+    if (from === to) { showToast("الطاولتان متطابقتان", "error"); return; }
+    const picked = xferFromOrders.filter(o => xPicked[o.id]);
+    if (!picked.length) { showToast("أشّر فاتورة واحدة على الأقل", "error"); return; }
+    // منع النقل لو الطاولة الجديدة مشغولة بأي طلب نشط
+    const toBusy = store.orders.some(o => String(o.table) === String(to) && !ACTIVE_ST.includes(o.status));
+    if (toBusy) { showToast(`⚠ الطاولة ${to} مشغولة — لا يمكن النقل إليها`, "error"); return; }
+    const ids = new Set(picked.map(o => o.id));
+    store.setOrders(p => p.map(o => ids.has(o.id) ? { ...o, table: to } : o));
+    const remainOnFrom = xferFromOrders.filter(o => !ids.has(o.id)).length;
+    store.setTables(p => p.map(t => {
+      if (String(t.number) === String(to)) return { ...t, status: "occupied", openedAt: t.openedAt || new Date().toISOString() };
+      if (String(t.number) === String(from)) return remainOnFrom > 0 ? t : { ...t, status: "free", openedAt: null };
+      return t;
+    }));
+    logActivity({ action: "نقل طاولة", details: `${picked.length} فاتورة من ط${from} ← ط${to}`, userName: user?.name || "", userRole: user?.role || "", branch: "main" });
+    showToast(`🔀 نُقلت ${picked.length} فاتورة إلى طاولة ${to}`, "success");
+    setXferModal(false); setXFrom(""); setXTo(""); setXPicked({});
+  };
+
   const TableTimer = ({ openedAt }) => {
     const safeStart = () => {
       const t = new Date(openedAt).getTime();
@@ -727,6 +754,48 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
   return (
     <div className="fade-in">
       {/* v24.2: Modal تأكيد الدفع الكامل */}
+      {xferModal && (
+        <div onClick={() => setXferModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 420, maxHeight: "88vh", overflowY: "auto" }}>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 4 }}>🔀 نقل فاتورة بين الطاولات</h3>
+            <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 14 }}>تنتقل الفواتير المؤشّرة فقط — الطاولة القديمة تتحرر إن لم يبقَ عليها طلب.</div>
+
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>الطاولة الحالية</label>
+            <input className="input" inputMode="numeric" placeholder="رقم الطاولة الحالية" value={xFrom}
+              onChange={e => { setXFrom(e.target.value); setXPicked({}); }} style={{ marginBottom: 12 }} />
+
+            {xFrom.trim() && (
+              xferFromOrders.length === 0 ? (
+                <div style={{ fontSize: 13, color: "#c62828", marginBottom: 12 }}>لا توجد فواتير نشطة على هذه الطاولة.</div>
+              ) : (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6 }}>أشّر الفواتير المراد نقلها:</div>
+                  {xferFromOrders.map(o => (
+                    <label key={o.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10, marginBottom: 6, cursor: "pointer", background: xPicked[o.id] ? "rgba(106,27,154,.12)" : "var(--card2)", border: xPicked[o.id] ? "1.5px solid #6a1b9a" : "1.5px solid var(--border)" }}>
+                      <input type="checkbox" checked={!!xPicked[o.id]} onChange={e => setXPicked(p => ({ ...p, [o.id]: e.target.checked }))} style={{ width: 18, height: 18, accentColor: "#6a1b9a", flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>#{o.orderNum} — {o.customerName || "بلا اسم"}</div>
+                        <div style={{ fontSize: 11, color: "var(--sub)" }}>{(o.items || []).length} صنف</div>
+                      </div>
+                      <span style={{ fontWeight: 800, color: "#6a1b9a", fontSize: 13 }}>{(o.total || 0).toLocaleString()} {CUR}</span>
+                    </label>
+                  ))}
+                </div>
+              )
+            )}
+
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>الطاولة الجديدة</label>
+            <input className="input" inputMode="numeric" placeholder="رقم الطاولة الجديدة" value={xTo}
+              onChange={e => setXTo(e.target.value)} style={{ marginBottom: 16 }} />
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setXferModal(false)} style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700, whiteSpace: "nowrap" }}>إلغاء</button>
+              <button onClick={doTransfer} style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: "#6a1b9a", color: "#fff", fontWeight: 800, whiteSpace: "nowrap" }}>🔀 تنفيذ النقل</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {payModal && (
         <div onClick={e => { if (e.target === e.currentTarget) setPayModal(null); }}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.7)", zIndex: 950, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -790,6 +859,12 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
           <span style={{ background: "rgba(198,40,40,.15)", color: "#c62828", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700 }}>
             مشغولة: {occupied}
           </span>
+          {canManage && (
+            <button onClick={() => { setXferModal(true); setXFrom(""); setXTo(""); setXPicked({}); }}
+              style={{ background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: "7px 14px", fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+              🔀 نقل
+            </button>
+          )}
           {isAdmin && (
             <button onClick={() => store.addTable && store.addTable()}
               style={{ background: "#1565c0", color: "#fff", border: "none", borderRadius: 10, padding: "7px 14px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
@@ -884,6 +959,8 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
   const [search, setSearch] = useState("");
   const [kindFilter, setKindFilter] = useState("all"); // all | comp | worker
   const [wModal, setWModal] = useState(false);
+  const [editComp, setEditComp] = useState(null); // v30: تعديل سجل ضيافة/عامل
+  const [eName, setEName] = useState(""); const [eAmount, setEAmount] = useState("");
 
   const getStart = () => {
     const d = new Date();
@@ -976,10 +1053,40 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
               <span style={{ fontWeight: 900, color: col, fontSize: 15 }}>{(c.amount || 0).toLocaleString()} {CUR}</span>
             </div>
             <div style={{ fontSize: 12, color: "var(--sub)" }}>🍽 {(c.items || []).join("، ")}</div>
-            <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>{new Date(c.date).toLocaleString("ar-SY")}</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: "var(--sub)" }}>{new Date(c.date).toLocaleString("ar-SY")}</div>
+              <button onClick={() => { setEditComp(c); setEName(c.customerName || ""); setEAmount(String(c.amount || "")); }}
+                style={{ padding: "3px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>✏ تعديل</button>
+            </div>
           </div>
         );
       })}
+
+      {editComp && (
+        <div onClick={() => setEditComp(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 14 }}>✏ تعديل {kindOf(editComp) === "worker" ? "مشروب عامل" : "ضيافة"}</h3>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>{kindOf(editComp) === "worker" ? "العامل" : "الزبون"}</label>
+            <input className="input" value={eName} onChange={e => setEName(e.target.value)} style={{ marginBottom: 12 }} />
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>المبلغ ({CUR})</label>
+            <input className="input" type="number" value={eAmount} onChange={e => setEAmount(e.target.value)} style={{ marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => {
+                store.setCompLog(p => p.filter(x => x.id !== editComp.id));
+                if (SUPABASE_READY) { try { sbDelete("comp_log", editComp.id); } catch {} }
+                try { logActivity({ action: "حذف سجل ضيافة", details: `${editComp.customerName} — ${editComp.amount}`, userName: user?.name || "", userRole: user?.role || "", amount: editComp.amount, branch: "main" }); } catch {}
+                showToast("🗑 حُذف السجل", "warn"); setEditComp(null);
+              }} style={{ padding: "11px 14px", borderRadius: 10, border: "none", background: "rgba(198,40,40,.15)", color: "#c62828", fontWeight: 800, whiteSpace: "nowrap" }}>🗑 حذف</button>
+              <button onClick={() => setEditComp(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+              <button onClick={() => {
+                store.setCompLog(p => p.map(x => x.id === editComp.id ? { ...x, customerName: eName, amount: +eAmount || 0 } : x));
+                try { logActivity({ action: "تعديل سجل ضيافة", details: `${editComp.customerName}→${eName} • ${editComp.amount}→${+eAmount || 0}`, userName: user?.name || "", userRole: user?.role || "", amount: +eAmount || 0, branch: "main" }); } catch {}
+                showToast("✓ حُفظ التعديل", "success"); setEditComp(null);
+              }} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#00897b", color: "#fff", fontWeight: 800 }}>حفظ</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {wModal && <WorkerDrinkModal store={store} user={user} settings={settings} showToast={showToast} onClose={() => setWModal(false)} />}
     </div>
