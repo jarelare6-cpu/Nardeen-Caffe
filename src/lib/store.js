@@ -212,6 +212,34 @@ export const DEFAULT_MENU = [
 // كتابة إلى Supabase
 // ══════════════════════════════════════════════════════════════
 // v22: مُحوّلات صفوف قابلة لإعادة الاستخدام (للدفع الذرّي)
+// ══════════════════════════════════════════════════════════════
+// v29: رقم فاتورة متسلسل يُصفّر يومياً — عدّاد ذرّي في Supabase
+//  الصيغة: YYYYMMDD-NNN. عند تعذّر العدّاد (أوفلاين/قبل الهجرة) يرتدّ
+//  لأكبر رقم لهذا اليوم من الطلبات المحمّلة + 1 (آمن الفشل).
+// ══════════════════════════════════════════════════════════════
+export const dayKey = (d = new Date()) =>
+  `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+
+export const getNextInvoiceNum = async (orders) => {
+  const day = dayKey();
+  if (SUPABASE_READY && supabase && typeof navigator !== "undefined" && navigator.onLine) {
+    try {
+      const { data, error } = await supabase.rpc("next_invoice_seq", { p_day: day });
+      if (!error && data != null) return `${day}-${String(data).padStart(3, "0")}`;
+    } catch { /* يرتدّ للحساب المحلي */ }
+  }
+  const prefix = day + "-";
+  let max = 0;
+  (orders || []).forEach(o => {
+    const on = String(o.orderNum || "");
+    if (on.startsWith(prefix)) {
+      const n = parseInt(on.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+};
+
 export const rowOfOrder = (o) => ({
   id: o.id, order_num: o.orderNum,
   customer_name: o.customerName, customer_id: o.customerId || null,

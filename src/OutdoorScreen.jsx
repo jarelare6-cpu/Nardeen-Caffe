@@ -5,6 +5,7 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { sbDelete, sbUpsert, SUPABASE_READY, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock } from "./lib/stock.js";
+import { getNextInvoiceNum } from "./lib/store.js";
 import { CancelOrderModal } from "./uikit.jsx";
 
 // ── الفئات المسموح بها في الحديقة (بدون أراكيل) ─────────────
@@ -104,11 +105,11 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   const afterDiscount = Math.round(cartTotal * (1 - (discount || 0) / 100));
 
   // ── إرسال الطلب ─────────────────────────────────────────────
-  const placeOrder = () => {
+  const placeOrder = async () => {
     if (!selTable) { showToast("اختر طاولة أولاً", "error"); return; }
     if (!cart.length) { showToast("السلة فارغة", "error"); return; }
 
-    const orderNum = "O" + Date.now().toString().slice(-6);
+    const orderNum = await getNextInvoiceNum(store.orders); // v29: تسلسل يومي موحّد مع الصالة
     const newOrder = {
       id:           "ord_out_" + Date.now(),
       orderNum,

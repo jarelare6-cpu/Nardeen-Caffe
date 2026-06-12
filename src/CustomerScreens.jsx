@@ -1,6 +1,6 @@
 // شاشات الزبون والدخول — مفصولة من App.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
+import { useStore, checkSessionExpiry, touchSession, getNextInvoiceNum } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, verifyPassword } from "./lib/utils.js";
@@ -550,9 +550,8 @@ export function CustomerPortal({user,store,onLogout,showToast,addNotification,dm
     if(!tableInput.trim()){setCodeError(T.tableErr);return;}
     if(codeInput.trim().toLowerCase()!==SECRET){setCodeError(T.codeErr);return;}
     setSubmitting(true);
-    setTimeout(()=>{
-      const _dt=(()=>{try{let t=localStorage.getItem("nc_dev_tag");if(!t){t=String.fromCharCode(65+Math.floor(Math.random()*26));localStorage.setItem("nc_dev_tag",t);}return t;}catch{return "X";}})();
-      const orderNum=_dt+"-"+(store.orders.length+1).toString().padStart(4,"0");
+    setTimeout(async ()=>{
+      const orderNum=await getNextInvoiceNum(store.orders); // v29: متسلسل يُصفّر يومياً
       const newOrder={
         id:(Date.now().toString(36)+Math.random().toString(36).slice(2,7)),orderNum,
         customerId:user.id,customerName:user.name,

@@ -539,7 +539,13 @@ export const calcNetProfit = (orders, menu, since = null) => {
   let profit = 0;
   (orders || []).filter(o => o.status === "paid").forEach(o => {
     if (since && new Date(o.paidAt || o.createdAt) < since) return;
-    const cogs = (o.items || []).reduce((s, i) => s + costOf(i.itemId) * (+i.qty || 0), 0);
+    // v29: تكلفة الأصناف المُقدّمة ضيافةً لا تُحتسب — الضيافة لا ربح ولا مصروف
+    const cogs = (o.items || []).reduce((s, i) => {
+      const qty = +i.qty || 0;
+      const freeQty = i.complimentary ? qty : (+i.compQty || 0);
+      const paidQty = Math.max(0, qty - freeQty);
+      return s + costOf(i.itemId) * paidQty;
+    }, 0);
     profit += (+o.total || 0) - cogs;
   });
   return profit;

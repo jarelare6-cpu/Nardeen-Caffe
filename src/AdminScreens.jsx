@@ -878,10 +878,12 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
 // COMP LOG TAB — سجل الضيافة
 // ═══════════════════════════════════
 
-export function CompLogTab({ store, showToast, dm, settings }) {
+export function CompLogTab({ store, user, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const [period, setPeriod] = useState("today");
   const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState("all"); // all | comp | worker
+  const [wModal, setWModal] = useState(false);
 
   const getStart = () => {
     const d = new Date();
@@ -891,17 +893,44 @@ export function CompLogTab({ store, showToast, dm, settings }) {
     return new Date(0);
   };
 
-  const logs = (store.compLog || [])
-    .filter(c => new Date(c.date) >= getStart())
-    .filter(c => !search || c.customerName.includes(search))
+  const kindOf = (c) => (c.reason === "worker" ? "worker" : "comp");
+
+  const inPeriod = (store.compLog || []).filter(c => new Date(c.date) >= getStart());
+  const logs = inPeriod
+    .filter(c => kindFilter === "all" || kindOf(c) === kindFilter)
+    .filter(c => !search || (c.customerName || "").includes(search))
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  const total = logs.reduce((s, c) => s + c.amount, 0);
+  // ضيافة الزبائن بقيمة البيع، مشاريب العمال بقيمة التكلفة — منفصلان دائماً
+  const compTotal = inPeriod.filter(c => kindOf(c) === "comp").reduce((s, c) => s + (c.amount || 0), 0);
+  const workerTotal = inPeriod.filter(c => kindOf(c) === "worker").reduce((s, c) => s + (c.amount || 0), 0);
 
   return (
     <div className="fade-in">
-      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>🎁 سجل الضيافة</h2>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 900 }}>🎁 الضيافة والاستهلاك الداخلي</h2>
+        <button onClick={() => setWModal(true)}
+          style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#5e35b1", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+          ➕ مشروب عامل
+        </button>
+      </div>
+
+      {/* بطاقتا الإجمالي المنفصلتان */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+        <div className="card" style={{ borderTop: "4px solid #00897b", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "var(--sub)" }}>🎁 ضيافة الزبائن</div>
+          <div style={{ fontSize: 19, fontWeight: 900, color: "#00897b" }}>{compTotal.toLocaleString()} {CUR}</div>
+          <div style={{ fontSize: 10, color: "var(--sub)" }}>بسعر البيع</div>
+        </div>
+        <div className="card" style={{ borderTop: "4px solid #5e35b1", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "var(--sub)" }}>☕ مشاريب العمال</div>
+          <div style={{ fontSize: 19, fontWeight: 900, color: "#5e35b1" }}>{workerTotal.toLocaleString()} {CUR}</div>
+          <div style={{ fontSize: 10, color: "var(--sub)" }}>بسعر التكلفة</div>
+        </div>
+      </div>
+
+      {/* الفترة */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         {[["today","اليوم"],["week","الأسبوع"],["month","الشهر"],["all","الكل"]].map(([v,l]) => (
           <button key={v} onClick={() => setPeriod(v)}
             style={{ padding: "7px 14px", borderRadius: 20, border: "none", cursor: "pointer",
@@ -911,37 +940,134 @@ export function CompLogTab({ store, showToast, dm, settings }) {
           </button>
         ))}
       </div>
-      <input className="input" placeholder="🔍 ابحث باسم الزبون..." value={search}
-        onChange={e => setSearch(e.target.value)} style={{ marginBottom: 12 }} />
-      <div className="card" style={{ marginBottom: 14, borderTop: "4px solid #00897b", textAlign: "center" }}>
-        <div style={{ fontSize: 13, color: "var(--sub)" }}>إجمالي الضيافة</div>
-        <div style={{ fontSize: 22, fontWeight: 900, color: "#00897b" }}>{total.toLocaleString()} {CUR}</div>
-        <div style={{ fontSize: 11, color: "var(--sub)" }}>{logs.length} سجل</div>
+      {/* النوع */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        {[["all","الكل"],["comp","ضيافة زبائن"],["worker","مشاريب عمال"]].map(([v,l]) => (
+          <button key={v} onClick={() => setKindFilter(v)}
+            style={{ padding: "6px 12px", borderRadius: 20, border: "1px solid var(--border)", cursor: "pointer",
+              background: kindFilter === v ? (v==="worker"?"#5e35b1":"#00897b") : "transparent",
+              color: kindFilter === v ? "#fff" : "var(--sub)", fontWeight: 700, fontSize: 12 }}>
+            {l}
+          </button>
+        ))}
       </div>
+      <input className="input" placeholder="🔍 ابحث بالاسم..." value={search}
+        onChange={e => setSearch(e.target.value)} style={{ marginBottom: 12 }} />
+
       {!logs.length ? (
         <div style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
           <div style={{ fontSize: 48 }}>🎁</div>
-          <div style={{ marginTop: 10 }}>لا توجد سجلات ضيافة</div>
+          <div style={{ marginTop: 10 }}>لا توجد سجلات</div>
         </div>
-      ) : logs.map(c => (
-        <div key={c.id} className="card" style={{ marginBottom: 10, borderRight: "4px solid #00897b" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 14 }}>👤 {c.customerName}</div>
-              <div style={{ fontSize: 11, color: "var(--sub)" }}>
-                {c.tableNum ? `طاولة ${c.tableNum} • ` : ""}طلب #{c.orderNum} • {c.createdBy}
+      ) : logs.map(c => {
+        const worker = kindOf(c) === "worker";
+        const col = worker ? "#5e35b1" : "#00897b";
+        return (
+          <div key={c.id} className="card" style={{ marginBottom: 10, borderRight: `4px solid ${col}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14 }}>{worker ? "☕" : "👤"} {c.customerName}
+                  {worker && <span style={{ fontSize: 10, background: "#5e35b1", color: "#fff", borderRadius: 6, padding: "1px 6px", marginInlineStart: 6 }}>عامل</span>}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--sub)" }}>
+                  {c.tableNum ? `طاولة ${c.tableNum} • ` : ""}{c.orderNum ? `طلب #${c.orderNum} • ` : ""}بواسطة {c.createdBy}
+                </div>
               </div>
+              <span style={{ fontWeight: 900, color: col, fontSize: 15 }}>{(c.amount || 0).toLocaleString()} {CUR}</span>
             </div>
-            <span style={{ fontWeight: 900, color: "#00897b", fontSize: 15 }}>{c.amount.toLocaleString()} {CUR}</span>
+            <div style={{ fontSize: 12, color: "var(--sub)" }}>🍽 {(c.items || []).join("، ")}</div>
+            <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>{new Date(c.date).toLocaleString("ar-SY")}</div>
           </div>
-          <div style={{ fontSize: 12, color: "var(--sub)" }}>
-            🍽 {(c.items || []).join("، ")}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 4 }}>
-            {new Date(c.date).toLocaleString("ar-SY")}
-          </div>
+        );
+      })}
+
+      {wModal && <WorkerDrinkModal store={store} user={user} settings={settings} showToast={showToast} onClose={() => setWModal(false)} />}
+    </div>
+  );
+}
+
+// v29: مودال تسجيل مشروب عامل — بسعر التكلفة، مربوط باسم العامل، يخصم المخزون، صفر تأثير على البيع
+function WorkerDrinkModal({ store, user, settings, showToast, onClose }) {
+  const CUR = settings?.currency || "ل.س";
+  const staff = (store.users || []).filter(u => u.role !== "customer" && u.active !== false);
+  const [worker, setWorker] = useState(user?.name || (staff[0]?.name || ""));
+  const [search, setSearch] = useState("");
+  const [picked, setPicked] = useState({}); // id -> qty
+
+  const menu = (store.menu || []).filter(m => !m.noStock && m.active !== false);
+  const filtered = menu.filter(m => m.name.includes(search) || (m.nameEn || "").toLowerCase().includes(search.toLowerCase()));
+
+  const add = (id) => setPicked(p => ({ ...p, [id]: (p[id] || 0) + 1 }));
+  const sub = (id) => setPicked(p => { const n = (p[id] || 0) - 1; const c = { ...p }; if (n <= 0) delete c[id]; else c[id] = n; return c; });
+
+  const lines = Object.entries(picked).map(([id, qty]) => {
+    const m = menu.find(x => x.id === id); return m ? { id, name: m.name, qty, cost: +m.cost || 0 } : null;
+  }).filter(Boolean);
+  const costTotal = lines.reduce((s, l) => s + l.cost * l.qty, 0);
+
+  const save = () => {
+    if (!worker) { showToast("اختر العامل", "warn"); return; }
+    if (!lines.length) { showToast("اختر صنفاً واحداً على الأقل", "warn"); return; }
+    // خصم المخزون للأصناف الحقيقية فقط (المفتوحة بلا عدّ)
+    store.setMenu(p => p.map(m => {
+      if (m.noStock || m.trackStock === false) return m;
+      const l = lines.find(x => x.id === m.id);
+      if (!l) return m;
+      return { ...m, stock: Math.max(0, (m.stock || 0) - l.qty) };
+    }));
+    store.setCompLog(p => [{
+      id: "wrk" + Date.now(),
+      reason: "worker",
+      customerName: worker,
+      tableNum: "", orderId: null, orderNum: "",
+      items: lines.map(l => `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ""}`),
+      amount: costTotal, // بسعر التكلفة
+      date: new Date().toISOString(),
+      createdBy: user?.name || "",
+    }, ...p]);
+    try { logActivity({ action: "مشروب عامل", details: `${worker} — ${lines.length} صنف`, userName: user?.name || "", userRole: user?.role || "", amount: costTotal, branch: "main" }); } catch {}
+    showToast(`☕ سُجّل مشروب العامل — ${costTotal.toLocaleString()} ${CUR} تكلفة`, "success");
+    onClose();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "var(--card)", width: "100%", maxWidth: 480, maxHeight: "88vh", borderRadius: "18px 18px 0 0", padding: 18, overflowY: "auto" }}>
+        <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 12 }}>☕ تسجيل مشروب عامل</h3>
+
+        <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>العامل</label>
+        <select value={worker} onChange={e => setWorker(e.target.value)} className="input" style={{ marginBottom: 12 }}>
+          {staff.map(u => <option key={u.id} value={u.name}>{u.name} — {u.role}</option>)}
+        </select>
+
+        <input className="input" placeholder="🔍 ابحث عن صنف..." value={search} onChange={e => setSearch(e.target.value)} style={{ marginBottom: 10 }} />
+
+        <div style={{ maxHeight: 240, overflowY: "auto", marginBottom: 12 }}>
+          {filtered.slice(0, 60).map(m => {
+            const q = picked[m.id] || 0;
+            return (
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ flex: 1, fontSize: 13 }}>{m.emoji} {m.name}
+                  <span style={{ fontSize: 10, color: "var(--sub)" }}> • تكلفة {(+m.cost || 0)}</span>
+                </div>
+                {q > 0 && <button onClick={() => sub(m.id)} style={{ width: 26, height: 26, borderRadius: 7, border: "none", background: "rgba(198,40,40,.15)", color: "#c62828", fontWeight: 900 }}>−</button>}
+                {q > 0 && <span style={{ minWidth: 18, textAlign: "center", fontWeight: 800 }}>{q}</span>}
+                <button onClick={() => add(m.id)} style={{ width: 26, height: 26, borderRadius: 7, border: "none", background: "rgba(94,53,177,.15)", color: "#5e35b1", fontWeight: 900 }}>+</button>
+              </div>
+            );
+          })}
         </div>
-      ))}
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontWeight: 800 }}>
+          <span>إجمالي التكلفة</span>
+          <span style={{ color: "#5e35b1", fontSize: 17 }}>{costTotal.toLocaleString()} {CUR}</span>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+          <button onClick={save} style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: "#5e35b1", color: "#fff", fontWeight: 800 }}>☕ تسجيل ({costTotal.toLocaleString()} {CUR})</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1417,6 +1543,13 @@ export function ReportsTab({store,dm,settings}){
   const tronRevenue=(store.receipts||[]).filter(r=>r.tronAmount>0&&new Date(r.createdAt)>=start).reduce((s,r)=>s+r.tronAmount,0);
   const receiptCount=(store.receipts||[]).filter(r=>new Date(r.createdAt)>=start).length;
 
+  // v29: الاستهلاك الداخلي — منفصل تماماً عن البيع (لا ربح ولا مصروف)
+  const compEntries=(store.compLog||[]).filter(c=>new Date(c.date)>=start);
+  const custCompTotal=compEntries.filter(c=>c.reason!=="worker").reduce((s,c)=>s+(c.amount||0),0);
+  const custCompCount=compEntries.filter(c=>c.reason!=="worker").length;
+  const workerCompTotal=compEntries.filter(c=>c.reason==="worker").reduce((s,c)=>s+(c.amount||0),0);
+  const workerCompCount=compEntries.filter(c=>c.reason==="worker").length;
+
   const catRevenue={hot_drinks:0,cold_drinks:0,food:0,hookah:0};
   paidOrders.forEach(o=>o.items.forEach(i=>{
     const m=store.menu.find(x=>x.id===i.itemId);
@@ -1446,6 +1579,11 @@ export function ReportsTab({store,dm,settings}){
     <tr><td>ملغاة</td><td>${cancelled}</td></tr>
     <tr><td>ديون</td><td>${debtsTotal.toLocaleString()} ${CUR}</td></tr>
     ${Object.entries(catRevenue).map(([c,r])=>`<tr><td>${CAT_LABELS[c]}</td><td>${r.toLocaleString()} ${CUR}</td></tr>`).join("")}
+    </table>
+    <h3>🎁 الاستهلاك الداخلي (منفصل عن البيع)</h3>
+    <table><tr><th>البند</th><th>القيمة</th><th>عدد السجلات</th></tr>
+    <tr><td>ضيافة الزبائن (بسعر البيع)</td><td>${custCompTotal.toLocaleString()} ${CUR}</td><td>${custCompCount}</td></tr>
+    <tr><td>مشاريب العمال (بسعر التكلفة)</td><td>${workerCompTotal.toLocaleString()} ${CUR}</td><td>${workerCompCount}</td></tr>
     </table>
     <h3>أكثر المبيعات</h3>
     <table><tr><th>الصنف</th><th>الكمية</th><th>الإيراد</th></tr>
@@ -1489,6 +1627,25 @@ export function ReportsTab({store,dm,settings}){
           </div>
         ))}
       </div>
+
+      {/* v29: الاستهلاك الداخلي — لا يدخل البيع ولا الربح ولا المصروف */}
+      <div className="card" style={{marginBottom:16,borderTop:"3px solid #5e35b1"}}>
+        <h3 style={{fontSize:14,fontWeight:800,marginBottom:4}}>🎁 الاستهلاك الداخلي</h3>
+        <div style={{fontSize:11,color:"var(--sub)",marginBottom:12}}>منفصل عن البيع — لا يُحتسب ربحاً ولا مصروفاً. يُجرد مستقلاً مع التقرير الشهري.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{textAlign:"center",padding:"10px",background:"var(--card2)",borderRadius:10}}>
+            <div style={{fontSize:12,color:"var(--sub)"}}>👤 ضيافة الزبائن</div>
+            <div style={{fontSize:17,fontWeight:900,color:"#00897b"}}>{custCompTotal.toLocaleString()} {CUR}</div>
+            <div style={{fontSize:10,color:"var(--sub)"}}>{custCompCount} سجل • بسعر البيع</div>
+          </div>
+          <div style={{textAlign:"center",padding:"10px",background:"var(--card2)",borderRadius:10}}>
+            <div style={{fontSize:12,color:"var(--sub)"}}>☕ مشاريب العمال</div>
+            <div style={{fontSize:17,fontWeight:900,color:"#5e35b1"}}>{workerCompTotal.toLocaleString()} {CUR}</div>
+            <div style={{fontSize:10,color:"var(--sub)"}}>{workerCompCount} سجل • بسعر التكلفة</div>
+          </div>
+        </div>
+      </div>
+
       <div className="card" style={{marginBottom:16}}>
         <h3 style={{fontSize:14,fontWeight:800,marginBottom:14}}>📊 الإيرادات بالفئة</h3>
         {Object.entries(catRevenue).map(([cat,rev])=>(

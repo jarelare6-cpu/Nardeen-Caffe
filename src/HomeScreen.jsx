@@ -135,7 +135,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v28</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v29</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>
@@ -235,7 +235,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
         {tab==="receipts"   &&canAccess(user.role,"receipts")  &&<ReceiptsTab    store={store} showToast={showToast} dm={dm} settings={settings}/>}
-        {tab==="complog"    &&canAccess(user.role,"complog")   &&<CompLogTab     store={store} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="complog"    &&canAccess(user.role,"complog")   &&<CompLogTab     store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="customers"  &&canAccess(user.role,"customers") &&<CustomerFileTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")      &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
         {tab==="activity"   &&canAccess(user.role,"activity")      &&<div className="fade-in" style={{padding:16,maxWidth:720,margin:"0 auto"}}><ActivityLog/></div>}
