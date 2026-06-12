@@ -64,7 +64,9 @@ class ErrorBoundary extends React.Component {
 // ──────────────────────────────────────────────────────────────────────────────
 
 export function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,dm,toggleDark,settings,topOffset=0}){
-  const [tab,setTab]=useState(()=>{
+  const [tab,setTabRaw]=useState(()=>{
+    // v31: استعادة آخر تبويب بعد تحديث الصفحة (يبقى في نفس الصفحة)
+    try{ const saved=sessionStorage.getItem("nc_active_tab"); if(saved && canAccess(user.role, saved==="inventory"?"dashboard":saved)) return saved; }catch{}
     if(canAccess(user.role,"dashboard")) return "dashboard";
     if(canAccess(user.role,"order")) return "order";
     if(canAccess(user.role,"orders")) return "orders";
@@ -72,6 +74,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     if(canAccess(user.role,"hookah")) return "hookah";
     return "orders";
   });
+  const setTab=(t)=>{ try{ sessionStorage.setItem("nc_active_tab", typeof t==="function"?t(tab):t); }catch{} setTabRaw(t); };
   const [showNotifs,setShowNotifs]=useState(false);
   const [clock,setClock]=useState(new Date());
   const CUR=settings?.currency||"ل.س";
@@ -135,7 +138,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v30.3</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v31</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>

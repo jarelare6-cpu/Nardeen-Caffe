@@ -745,11 +745,18 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
     );
   };
 
+  // v31: إشغال الطاولة مشتقّ من الطلبات النشطة فقط — مصدر حقيقة واحد (يستثني الدين أيضاً)
   const activeOrders = (num) => store.orders.filter(o =>
-    String(o.table) === String(num) && !["paid", "cancelled", "complimentary"].includes(o.status)
+    String(o.table) === String(num) && !["paid", "cancelled", "complimentary", "debt"].includes(o.status)
   );
-  const free = store.tables.filter(t => t.status === "free").length;
-  const occupied = store.tables.filter(t => t.status === "occupied").length;
+  const isOccupied = (t) => activeOrders(t.number).length > 0;
+  const tableOpenedAt = (t) => {
+    const os = activeOrders(t.number);
+    if (!os.length) return null;
+    return os.reduce((min, o) => (!min || new Date(o.createdAt) < new Date(min)) ? o.createdAt : min, null);
+  };
+  const free = store.tables.filter(t => !isOccupied(t)).length;
+  const occupied = store.tables.filter(t => isOccupied(t)).length;
 
   return (
     <div className="fade-in">
@@ -880,24 +887,29 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
           .sort((a, b) => (a.number || 0) - (b.number || 0))
           .map(t => {
             const orders = activeOrders(t.number);
+            const occ = orders.length > 0; // v31: مشتقّ من الطلبات
+            const openedAt = occ ? tableOpenedAt(t) : null;
             const total = orders.reduce((s, o) => s + (o.total || 0), 0);
             return (
               <div key={t.id} className="card"
-                style={{ borderTop: `4px solid ${t.status === "free" ? "#2e7d32" : "#c62828"}`, cursor: "pointer", transition: "box-shadow .2s, transform .2s", background: dm ? "#181a30" : "#ffffff", maxHeight: 460, overflow: "hidden", contain: "content" }}
-                onClick={() => toggleStatus(t.id)}>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ display: "block", margin: "0 auto 6px" }}><path d="M6 3v8m12-8v8M5 11h14l-1 5H6l-1-5zM7 16v5m10-5v5" stroke={t.status==="free"?"#2e7d32":"#c62828"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                style={{ borderTop: `4px solid ${occ ? "#c62828" : "#2e7d32"}`, transition: "box-shadow .2s, transform .2s", background: dm ? "#181a30" : "#ffffff", maxHeight: 460, overflow: "hidden", contain: "content" }}>
+                <div style={{ position: "relative", width: 56, height: 56, margin: "0 auto 6px" }}>
+                  <img src="/Table.webp" alt="طاولة" width="56" height="56"
+                    style={{ width: 56, height: 56, objectFit: "contain", display: "block", filter: occ ? "none" : "none" }} />
+                  <span style={{ position: "absolute", right: -2, bottom: -2, width: 14, height: 14, borderRadius: "50%", background: occ ? "#c62828" : "#2e7d32", border: "2px solid var(--card)" }} />
+                </div>
                 <div style={{ fontWeight: 900, textAlign: "center", fontSize: 14 }}>{t.label}</div>
                 <div style={{ textAlign: "center", marginTop: 6 }}>
                   <span style={{
-                    background: t.status === "free" ? "rgba(46,125,50,.15)" : "rgba(198,40,40,.15)",
-                    color: t.status === "free" ? "#2e7d32" : "#c62828",
+                    background: !occ ? "rgba(46,125,50,.15)" : "rgba(198,40,40,.15)",
+                    color: !occ ? "#2e7d32" : "#c62828",
                     borderRadius: 20, padding: "3px 12px", fontSize: 12, fontWeight: 700
                   }}>
-                    {t.status === "free" ? "شاغرة" : "مشغولة"}
+                    {!occ ? "شاغرة" : "مشغولة"}
                   </span>
                 </div>
-                {t.status === "occupied" && t.openedAt && (
-                  <div style={{ textAlign: "center", marginTop: 8 }}><TableTimer openedAt={t.openedAt} /></div>
+                {occ && openedAt && (
+                  <div style={{ textAlign: "center", marginTop: 8 }}><TableTimer openedAt={openedAt} /></div>
                 )}
                 {orders.length > 0 && (
                   <div style={{ marginTop: 8, background: "var(--card2)", borderRadius: 8, padding: "6px 8px" }}>
@@ -920,7 +932,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
                     </div>
                   </div>
                 )}
-                {canManage && t.status === "occupied" && (
+                {canManage && occ && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
                     <div style={{ display: "flex", gap: 4 }}>
                       <button onClick={e => { e.stopPropagation();
