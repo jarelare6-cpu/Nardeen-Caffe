@@ -9,8 +9,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
 import { notifyTelegram, buildShiftReport, buildDailySummary } from "./lib/telegram.js";
 import {
-  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert,
-} from "./lib/utils.js";
+  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, businessDayLabel } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // 1. KITCHEN DISPLAY SYSTEM (KDS)
@@ -302,7 +301,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       const hr = new Date().getHours();
       const isEndOfDay = hr >= 23 || hr <= 2;
       if (isEndOfDay) {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const today = businessDayStart();
         const inToday = (iso) => iso && new Date(iso) >= today;
         const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
         const sum = (a, f = o => o.total || 0) => a.reduce((s, o) => s + f(o), 0);
@@ -321,6 +320,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           comp: sum(paidToday, o => o.compAmount || 0),
           profit: revenue - costToday - expToday,
           orders: paidToday.length,
+          dayLabel: businessDayLabel(),
         };
         notifyTelegram(targets, "daily", buildDailySummary(daily, cafeName, CUR));
       }

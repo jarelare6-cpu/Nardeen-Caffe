@@ -125,7 +125,7 @@ export const buildShiftReport = (shift, cafeName, cur) => {
 export const buildDailySummary = (data, cafeName, cur) => {
   return [
     `📊 <b>ملخص اليوم — ${cafeName}</b>`,
-    `التاريخ: ${new Date().toLocaleDateString("ar-SY")}`,
+    `🗓 يوم العمل: ${data.dayLabel || new Date().toLocaleDateString("ar-SY")}`,
     `━━━━━━━━━━━━━━`,
     `📈 إجمالي المبيعات: <b>${fmt(data.revenue)} ${cur}</b>`,
     `💵 نقدي: ${fmt(data.cash)} ${cur}`,

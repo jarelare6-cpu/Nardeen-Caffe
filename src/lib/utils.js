@@ -1,5 +1,20 @@
 // src/lib/utils.js — Nardeen Caffe v6.0
 // ══════════════════════════════════════════════════════════════
+// v30.3: اليوم المحاسبي (Business Day) — يبدأ الساعة 1 صباحاً لا منتصف الليل
+//  يطابق دورة العمل: المسائي يختم اليوم (12–1)، الليلي يبدأ التالي.
+//  كل حسابات "اليوم" تستخدم businessDayStart بدل setHours(0,0,0,0).
+// ══════════════════════════════════════════════════════════════
+export const BUSINESS_DAY_CUTOFF_HOUR = 1; // ساعة بداية اليوم المحاسبي
+export const businessDayStart = (ref = new Date()) => {
+  const d = new Date(ref);
+  if (d.getHours() < BUSINESS_DAY_CUTOFF_HOUR) d.setDate(d.getDate() - 1);
+  d.setHours(BUSINESS_DAY_CUTOFF_HOUR, 0, 0, 0);
+  return d;
+};
+export const businessDayLabel = (ref = new Date()) =>
+  businessDayStart(ref).toLocaleDateString("ar-SY", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+
 // تحسينات v6:
 //  - تنبيه نفاد المخزون (checkStockAlerts)
 //  - إرسال الفاتورة واتساب (sendReceiptWhatsApp)

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { fetchActivity, subscribeActivity, SUPABASE_READY } from "./lib/supabase.js";
+import { businessDayStart } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // v22: سجل النشاط — من فعل ماذا ومتى (دفع/إنشاء/إلغاء/دخول...)
@@ -39,7 +40,7 @@ export default function ActivityLog() {
   const fmt = (iso) => {
     try {
       const d = new Date(iso);
-      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const today = businessDayStart();
       const time = d.toLocaleTimeString("ar", { hour: "2-digit", minute: "2-digit" });
       return d >= today ? `اليوم ${time}` : `${d.toLocaleDateString("ar")} ${time}`;
     } catch { return iso || "—"; }

@@ -50,7 +50,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -88,7 +88,7 @@ export function DashboardTab({store,dm,settings}){
     load(); const iv=setInterval(load,30000);
     return ()=>{ active=false; clearInterval(iv); };
   },[]);
-  const today=new Date();today.setHours(0,0,0,0);
+  const today = businessDayStart();
   const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
   const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+o.total,0);
   const todayPaidOrders=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
@@ -276,7 +276,7 @@ export function DashboardTab({store,dm,settings}){
 
 export function InventoryTab({store,settings}){
   const CUR=settings?.currency||"ل.س";
-  const today=new Date(); today.setHours(0,0,0,0);
+  const today = businessDayStart();
 
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
   const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
@@ -964,7 +964,7 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
 
   const getStart = () => {
     const d = new Date();
-    if (period === "today") { d.setHours(0, 0, 0, 0); return d; }
+    if (period === "today") { return businessDayStart(); }
     if (period === "week") { d.setDate(d.getDate() - 7); return d; }
     if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
     return new Date(0);
@@ -1401,13 +1401,13 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
 
 export function ReceiptsTab({ store, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
-  const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const today = useMemo(() => businessDayStart(), []);
   const [period, setPeriod] = useState("today");
   const [search, setSearch] = useState("");
 
   const getStart = () => {
     const d = new Date();
-    if (period === "today") { d.setHours(0, 0, 0, 0); return d; }
+    if (period === "today") { return businessDayStart(); }
     if (period === "week") { d.setDate(d.getDate() - 7); return d; }
     if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
     return new Date(0);
@@ -1632,7 +1632,7 @@ export function ReportsTab({store,dm,settings}){
 
   const getStart=()=>{
     const d=new Date();
-    if(period==="today"){d.setHours(0,0,0,0);return d}
+    if(period==="today"){return businessDayStart()}
     if(period==="week"){d.setDate(d.getDate()-7);return d}
     if(period==="month"){d.setDate(1);d.setHours(0,0,0,0);return d}
     return new Date(0);
@@ -2541,7 +2541,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
   const pendingCount  = outdoorOrders.filter(o => o.status === "pending").length;
   const paidCount     = outdoorOrders.filter(o => o.status === "paid").length;
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const today = businessDayStart();
   const todayRevenue = outdoorCash
     .filter(e => e.type === "sale" && new Date(e.at) >= today)
     .reduce((s, e) => s + (e.amount || 0), 0);

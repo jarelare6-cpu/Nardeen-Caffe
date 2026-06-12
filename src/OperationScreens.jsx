@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, getNextInvoiceNum } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
@@ -97,6 +97,11 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
 
   const placeOrder=()=>{
     setTableError("");
+    // v30.3: إلزام الكاشير بفتح وردية قبل الطلبات (الأدمن معفى) — لا يشمل الحديقة
+    if(user.role!=="admin"){
+      const openShift=(store.shifts||[]).find(s=>s.status==="open" && (s.branch||"main")==="main");
+      if(!openShift){ showToast("⚠ افتح وردية أولاً قبل تسجيل الطلبات","error"); return; }
+    }
     if(!cart.length){showToast("السلة فارغة","error");return}
     if(!tableNum.trim()){setTableError("⚠ رقم الطاولة مطلوب");return}
 
@@ -685,7 +690,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const maxDiscount = settings?.maxDiscount ?? 50;
   const isAdmin = user?.role === "admin";
-  const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const today = useMemo(() => businessDayStart(), []);
   const todayRevenue = useMemo(() =>
     store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + o.total, 0)
     , [store.orders, today]);
@@ -1498,7 +1503,7 @@ export function DebtsTab({store,user,showToast,dm,settings}){
 
 export function ExpensesTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
-  const today=new Date();today.setHours(0,0,0,0);
+  const today = businessDayStart();
   const [showAdd,setShowAdd]=useState(false);
   const [editId,setEditId]=useState(null); // v30: تعديل مصروف بدل الحذف
   const [period,setPeriod]=useState("today");
@@ -1515,7 +1520,7 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
 
   const getStart=()=>{
     const d=new Date();
-    if(period==="today"){d.setHours(0,0,0,0);return d}
+    if(period==="today"){return businessDayStart()}
     if(period==="week"){d.setDate(d.getDate()-7);return d}
     if(period==="month"){d.setDate(1);d.setHours(0,0,0,0);return d}
     return new Date(0);
