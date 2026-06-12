@@ -6,7 +6,7 @@
 // (نظام الولاء 6 مدمج داخل CashierTab في App.jsx)
 // ══════════════════════════════════════════════════════════════
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { SUPABASE_READY } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
 import { notifyTelegram, buildShiftReport, buildDailySummary } from "./lib/telegram.js";
 import {
   getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert,
@@ -219,6 +219,26 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   const [countedCash, setCountedCash] = useState("");
   const [notes, setNotes] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
+  const isAdmin = user?.role === "admin"; // v30.1: حذف/تعديل الورديات المقفلة (أدمن فقط)
+  const [editShift, setEditShift] = useState(null);
+  const [editCounted, setEditCounted] = useState("");
+  const [delShift, setDelShift] = useState(null);
+
+  const saveShiftEdit = () => {
+    if (!editShift) return;
+    const counted = Math.max(0, +editCounted || 0);
+    const difference = counted - (editShift.expectedCash || 0);
+    store.setShifts(p => p.map(s => s.id === editShift.id ? { ...s, countedCash: counted, difference } : s));
+    try { logActivity({ action: "تعديل وردية مقفلة", details: `${editShift.userName} — معدود ${editShift.countedCash||0}→${counted}`, userName: user?.name || "", userRole: "admin", amount: counted, branch: editShift.branch || "main" }); } catch {}
+    showToast("✓ صُحّحت قيمة المعدود", "success"); setEditShift(null); setEditCounted("");
+  };
+  const doDeleteShift = () => {
+    if (!delShift) return;
+    store.setShifts(p => p.filter(s => s.id !== delShift.id));
+    if (SUPABASE_READY) { try { sbDelete("shifts", delShift.id); } catch {} }
+    try { logActivity({ action: "حذف وردية مقفلة", details: `${delShift.userName} — ${new Date(delShift.closedAt||delShift.openedAt).toLocaleString("ar-SY")}`, userName: user?.name || "", userRole: "admin", amount: delShift.countedCash || 0, branch: delShift.branch || "main" }); } catch {}
+    showToast("🗑 حُذف سجل الوردية", "warn"); setDelShift(null);
+  };
 
   // الوردية المفتوحة الحالية لهذا الفرع
   const openShift = useMemo(() =>
@@ -490,8 +510,44 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
                 <div style={{ color: "var(--sub)" }}>طلبات: <strong style={{ color: "var(--text)" }}>{s.ordersCount || 0}</strong></div>
               </div>
               {s.notes && <div style={{ marginTop: 6, fontSize: 11, color: "#795548", background: "rgba(121,85,72,.08)", borderRadius: 6, padding: "4px 8px" }}>📝 {s.notes}</div>}
+              {isAdmin && (
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button onClick={() => { setEditShift(s); setEditCounted(String(s.countedCash || "")); }}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>✏ تصحيح المعدود</button>
+                  <button onClick={() => setDelShift(s)}
+                    style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "rgba(198,40,40,.15)", color: "#c62828", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>🗑 حذف</button>
+                </div>
+              )}
             </div>
           ))}
+        </div>
+      )}
+
+      {editShift && (
+        <div onClick={() => setEditShift(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340 }}>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 4 }}>✏ تصحيح المعدود</h3>
+            <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 14 }}>المتوقع {(editShift.expectedCash || 0).toLocaleString()} {CUR} — يُعاد حساب الفرق تلقائياً.</div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>المعدود فعلياً ({CUR})</label>
+            <input className="input" type="number" value={editCounted} onChange={e => setEditCounted(e.target.value)} style={{ marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setEditShift(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+              <button onClick={saveShiftEdit} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#1565c0", color: "#fff", fontWeight: 800 }}>حفظ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {delShift && (
+        <div onClick={() => setDelShift(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340 }}>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>🗑 حذف سجل الوردية؟</h3>
+            <div style={{ fontSize: 12, color: "var(--sub)", marginBottom: 16 }}>{delShift.userName} — {new Date(delShift.closedAt || delShift.openedAt).toLocaleString("ar-SY")}. لا يمكن التراجع.</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setDelShift(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+              <button onClick={doDeleteShift} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#c62828", color: "#fff", fontWeight: 800 }}>🗑 حذف نهائي</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

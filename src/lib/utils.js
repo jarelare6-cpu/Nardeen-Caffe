@@ -462,7 +462,8 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const shiftExpenses = (expenses || []).filter(e => {
     const eTime = new Date(e.date);
     const matchBranch = (e.branch || "main") === branch;
-    return matchBranch && eTime >= from;
+    // v30.1: المصاريف الثانوية لا تدخل حساب الوردية إطلاقاً (لا تمسّ الصندوق)
+    return matchBranch && !e.isSecondary && eTime >= from;
   }).reduce((s, e) => s + (e.amount || 0), 0);
 
   return {
