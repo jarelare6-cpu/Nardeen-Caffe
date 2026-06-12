@@ -194,7 +194,7 @@ export const GlobalStyle = ({dm,theme="default"}) => {
     .card.hoverable:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
     .input{width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;outline:none;transition:border .2s,box-shadow .2s;background:var(--card);color:var(--text)}
     .input:focus{border-color:var(--ring);box-shadow:var(--glow)}
-    .btn{border:none;border-radius:10px;padding:10px 20px;font-weight:700;font-size:14px;transition:transform .15s ease,box-shadow .2s ease,filter .2s ease;display:inline-flex;align-items:center;gap:6px;justify-content:center;position:relative;overflow:hidden}
+    .btn{border:none;border-radius:10px;padding:10px 20px;font-weight:700;font-size:14px;white-space:nowrap;transition:transform .15s ease,box-shadow .2s ease,filter .2s ease;display:inline-flex;align-items:center;gap:6px;justify-content:center;position:relative;overflow:hidden}
     .btn:hover{filter:brightness(1.07);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.18)}
     .btn:active{transform:translateY(0) scale(.98)}
     .btn-red{background:var(--grad-primary);color:#fff}

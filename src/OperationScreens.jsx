@@ -1571,22 +1571,22 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
               <label style={{fontSize:12,fontWeight:700,color:"var(--sub)",marginBottom:5,display:"block"}}>ملاحظات</label>
               <textarea className="input" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} style={{height:60,resize:"none"}}/>
             </div>
+            <div style={{marginBottom:12}}>
+              <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",
+                padding:"10px 14px",borderRadius:12,
+                background:form.isSecondary?"rgba(249,168,37,.15)":"var(--card2)",
+                border:form.isSecondary?"1.5px solid #f9a825":"1.5px solid var(--border)"}}>
+                <input type="checkbox" checked={form.isSecondary||false}
+                  onChange={e=>setForm(f=>({...f,isSecondary:e.target.checked}))}
+                  style={{width:18,height:18,accentColor:"#f9a825",flexShrink:0}}/>
+                <span style={{fontWeight:700,fontSize:13,color:form.isSecondary?"#f9a825":"var(--text)"}}>
+                  ⭐ مصروف ثانوي (لا يدخل في الجرد اليومي)
+                </span>
+              </label>
+            </div>
             <div style={{display:"flex",gap:10}}>
-              <div style={{marginBottom:10}}>
-                <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",
-                  padding:"10px 14px",borderRadius:12,
-                  background:form.isSecondary?"rgba(249,168,37,.15)":"var(--card2)",
-                  border:form.isSecondary?"1.5px solid #f9a825":"1.5px solid var(--border)"}}>
-                  <input type="checkbox" checked={form.isSecondary||false}
-                    onChange={e=>setForm(f=>({...f,isSecondary:e.target.checked}))}
-                    style={{width:18,height:18,accentColor:"#f9a825"}}/>
-                  <span style={{fontWeight:700,fontSize:13,color:form.isSecondary?"#f9a825":"var(--text)"}}>
-                    ⭐ مصروف ثانوي (لا يدخل في الجرد اليومي)
-                  </span>
-                </label>
-              </div>
-              <button className="btn btn-red" style={{flex:1,background:form.isSecondary?"#f9a825":undefined}} onClick={addExpense}>تسجيل</button>
-              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setShowAdd(false)}>إلغاء</button>
+              <button className="btn btn-red" style={{flex:2,whiteSpace:"nowrap",background:form.isSecondary?"#f9a825":undefined}} onClick={addExpense}>تسجيل</button>
+              <button className="btn btn-ghost" style={{flex:1,whiteSpace:"nowrap"}} onClick={()=>setShowAdd(false)}>إلغاء</button>
             </div>
           </div>
         </div>

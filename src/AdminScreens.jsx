@@ -2306,39 +2306,31 @@ export function SettingsTab({store,showToast,dm,user}){
             </button>
           </div>
           {permTab&&(
-            <div style={{overflowX:"auto"}}>
-              <div style={{fontSize:12,color:"var(--sub)",marginBottom:10}}>
-                ✏ انقر على أي صلاحية لتفعيلها أو إلغائها — الأدمن دائماً لديه صلاحية كاملة
+            <div>
+              <div style={{fontSize:12,color:"var(--sub)",marginBottom:12}}>
+                ✏ اضغط على دور لتفعيل صلاحيته في القسم أو إلغائها — الأدمن دائماً لديه صلاحية كاملة
               </div>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                <thead>
-                  <tr style={{background:"var(--card2)"}}>
-                    <th style={{padding:"10px 14px",textAlign:"right",fontWeight:700}}>القسم</th>
-                    {Object.entries(ROLE_LABELS).filter(([v])=>v!==ROLES.CUSTOMER&&v!==ROLES.ADMIN).map(([r,l])=>(
-                      <th key={r} style={{padding:"10px 12px",fontWeight:700,color:ROLE_COLORS[r],whiteSpace:"nowrap"}}>{l}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.keys(sectionLabels).filter(s=>!["customer_home","myorders"].includes(s)).map(section=>(
-                    <tr key={section} style={{borderBottom:"1px solid var(--border)"}}>
-                      <td style={{padding:"8px 14px",fontWeight:600}}>{sectionLabels[section]||section}</td>
-                      {Object.keys(ROLE_LABELS).filter(r=>r!==ROLES.CUSTOMER&&r!==ROLES.ADMIN).map(role=>{
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:10}}>
+                {Object.keys(sectionLabels).filter(s=>!["customer_home","myorders"].includes(s)).map(section=>(
+                  <div key={section} style={{background:"var(--card2)",borderRadius:12,padding:"12px 14px"}}>
+                    <div style={{fontWeight:800,fontSize:13,marginBottom:10}}>{sectionLabels[section]||section}</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                      {Object.entries(ROLE_LABELS).filter(([v])=>v!==ROLES.CUSTOMER&&v!==ROLES.ADMIN).map(([role,label])=>{
                         const hasPerm=(dynPerms[section]||[]).includes(role);
                         return(
-                          <td key={role} style={{padding:"8px 12px",textAlign:"center"}}>
-                            <button onClick={()=>togglePerm(section,role)}
-                              style={{background:"none",border:"none",cursor:"pointer",fontSize:18,
-                                color:hasPerm?"#2e7d32":"var(--border)",transition:"color .2s"}}>
-                              {hasPerm?"✅":"⬜"}
-                            </button>
-                          </td>
+                          <button key={role} onClick={()=>togglePerm(section,role)}
+                            style={{whiteSpace:"nowrap",padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:700,
+                              border:hasPerm?"none":`1.5px solid var(--border)`,
+                              background:hasPerm?(ROLE_COLORS[role]||"#2e7d32"):"transparent",
+                              color:hasPerm?"#fff":"var(--sub)",transition:"all .15s"}}>
+                            {hasPerm?"✓ ":""}{label}
+                          </button>
                         );
                       })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -2868,7 +2860,7 @@ export function StockImportTab({ store, showToast, settings }){
   },[menu, store.orders]);
 
   const changedCount = rows.filter(r =>
-    Math.round(+r.stock)!==r.origStock || Math.round(+r.price)!==r.origPrice ||
+    Math.round(+r.stock)!==r.origStock ||
     Math.round(+r.cost)!==r.origCost || r.track!==r.origTrack
   ).length;
 
@@ -2881,8 +2873,8 @@ export function StockImportTab({ store, showToast, settings }){
         ...m,
         stock: Math.max(0, Math.round(+r.stock||0)),
         cost:  Math.max(0, Math.round(+r.cost||0)),
-        price: Math.max(0, Math.round(+r.price||0)),
         trackStock: !!r.track,
+        // ملاحظة: السعر لا يُكتب من هنا إطلاقاً — يُدار حصراً من المنيو (منع التعارض)
       };
     });
     // إضافة الأصناف الجديدة المختارة والغائبة
@@ -2967,8 +2959,6 @@ export function StockImportTab({ store, showToast, settings }){
                 </div>
                 <div><span style={lbl}>تكلفة</span>
                   <input value={r.cost} onChange={e=>upd(r.id,"cost",e.target.value)} inputMode="numeric" style={ipt}/></div>
-                <div><span style={lbl}>سعر</span>
-                  <input value={r.price} onChange={e=>upd(r.id,"price",e.target.value)} inputMode="numeric" style={ipt}/></div>
                 <div><span style={lbl}>مخزون</span>
                   {r.track
                     ? <input value={r.stock} onChange={e=>upd(r.id,"stock",e.target.value)} inputMode="numeric" style={ipt}/>
