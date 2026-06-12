@@ -2639,6 +2639,7 @@ const COST_BY_NAME = { "بوظه":140 };
 const STOCK_BY_ID = {
   m13:352, m4:35, m3:103, m1:41, m10:318, m11:40, m15:91, m12:99, m7:22, m5:32, m8:17,
   mc1:18, mc2:21, mc3:23, mc4:49, mc5:36, mc6:36,
+  j1:24, j2:7, j4:41,
   hk1:150, hk2:3, hk3:3, hk4:3, hk5:0,
 };
 const STOCK_BY_NAME = { "بوظه":1000 };
@@ -2647,6 +2648,7 @@ const STOCK_BY_NAME = { "بوظه":1000 };
 const TRACKED_IDS = new Set([
   "m1","m3","m4","m5","m7","m8","m10","m11","m12","m13","m15",
   "mc1","mc2","mc3","mc4","mc5","mc6",
+  "j1","j2","j4",
   "hk1","hk2","hk3","hk4","hk5",
 ]);
 const TRACKED_NAMES = new Set(["بوظه"]);
@@ -2811,22 +2813,16 @@ export function StockImportTab({ store, showToast, settings }){
         <div key={cat} className="card" style={{marginBottom:12}}>
           <h3 style={{fontSize:14,fontWeight:800,marginBottom:10}}>{catLabel[cat]||cat} <span style={{color:"var(--sub)",fontSize:12,fontWeight:600}}>({list.length})</span></h3>
           {list.map(r=>{
-            const target=_target(r.cost);
-            const below=Math.round(+r.price) < target; // السعر دون عتبة 20%
             return (
               <div key={r.id} style={{display:"flex",alignItems:"flex-end",gap:8,flexWrap:"wrap",
                 padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
                 <div style={{flex:"1 1 130px",minWidth:120}}>
                   <div style={{fontWeight:700,fontSize:13}}>{r.emoji} {r.name}</div>
-                  <div style={{fontSize:10,color:below?"#e65100":"var(--sub)"}}>
-                    عتبة 20% = {target} {below?"⚠ أقل":""}
-                  </div>
                 </div>
                 <div><span style={lbl}>تكلفة</span>
                   <input value={r.cost} onChange={e=>upd(r.id,"cost",e.target.value)} inputMode="numeric" style={ipt}/></div>
                 <div><span style={lbl}>سعر</span>
-                  <input value={r.price} onChange={e=>upd(r.id,"price",e.target.value)} inputMode="numeric"
-                    style={{...ipt,borderColor:below?"#e65100":"var(--border)"}}/></div>
+                  <input value={r.price} onChange={e=>upd(r.id,"price",e.target.value)} inputMode="numeric" style={ipt}/></div>
                 <div><span style={lbl}>مخزون</span>
                   <input value={r.stock} onChange={e=>upd(r.id,"stock",e.target.value)} inputMode="numeric"
                     disabled={!r.track} style={{...ipt,opacity:r.track?1:.45}}/></div>
