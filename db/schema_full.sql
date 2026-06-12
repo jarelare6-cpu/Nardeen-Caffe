@@ -273,6 +273,7 @@ ALTER TABLE receipts   ADD COLUMN IF NOT EXISTS tron_amount      NUMERIC(12,2) D
 -- آمن للتشغيل أكثر من مرة (IF NOT EXISTS)
 ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS image_icon text DEFAULT '';
 ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS cost numeric DEFAULT 0;
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS track_stock boolean DEFAULT true; -- v28: مخزون مرن
 
 
 -- ════════ 3) v23: خصم المخزون عند الدفع ════════

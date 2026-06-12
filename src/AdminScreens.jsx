@@ -2594,3 +2594,258 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
     </div>
   );
 }
+
+
+// ══════════════════════════════════════════════════════════════════
+// v28: شاشة «جرد واستيراد المخزون» — تعمل على المنيو الحيّ مباشرة
+//  • إدخال جرد شهري + تكلفة + سعر لكل صنف
+//  • قاعدة التسعير: السعر = أعلى من (السعر الحالي) و(التكلفة×1.2 مقرّبة لأقرب 10)  ← رفع فقط
+//  • مفتاح مرن لكل صنف: مفتوح (لا خصم) ↔ حقيقي (يُخصم ويُنبّه)
+//  • إضافة الأصناف الجديدة المتّفق عليها إن لم تكن موجودة
+//  • عدّاد فحم مساعد (أراكيل الشهر ÷ 6) — بلا خصم آلي
+// ══════════════════════════════════════════════════════════════════
+
+// تطبيع عربي للمطابقة بالاسم (للبوظة والأصناف الجديدة)
+const _norm = (s) => (s||"").toString()
+  .replace(/[ًٌٍَُِّْـ]/g,"").replace(/[أإآا]/g,"ا")
+  .replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/\s+/g,"").trim();
+
+// قاعدة السعر: تقريب لأقرب 10، ورفع فقط (لا يخفض سعراً هامشه أعلى من 20%)
+const _round10 = (n) => Math.round((+n||0)/10)*10;
+const _target  = (cost) => _round10((+cost||0)*1.2);
+const _raiseOnly = (cur, cost) => Math.max(Math.round(+cur||0), _target(cost));
+
+// خطة التكلفة المتّفق عليها (بحسب المعرّف)
+const COST_BY_ID = {
+  // ساخنة
+  m1:70,  m2:80,  m3:70,  m4:70,  m5:70,  m6:70,  m7:70,  m8:70,  m9:60,
+  m10:60, m11:60, m12:60, m13:60, m14:60, m15:75, m16:70, m17:80, m18:80,
+  // باردة معلّبة
+  mc1:110, mc2:110, mc3:110, mc4:110, mc5:90, mc6:70,
+  // عصائر (كلها 100 عدا توت 130 وفريز-وتوت 125)
+  j1:100, j2:100, j3:100, j4:100, j5:100, j6:100, j7:130, j8:100, j9:100, j10:125, j11:100,
+  // كوكتيلات (كلها 160 عدا موز-حليب 130 وموز-حليب-فريز 150)
+  ck1:160, ck2:160, ck3:150, ck4:130, ck5:160, ck6:160, ck7:160, ck8:160, ck9:160,
+  // ميلك شيك / أيسات
+  ms1:150, ms2:150, ms3:150, ms4:150, ms5:150, ms6:150, ms7:150, ms8:150,
+  ic1:115, ic2:115, ic3:115, ic4:115, ic5:115, ic6:115, ic7:115, ic8:115,
+  // أراكيل
+  hk1:150, hk2:125, hk3:125, hk4:125, hk5:125,
+};
+// تكلفة البوظة بالاسم (صنف مُضاف يدوياً في القاعدة الحيّة)
+const COST_BY_NAME = { "بوظه":140 };
+
+// جرد هذا الشهر (بحسب المعرّف) — قيم مقترحة قابلة للتعديل
+const STOCK_BY_ID = {
+  m13:352, m4:35, m3:103, m1:41, m10:318, m11:40, m15:91, m12:99, m7:22, m5:32, m8:17,
+  mc1:18, mc2:21, mc3:23, mc4:49, mc5:36, mc6:36,
+  j1:24, j2:7, j4:41,
+  hk1:150, hk2:3, hk3:3, hk4:3, hk5:0,
+};
+const STOCK_BY_NAME = { "بوظه":1000 };
+
+// الأصناف المقترح تتبّعها كـ«حقيقي» (مفتاح TRUE). الباقي يُقترح مفتوحاً.
+const TRACKED_IDS = new Set([
+  "m1","m3","m4","m5","m7","m8","m10","m11","m12","m13","m15",
+  "mc1","mc2","mc3","mc4","mc5","mc6",
+  "j1","j2","j4",
+  "hk1","hk2","hk3","hk4","hk5",
+]);
+const TRACKED_NAMES = new Set(["بوظه"]);
+
+// الأصناف الجديدة المتّفق على إضافتها (إن غابت بالاسم)
+const NEW_ITEMS = [
+  { key:"slush",  name:"سلس برتقال",        nameEn:"Slush",        category:"cold_drinks", cost:105, stock:8,  emoji:"🥤" },
+  { key:"jack",   name:"جاك (طاقة)",        nameEn:"Jack Energy",  category:"cold_drinks", cost:115, stock:29, emoji:"⚡" },
+  { key:"bison",  name:"بايسون (طاقة)",     nameEn:"Bison Energy", category:"cold_drinks", cost:115, stock:16, emoji:"⚡" },
+  { key:"hkvar",  name:"أركيلة طعمات متنوعة", nameEn:"Assorted Hookah", category:"hookah",  cost:125, stock:5,  emoji:"💨" },
+];
+
+export function StockImportTab({ store, showToast, settings }){
+  const CUR = settings?.currency || "ل.س";
+  const menu = store.menu || [];
+
+  // بناء صفوف الإدخال من المنيو الحيّ مع تعبئة الخطة المقترحة
+  const buildRows = () => menu
+    .filter(m => !m.noStock) // الأصناف الخدمية svc لا تُجرد
+    .map(m => {
+      const nk = _norm(m.name);
+      const planCost = COST_BY_ID[m.id] ?? COST_BY_NAME[nk] ?? (m.cost ?? "");
+      const hasStockPlan = (m.id in STOCK_BY_ID) || (nk in STOCK_BY_NAME);
+      const planStock = STOCK_BY_ID[m.id] ?? STOCK_BY_NAME[nk] ?? m.stock ?? 0;
+      const planTrack = TRACKED_IDS.has(m.id) || TRACKED_NAMES.has(nk)
+        ? true
+        : (m.trackStock !== false ? false : false); // مقترح: غير المخطّط = مفتوح
+      return {
+        id:m.id, name:m.name, emoji:m.emoji||"", category:m.category,
+        cost:String(planCost ?? ""), stock:String(planStock ?? 0),
+        price:String(m.price ?? 0), track:planTrack, hasStockPlan,
+        origStock:m.stock??0, origPrice:m.price??0, origCost:m.cost??0, origTrack:m.trackStock!==false,
+      };
+    });
+
+  const [rows, setRows] = useState(buildRows);
+  const [onlyTracked, setOnlyTracked] = useState(false);
+  const [newSel, setNewSel] = useState(() => Object.fromEntries(NEW_ITEMS.map(n=>[n.key,true])));
+  const built = useRef(rows.length>0);
+
+  // إعادة التعبئة إن وصل المنيو متأخراً (تحميل غير متزامن)
+  useEffect(()=>{ if(!built.current && menu.length){ setRows(buildRows()); built.current=true; } },[menu.length]);
+
+  const upd = (id, field, val) => setRows(p => p.map(r => r.id===id ? {...r,[field]:val} : r));
+
+  // أيّ أصناف جديدة غائبة فعلاً (بالاسم المطبّع)
+  const liveNames = new Set(menu.map(m=>_norm(m.name)));
+  const missingNew = NEW_ITEMS.filter(n => !liveNames.has(_norm(n.name)));
+
+  // تطبيق قاعدة 20% (رفع فقط) على كل الصفوف
+  const apply20 = () => {
+    setRows(p => p.map(r => ({...r, price:String(_raiseOnly(r.price, r.cost))})));
+    showToast("طُبّقت قاعدة 20% (رفع فقط)","success");
+  };
+
+  // عدّاد الفحم المساعد — رؤوس الأراكيل المباعة هذا الشهر (طلبات مدفوعة) ÷ 6
+  const charcoal = useMemo(()=>{
+    const now=new Date(); const mStart=new Date(now.getFullYear(),now.getMonth(),1);
+    const hkIds=new Set(menu.filter(m=>m.category==="hookah").map(m=>m.id));
+    let heads=0;
+    (store.orders||[]).forEach(o=>{
+      if(!["paid","debt","complimentary"].includes(o.status)) return;
+      if(new Date(o.paidAt||o.createdAt) < mStart) return;
+      (o.items||[]).forEach(it=>{ if(hkIds.has(it.itemId)) heads += (+it.qty||0); });
+    });
+    return { heads, kg:Math.round((heads/6)*10)/10 };
+  },[menu, store.orders]);
+
+  const changedCount = rows.filter(r =>
+    Math.round(+r.stock)!==r.origStock || Math.round(+r.price)!==r.origPrice ||
+    Math.round(+r.cost)!==r.origCost || r.track!==r.origTrack
+  ).length;
+
+  const save = () => {
+    const byId = Object.fromEntries(rows.map(r=>[r.id,r]));
+    let next = menu.map(m => {
+      const r = byId[m.id];
+      if(!r) return m;
+      return {
+        ...m,
+        stock: Math.max(0, Math.round(+r.stock||0)),
+        cost:  Math.max(0, Math.round(+r.cost||0)),
+        price: Math.max(0, Math.round(+r.price||0)),
+        trackStock: !!r.track,
+      };
+    });
+    // إضافة الأصناف الجديدة المختارة والغائبة
+    const toAdd = missingNew.filter(n=>newSel[n.key]).map(n=>({
+      id:"m"+Date.now()+"_"+n.key, name:n.name, nameEn:n.nameEn,
+      price:_target(n.cost), category:n.category, stock:n.stock, minStock:5,
+      cost:n.cost, totalSold:0, emoji:n.emoji, active:true, trackStock:true,
+    }));
+    next = [...next, ...toAdd];
+    store.setMenu(next);
+    try{ logActivity({action:"استيراد جرد",details:`عُدّل ${changedCount} صنف، أُضيف ${toAdd.length} صنف جديد`,userName:"أدمن",userRole:"admin",branch:"main"}); }catch{}
+    showToast(`✅ حُفظ الجرد — ${changedCount} تعديل${toAdd.length?` + ${toAdd.length} صنف جديد`:""}`,"success");
+    setRows(buildRows()); // إعادة ضبط الأصل
+  };
+
+  const catLabel = { hot_drinks:"☕ ساخنة", cold_drinks:"🧊 باردة", food:"🍔 طعام", hookah:"💨 أراكيل", services:"🎟️ خدمات" };
+  const order = ["hot_drinks","cold_drinks","hookah","food","services"];
+  const shown = onlyTracked ? rows.filter(r=>r.track) : rows;
+  const grouped = order.map(c=>[c, shown.filter(r=>r.category===c)]).filter(([,a])=>a.length);
+
+  const ipt = {width:58,padding:"5px 6px",borderRadius:8,border:"1px solid var(--border)",
+    background:"var(--card2)",color:"var(--text)",fontSize:13,fontWeight:700,textAlign:"center"};
+  const lbl = {fontSize:9,color:"var(--sub)",display:"block",marginBottom:2,textAlign:"center"};
+
+  return (
+    <div className="fade-in">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:8}}>
+        <h2 style={{fontSize:18,fontWeight:900}}>📦 جرد واستيراد المخزون</h2>
+        <span style={{fontSize:11,color:"var(--sub)"}}>يُعدّل المنيو الحيّ مباشرة</span>
+      </div>
+
+      {/* شريط أدوات */}
+      <div className="card" style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",marginBottom:12}}>
+        <button onClick={apply20} style={{padding:"8px 14px",borderRadius:10,border:"none",
+          background:"#1565c0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer"}}>
+          ⚙ تطبيق قاعدة 20% (رفع فقط)
+        </button>
+        <button onClick={()=>setOnlyTracked(s=>!s)} style={{padding:"8px 14px",borderRadius:10,
+          border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+          {onlyTracked?"عرض الكل":"المتعقّبة فقط"}
+        </button>
+        <span style={{fontSize:12,color:"var(--sub)",marginInlineStart:"auto"}}>
+          تعديلات معلّقة: <b style={{color:changedCount?"#e65100":"var(--sub)"}}>{changedCount}</b>
+        </span>
+      </div>
+
+      {/* عدّاد الفحم المساعد */}
+      <div className="card" style={{borderTop:"4px solid #455a64",marginBottom:12,
+        display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:6}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:13}}>🪨 عدّاد الفحم المساعد (هذا الشهر)</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>تقديري — كل 6 رؤوس = 1 كغ. لا يُخصم آلياً، الجرد يدوي.</div>
+        </div>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:20,fontWeight:900,color:"#455a64"}}>{charcoal.kg} كغ</div>
+          <div style={{fontSize:11,color:"var(--sub)"}}>{charcoal.heads} رأس مباع</div>
+        </div>
+      </div>
+
+      {/* أصناف جديدة مقترحة */}
+      {missingNew.length>0 && (
+        <div className="card" style={{borderTop:"4px solid #2e7d32",marginBottom:12}}>
+          <h3 style={{fontSize:14,fontWeight:800,color:"#2e7d32",marginBottom:8}}>➕ أصناف جديدة مقترحة للإضافة</h3>
+          {missingNew.map(n=>(
+            <label key={n.key} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",
+              borderBottom:"1px solid var(--border)",fontSize:13,cursor:"pointer"}}>
+              <input type="checkbox" checked={!!newSel[n.key]}
+                onChange={e=>setNewSel(s=>({...s,[n.key]:e.target.checked}))}/>
+              <span style={{flex:1}}>{n.emoji} {n.name}</span>
+              <span style={{color:"var(--sub)",fontSize:12}}>تكلفة {n.cost} • بيع {_target(n.cost)} • جرد {n.stock}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* جداول الجرد حسب الفئة */}
+      {grouped.map(([cat,list])=>(
+        <div key={cat} className="card" style={{marginBottom:12}}>
+          <h3 style={{fontSize:14,fontWeight:800,marginBottom:10}}>{catLabel[cat]||cat} <span style={{color:"var(--sub)",fontSize:12,fontWeight:600}}>({list.length})</span></h3>
+          {list.map(r=>{
+            return (
+              <div key={r.id} style={{display:"flex",alignItems:"flex-end",gap:8,flexWrap:"wrap",
+                padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+                <div style={{flex:"1 1 130px",minWidth:120}}>
+                  <div style={{fontWeight:700,fontSize:13}}>{r.emoji} {r.name}</div>
+                </div>
+                <div><span style={lbl}>تكلفة</span>
+                  <input value={r.cost} onChange={e=>upd(r.id,"cost",e.target.value)} inputMode="numeric" style={ipt}/></div>
+                <div><span style={lbl}>سعر</span>
+                  <input value={r.price} onChange={e=>upd(r.id,"price",e.target.value)} inputMode="numeric" style={ipt}/></div>
+                <div><span style={lbl}>مخزون</span>
+                  <input value={r.stock} onChange={e=>upd(r.id,"stock",e.target.value)} inputMode="numeric"
+                    disabled={!r.track} style={{...ipt,opacity:r.track?1:.45}}/></div>
+                <button onClick={()=>upd(r.id,"track",!r.track)}
+                  style={{padding:"6px 10px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:800,
+                    background:r.track?"#2e7d32":"#90a4ae",color:"#fff",minWidth:62}}>
+                  {r.track?"حقيقي":"مفتوح"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      {/* حفظ */}
+      <div style={{position:"sticky",bottom:80,marginTop:8}}>
+        <button onClick={save}
+          style={{width:"100%",padding:"14px",borderRadius:12,border:"none",
+            background:"linear-gradient(135deg,#1b5e20,#2e7d32)",color:"#fff",fontWeight:900,fontSize:15,
+            cursor:"pointer",boxShadow:"0 6px 18px rgba(46,125,50,.4)"}}>
+          💾 حفظ الجرد ({changedCount} تعديل{missingNew.filter(n=>newSel[n.key]).length?` + ${missingNew.filter(n=>newSel[n.key]).length} جديد`:""})
+        </button>
+      </div>
+    </div>
+  );
+}
