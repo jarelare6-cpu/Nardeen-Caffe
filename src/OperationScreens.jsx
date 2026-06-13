@@ -100,7 +100,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
     // v30.3: إلزام الكاشير بفتح وردية قبل الطلبات (الأدمن معفى) — لا يشمل الحديقة
     if(user.role!=="admin"){
       const openShift=(store.shifts||[]).find(s=>s.status==="open" && (s.branch||"main")==="main");
-      if(!openShift){ showToast("⚠ افتح وردية أولاً قبل تسجيل الطلبات","error"); return; }
+      if(!openShift){ showToast("⚠ لا توجد وردية مفتوحة — اطلب من الكاشير فتح وردية أولاً","error"); return; }
     }
     if(!cart.length){showToast("السلة فارغة","error");return}
     if(!tableNum.trim()){setTableError("⚠ رقم الطاولة مطلوب");return}

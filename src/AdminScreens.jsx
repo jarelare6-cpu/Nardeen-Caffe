@@ -2035,7 +2035,7 @@ function TelegramSettings({ settings, setForm, showToast }) {
       name: "وجهة جديدة",
       token: "",
       chatId: "",
-      events: { shift: true, daily: true, cancel: true, comp: true, debt: false, reset: true },
+      events: { shift: true, daily: true, weekly: true, cancel: true, comp: true, debt: false, reset: true },
     };
     update([...targets, t]);
   };
@@ -2983,7 +2983,14 @@ export function StockImportTab({ store, user, showToast, settings }){
 
     auditLines.forEach(line=>{ try{ logActivity({action:"جرد مخزون",details:line,userName:user?.name||"أدمن",userRole:user?.role||"admin",branch:"main"}); }catch{} });
     if (toAdd.length) { try{ logActivity({action:"إضافة أصناف (جرد)",details:toAdd.map(a=>a.name).join("، "),userName:user?.name||"أدمن",userRole:user?.role||"admin",branch:"main"}); }catch{} }
-    showToast(`✅ حُفظ الجرد — ${nChanges} تعديل${toAdd.length?` + ${toAdd.length} صنف جديد`:""}`,"success");
+    // v31.2: سطر «فاقد الجرد» — مجموع النقص (الفروقات السالبة) × التكلفة، سطر واحد في التدقيق
+    const shrinkage = rows.reduce((s, r) => {
+      if (!r.track) return s;
+      const diff = Math.round(+r.stock||0) - r.origStock;
+      return diff < 0 ? s + (Math.abs(diff) * (Math.round(+r.cost||0))) : s;
+    }, 0);
+    if (shrinkage > 0) { try{ logActivity({action:"فاقد الجرد",details:`خسارة جرد ${shrinkage.toLocaleString()} ل.س (نقص غير مسجّل)`,userName:user?.name||"أدمن",userRole:user?.role||"admin",amount:shrinkage,branch:"main"}); }catch{} }
+    showToast(`✅ حُفظ الجرد — ${nChanges} تعديل${toAdd.length?` + ${toAdd.length} صنف جديد`:""}${shrinkage>0?` • فاقد ${shrinkage.toLocaleString()}`:""}`,"success");
     built.current=false; setRows([]); // إعادة المرآة من البيانات الحيّة المحدّثة
   };
 

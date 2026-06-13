@@ -7,9 +7,9 @@
 // ══════════════════════════════════════════════════════════════
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
-import { notifyTelegram, buildShiftReport, buildDailySummary } from "./lib/telegram.js";
+import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
 import {
-  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, businessDayLabel } from "./lib/utils.js";
+  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, businessDayLabel, weekStartThursday } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // 1. KITCHEN DISPLAY SYSTEM (KDS)
@@ -215,6 +215,8 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const [branch, setBranch] = useState("main");
   const [openingCash, setOpeningCash] = useState("");
+  const [shiftType, setShiftType] = useState("evening"); // v31.2: نوع الوردية (مسائي/ليلي/صباحي)
+  const [confirmType, setConfirmType] = useState(false);  // تأكيد توقيت الوردية
   const [countedCash, setCountedCash] = useState("");
   const [notes, setNotes] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
@@ -256,14 +258,16 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     const newShift = {
       id: "shift_" + Date.now(),
       userId: user.id, userName: user.name, branch,
+      shiftType, // v31.2: مسائي/ليلي/صباحي
       openedAt: new Date().toISOString(),
       closedAt: null, openingCash: oc,
       status: "open", notes: "",
       createdAt: new Date().toISOString(),
     };
     store.setShifts(p => [newShift, ...p]);
-    setOpeningCash("");
-    showToast(`🔓 فُتحت وردية ${branch === "outdoor" ? "الحديقة" : "الكافيه"}`);
+    setOpeningCash(""); setConfirmType(false);
+    const tLabel = shiftType === "evening" ? "مسائية" : shiftType === "night" ? "ليلية" : "صباحية";
+    showToast(`🔓 فُتحت وردية ${tLabel} — ${branch === "outdoor" ? "الحديقة" : "الكافيه"}`);
   };
 
   const closeShift = () => {
@@ -297,10 +301,9 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       const targets = settings?.telegramTargets || [];
       notifyTelegram(targets, "shift", buildShiftReport(closed, cafeName, CUR));
 
-      // ملخص اليوم يُرسل عند إغلاق آخر وردية مسائية (الساعة 12–1 ليلاً)
-      const hr = new Date().getHours();
-      const isEndOfDay = hr >= 23 || hr <= 2;
-      if (isEndOfDay) {
+      // v31.2: ملخص اليوم يُرسل عند إغلاق الوردية المسائية فقط (لا بالساعة)
+      const isEveningClose = (openShift.shiftType || "evening") === "evening";
+      if (isEveningClose) {
         const today = businessDayStart();
         const inToday = (iso) => iso && new Date(iso) >= today;
         const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
@@ -323,6 +326,36 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           dayLabel: businessDayLabel(),
         };
         notifyTelegram(targets, "daily", buildDailySummary(daily, cafeName, CUR));
+
+        // v31.2: التقرير الأسبوعي — بعد اليومي، يوم الخميس فقط، مرة واحدة لكل أسبوع
+        if (new Date().getDay() === 4) { // 4 = الخميس
+          const wkStart = weekStartThursday();
+          const wkKey = wkStart.toISOString().slice(0, 10);
+          const lastWk = settings?.lastWeeklySent || "";
+          if (lastWk !== wkKey) {
+            const inWeek = (iso) => iso && new Date(iso) >= wkStart;
+            const paidWk = (store.orders || []).filter(o => o.status === "paid" && inWeek(o.paidAt || o.createdAt));
+            const expWk = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
+            const costWk = paidWk.reduce((s, o) => s + (o.items || []).reduce((a, it) => {
+              const m = (store.menu || []).find(x => x.id === it.itemId);
+              return a + ((m?.cost || 0) * (it.qty || 0));
+            }, 0), 0);
+            const revWk = sum(paidWk);
+            const weekly = {
+              revenue: revWk, expenses: expWk,
+              profit: revWk - costWk - expWk,
+              orders: paidWk.length,
+              cash: sum(paidWk.filter(o => o.paymentType === "cash")),
+              card: sum(paidWk.filter(o => o.paymentType === "card")),
+              debts: sum((store.orders || []).filter(o => o.status === "debt" && inWeek(o.createdAt))),
+              comp: sum(paidWk, o => o.compAmount || 0),
+              fromLabel: wkStart.toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
+              toLabel: new Date().toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
+            };
+            notifyTelegram(targets, "weekly", buildWeeklySummary(weekly, cafeName, CUR));
+            try { store.setSettings({ ...settings, lastWeeklySent: wkKey }); } catch {}
+          }
+        }
       }
     } catch (e) { console.warn("telegram shift:", e); }
 
@@ -379,15 +412,42 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
             لا توجد وردية مفتوحة لـ {branch === "outdoor" ? "الحديقة" : "الكافيه"}
           </p>
           <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
+            نوع الوردية
+          </label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            {[["evening", "🌆 مسائية"], ["night", "🌙 ليلية"], ["morning", "☀️ صباحية"]].map(([v, l]) => (
+              <button key={v} onClick={() => setShiftType(v)}
+                style={{ flex: 1, padding: "10px 6px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap",
+                  border: shiftType === v ? "none" : "1.5px solid var(--border)",
+                  background: shiftType === v ? "#1565c0" : "transparent",
+                  color: shiftType === v ? "#fff" : "var(--sub)" }}>{l}</button>
+            ))}
+          </div>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
             النقد الافتتاحي في الصندوق ({CUR})
           </label>
           <input className="input" type="number" min="0" value={openingCash}
             onChange={e => setOpeningCash(e.target.value)} placeholder="0"
             style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 14 }} />
-          <button onClick={openNewShift}
+          <button onClick={() => setConfirmType(true)}
             style={{ width: "100%", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
             🔓 فتح الوردية
           </button>
+
+          {confirmType && (
+            <div onClick={() => setConfirmType(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+              <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340, textAlign: "center" }}>
+                <div style={{ fontSize: 40, marginBottom: 8 }}>{shiftType === "evening" ? "🌆" : shiftType === "night" ? "🌙" : "☀️"}</div>
+                <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>تأكيد توقيت الوردية</h3>
+                <p style={{ fontSize: 14, color: "var(--sub)", marginBottom: 4 }}>هل أنت متأكد أنها وردية <b style={{ color: "var(--text)" }}>{shiftType === "evening" ? "مسائية" : shiftType === "night" ? "ليلية" : "صباحية"}</b>؟</p>
+                <p style={{ fontSize: 11, color: "#e65100", marginBottom: 16 }}>⚠ الوردية المسائية هي التي تُرسل تقرير اليوم — لا تختر النوع الخطأ.</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setConfirmType(false)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>لا</button>
+                  <button onClick={openNewShift} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 800 }}>نعم، افتح</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         // ── وردية مفتوحة: عرض الملخص + تقفيل ──

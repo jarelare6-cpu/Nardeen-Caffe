@@ -11,6 +11,7 @@
 export const TELEGRAM_EVENTS = {
   shift:  "💰 تقرير الوردية",
   daily:  "📊 ملخص أرباح اليوم",
+  weekly: "🗓 ملخص الأسبوع (الخميس)",
   cancel: "🔴 حذف / إلغاء طلب",
   comp:   "🎁 ضيافة كاملة",
   debt:   "💳 سداد دين",
@@ -131,6 +132,22 @@ export const buildDailySummary = (data, cafeName, cur) => {
     `💵 نقدي: ${fmt(data.cash)} ${cur}`,
     `💳 بطاقة: ${fmt(data.card)} ${cur}`,
     data.tron ? `💠 ترون: ${fmt(data.tron)} ${cur}` : null,
+    `📤 المصاريف: ${fmt(data.expenses)} ${cur}`,
+    data.debts ? `💳 ديون جديدة: ${fmt(data.debts)} ${cur}` : null,
+    data.comp ? `🎁 ضيافة: ${fmt(data.comp)} ${cur}` : null,
+    `💰 <b>صافي الربح: ${fmt(data.profit)} ${cur}</b>`,
+    `🧾 عدد الطلبات: ${data.orders}`,
+  ].filter(Boolean).join("\n");
+};
+
+export const buildWeeklySummary = (data, cafeName, cur) => {
+  return [
+    `🗓 <b>ملخص الأسبوع — ${cafeName}</b>`,
+    `📅 من ${data.fromLabel} إلى ${data.toLabel}`,
+    `━━━━━━━━━━━━━━`,
+    `📈 إجمالي المبيعات: <b>${fmt(data.revenue)} ${cur}</b>`,
+    `💵 نقدي: ${fmt(data.cash)} ${cur}`,
+    `💳 بطاقة: ${fmt(data.card)} ${cur}`,
     `📤 المصاريف: ${fmt(data.expenses)} ${cur}`,
     data.debts ? `💳 ديون جديدة: ${fmt(data.debts)} ${cur}` : null,
     data.comp ? `🎁 ضيافة: ${fmt(data.comp)} ${cur}` : null,
