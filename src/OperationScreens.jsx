@@ -705,7 +705,9 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const todayProfit = useMemo(() => calcNetProfit(store.orders, store.menu, today), [store.orders, store.menu, today]);
 
   const [customerFilter, setCustomerFilter] = useState("");
-  const [discounts, setDiscounts] = useState({});
+  const [discounts, setDiscounts] = useState({});      // الخصم المُثبَّت (مبلغ ثابت) المؤثّر في الإجمالي
+  const [discInput, setDiscInput] = useState({});      // v31.5: المبلغ المُدخَل قبل التثبيت
+  const [discConfirm, setDiscConfirm] = useState(null); // {orderId, amount} نافذة تأكيد التثبيت
   const [tronAmounts, setTronAmounts] = useState({});
   const [debtModal, setDebtModal] = useState(null);
   const [debtNameInput, setDebtNameInput] = useState("");
@@ -747,7 +749,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       return;
     }
     const disc = discounts[order.id] || 0;
-    const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
+    const discAmt = Math.min(Math.max(0, disc), order.total); // v31.5: مبلغ ثابت
     const finalTotal = order.total - discAmt;
     const tronAmt = tronAmounts[order.id] || 0;
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
@@ -823,7 +825,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
     // v22: سجل النشاط
     logActivity({
-      action: "دفع طلب", details: `${payType === "card" ? "بطاقة" : payType === "tron" ? "ترون" : "نقدي"}${disc ? ` — خصم ${disc}%` : ""}`,
+      action: "دفع طلب", details: `${payType === "card" ? "بطاقة" : payType === "tron" ? "ترون" : "نقدي"}${disc ? ` — خصم ${disc.toLocaleString()} ${CUR}` : ""}`,
       userName: user.name, userRole: user.role, orderNum: order.orderNum,
       amount: finalTotal, branch: order.branch || "main",
     });
@@ -833,6 +835,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     showToast(`💰 تم الدفع — ${order.customerName || "زبون"} #${order.orderNum}`);
     autoFreeTable(order.table, updated);
     setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
+    setDiscInput(p => { const n = { ...p }; delete n[order.id]; return n; });
     setTronAmounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setTronModal(null);
     setPayingId(null);
@@ -1037,7 +1040,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         </div>
       ) : filteredReady.map(order => {
         const disc = discounts[order.id] || 0;
-        const discAmt = Math.round(order.total * Math.min(disc, isAdmin ? 100 : maxDiscount) / 100);
+        const discAmt = Math.min(Math.max(0, disc), order.total); // v31.5: مبلغ ثابت
         const finalTotal = order.total - discAmt;
         const tronAmt = tronAmounts[order.id] || 0;
 
@@ -1061,10 +1064,25 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
             ))}
 
             <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <label style={{ fontSize: 12, color: "var(--sub)", whiteSpace: "nowrap" }}>خصم %</label>
-              <input type="number" min="0" max={isAdmin ? 100 : maxDiscount} value={disc}
-                onChange={e => setDiscounts(p => ({ ...p, [order.id]: Math.min(isAdmin ? 100 : maxDiscount, Math.max(0, +e.target.value)) }))}
-                style={{ width: 70, padding: "5px 8px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 13, background: "var(--card)", color: "var(--text)" }} />
+              <label style={{ fontSize: 12, color: "var(--sub)", whiteSpace: "nowrap" }}>خصم ({CUR})</label>
+              <input type="number" min="0" max={order.total} value={discInput[order.id] ?? ""}
+                placeholder="0"
+                onChange={e => setDiscInput(p => ({ ...p, [order.id]: Math.min(order.total, Math.max(0, +e.target.value)) }))}
+                style={{ width: 90, padding: "5px 8px", borderRadius: 8, border: "1.5px solid var(--border)", fontSize: 13, background: "var(--card)", color: "var(--text)" }} />
+              <button onClick={() => {
+                const amt = Math.min(order.total, Math.max(0, +(discInput[order.id] || 0)));
+                if (amt <= 0) { showToast("أدخل مبلغ خصم صحيحاً", "warn"); return; }
+                setDiscConfirm({ orderId: order.id, amount: amt });
+              }}
+                style={{ background: "rgba(230,81,0,.12)", color: "#e65100", border: "1.5px solid rgba(230,81,0,.3)", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+                ✓ تثبيت الخصم
+              </button>
+              {disc > 0 && (
+                <button onClick={() => { setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; }); setDiscInput(p => { const n = { ...p }; delete n[order.id]; return n; }); }}
+                  style={{ background: "transparent", color: "#c62828", border: "none", fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  ✕ إلغاء الخصم
+                </button>
+              )}
               <button onClick={() => openTron(order)}
                 style={{ background: tronAmt > 0 ? "rgba(106,27,154,.2)" : "rgba(106,27,154,.1)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.3)", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 💠 {tronAmt > 0 ? `ترون: ${tronAmt.toLocaleString()} ${CUR}` : "إضافة ترون"}
@@ -1078,7 +1096,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                     <span>قبل الخصم</span><span>{order.total.toLocaleString()} {CUR}</span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#2e7d32", marginBottom: 4 }}>
-                    <span>خصم {disc}%</span><span>-{discAmt.toLocaleString()} {CUR}</span>
+                    <span>خصم</span><span>-{discAmt.toLocaleString()} {CUR}</span>
                   </div>
                 </>
               )}
@@ -1301,6 +1319,25 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       )}
 
       {/* Complimentary Modal */}
+      {discConfirm && (
+        <div onClick={() => setDiscConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 330, textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🏷️</div>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>تثبيت الخصم</h3>
+            <p style={{ fontSize: 14, color: "var(--sub)", marginBottom: 4 }}>هل أنت متأكد من تثبيت خصم</p>
+            <p style={{ fontSize: 22, fontWeight: 900, color: "#e65100", marginBottom: 16 }}>{discConfirm.amount.toLocaleString()} {CUR}</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setDiscConfirm(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>لا</button>
+              <button onClick={() => {
+                setDiscounts(p => ({ ...p, [discConfirm.orderId]: discConfirm.amount }));
+                showToast(`✓ ثُبّت خصم ${discConfirm.amount.toLocaleString()} ${CUR}`, "success");
+                setDiscConfirm(null);
+              }} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#e65100", color: "#fff", fontWeight: 800 }}>نعم، ثبّت</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {workerModal && (
         <div onClick={() => setWorkerModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
