@@ -998,10 +998,6 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
     <div className="fade-in">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900 }}>🎁 الضيافة والاستهلاك الداخلي</h2>
-        <button onClick={() => setWModal(true)}
-          style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#5e35b1", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
-          ➕ مشروب عامل
-        </button>
       </div>
 
       {/* بطاقتا الإجمالي المنفصلتان */}
@@ -1100,7 +1096,6 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
         </div>
       )}
 
-      {wModal && <WorkerDrinkModal store={store} user={user} settings={settings} showToast={showToast} onClose={() => setWModal(false)} />}
     </div>
   );
 }
@@ -1202,6 +1197,8 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
   const [loading, setLoading] = useState(false);
   const [addModal, setAddModal] = useState(false); // v31.3: إضافة زبون يدوياً
   const [nc, setNc] = useState({ name: "", phone: "", notes: "" });
+  const [redeemOpen, setRedeemOpen] = useState(false); // v31.4: استبدال جزئي
+  const [redeemPts, setRedeemPts] = useState("");
 
   const saveNewCustomer = () => {
     const name = nc.name.trim();
@@ -1319,18 +1316,7 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
             const value = pointsToValue(points, settings);
             const redeem = () => {
               if (points <= 0) { showToast("لا توجد نقاط للاستبدال", "warn"); return; }
-              if (!window.confirm(`استبدال ${points} نقطة بقيمة ${value.toLocaleString()} ${CUR}؟`)) return;
-              store.setCustomers(p => p.map(c => c.id === selected.id
-                ? { ...c, loyaltyPoints: 0, loyaltyRedeemed: (c.loyaltyRedeemed || 0) + points }
-                : c));
-              store.setLoyaltyLog(p => [{
-                id: "loy_" + Date.now(), customerId: selected.id, customerName: selected.name,
-                type: "redeem", points: -points, orderId: null, orderNum: "",
-                note: `استبدال ${points} نقطة بـ ${value.toLocaleString()} ${CUR}`,
-                createdBy: "أدمن", createdAt: new Date().toISOString(),
-              }, ...p]);
-              setSelected(s => ({ ...s, loyaltyPoints: 0, loyaltyRedeemed: (s.loyaltyRedeemed || 0) + points }));
-              showToast(`🎁 تم استبدال ${points} نقطة — امنح الزبون خصم ${value.toLocaleString()} ${CUR}`);
+              setRedeemPts(String(points)); setRedeemOpen(true);
             };
             return (
               <div style={{ marginTop: 14, padding: "14px 16px", borderRadius: 12,
@@ -1383,6 +1369,43 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
             </div>
           </div>
         ))}
+      {redeemOpen && selected && (() => {
+        const maxPts = selected.loyaltyPoints || 0;
+        const pts = Math.min(Math.max(0, Math.floor(+redeemPts || 0)), maxPts);
+        const val = pointsToValue(pts, settings);
+        const doRedeem = () => {
+          if (pts <= 0) { showToast("أدخل عدد نقاط صحيحاً", "error"); return; }
+          store.setCustomers(p => p.map(c => c.id === selected.id
+            ? { ...c, loyaltyPoints: (c.loyaltyPoints || 0) - pts, loyaltyRedeemed: (c.loyaltyRedeemed || 0) + pts }
+            : c));
+          store.setLoyaltyLog(p => [{
+            id: "loy_" + Date.now(), customerId: selected.id, customerName: selected.name,
+            type: "redeem", points: -pts, orderId: null, orderNum: "",
+            note: `استبدال ${pts} نقطة بـ ${val.toLocaleString()} ${CUR}`,
+            createdBy: "أدمن", createdAt: new Date().toISOString(),
+          }, ...p]);
+          setSelected(s => ({ ...s, loyaltyPoints: (s.loyaltyPoints || 0) - pts, loyaltyRedeemed: (s.loyaltyRedeemed || 0) + pts }));
+          try { logActivity({ action: "استبدال نقاط", details: `${selected.name} — ${pts} نقطة (${val} ${CUR})`, userName: "أدمن", userRole: "admin", amount: val, branch: "main" }); } catch {}
+          showToast(`🎁 استُبدلت ${pts} نقطة — امنح الزبون خصم ${val.toLocaleString()} ${CUR}`);
+          setRedeemOpen(false);
+        };
+        return (
+          <div onClick={() => setRedeemOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 340 }}>
+              <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 4, textAlign: "center" }}>🎁 استبدال نقاط</h3>
+              <p style={{ fontSize: 12, color: "var(--sub)", textAlign: "center", marginBottom: 14 }}>{selected.name} — متاح {maxPts.toLocaleString()} نقطة</p>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>عدد النقاط المراد استبدالها</label>
+              <input className="input" type="number" min="1" max={maxPts} value={redeemPts}
+                onChange={e => setRedeemPts(e.target.value)} style={{ fontSize: 18, fontWeight: 900, textAlign: "center", marginBottom: 8 }} />
+              <div style={{ textAlign: "center", fontSize: 13, color: "#2e7d32", fontWeight: 800, marginBottom: 16 }}>= خصم {val.toLocaleString()} {CUR}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setRedeemOpen(false)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+                <button onClick={doRedeem} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#6a1b9a", color: "#fff", fontWeight: 800 }}>استبدال</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       </div>
     );
   }

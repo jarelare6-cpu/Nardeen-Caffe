@@ -161,7 +161,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
               ...ex,
               visits:(ex.visits||0)+1,
               totalOrders:(ex.totalOrders||0)+1,
-              totalSpent:(ex.totalSpent||0)+newOrder.total,
+              totalSpent:(ex.totalSpent||0), // v31.4: الإنفاق يُحتسب عند الدفع لا الإنشاء (دقّة الطبقة)
               lastVisit:new Date().toISOString(),
               orders:[newOrder.id,...(ex.orders||[])],
             };
@@ -172,7 +172,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
             name:customerName.trim(),
             visits:1,
             totalOrders:1,
-            totalSpent:newOrder.total,
+            totalSpent:0, // v31.4: يُحتسب عند الدفع
             lastVisit:new Date().toISOString(),
             createdAt:new Date().toISOString(),
             orders:[newOrder.id],
@@ -714,6 +714,8 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const [debtMergeName, setDebtMergeName] = useState("");
   const [compModal, setCompModal] = useState(null);
   const [compItems, setCompItems] = useState([]);
+  const [workerModal, setWorkerModal] = useState(null); // v31.4: مشروب عامل
+  const [workerName, setWorkerName] = useState("");
   const [tronModal, setTronModal] = useState(null);
   const [tronInput, setTronInput] = useState("");
   const [partialModal, setPartialModal] = useState(null);
@@ -796,15 +798,16 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       logActivity({ action: "مصروف تلقائي", details: `تكلفة طلب خاص (${customLines.length})`, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: exps.reduce((a, e) => a + e.amount, 0), branch: order.branch || "main" });
     }
 
-    if (settings?.loyaltyEnabled && order.customerName && order.customerName !== "زبون") {
+    if (order.customerName && order.customerName !== "زبون") {
       const cust = (store.customers || []).find(c => c.name === order.customerName);
       if (cust) {
+        const newSpent = (cust.totalSpent || 0) + finalTotal; // v31.4: الإنفاق يُحتسب عند الدفع
         const tier = getCustomerTier(cust.totalSpent || 0, settings);
-        const earned = Math.floor(calcEarnedPoints(finalTotal, settings) * tier.mult);
+        const earned = settings?.loyaltyEnabled ? Math.floor(calcEarnedPoints(finalTotal, settings) * tier.mult) : 0;
+        store.setCustomers(p => p.map(c => c.id === cust.id
+          ? { ...c, totalSpent: newSpent, loyaltyPoints: (c.loyaltyPoints || 0) + earned }
+          : c));
         if (earned > 0) {
-          store.setCustomers(p => p.map(c => c.id === cust.id
-            ? { ...c, loyaltyPoints: (c.loyaltyPoints || 0) + earned }
-            : c));
           store.setLoyaltyLog(p => [{
             id: "loy_" + Date.now(), customerId: cust.id, customerName: cust.name,
             type: "earn", points: earned, orderId: order.id, orderNum: order.orderNum,
@@ -899,6 +902,43 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     setCompItems(order.items.map((_, i) => ({ idx: i, qty: 0, selected: false })));
     setCompModal(order);
   };
+
+  // v31.4: إغلاق الطلب كمشروب عامل — يمرّ بالبار والكاشير كطلب عادي، ثم يُغلق بلا دفع
+  // ويُسجَّل في الضيافة تحت بند «مشروب عامل» بسعر التكلفة (صفر إيراد/ربح)، ويخصم المخزون مرة واحدة.
+  const openWorker = (order) => {
+    const staffNames = (store.users || []).filter(u => u.role !== "customer" && u.active !== false).map(u => u.name);
+    const def = staffNames.includes(order.customerName) ? order.customerName : (staffNames[0] || "");
+    setWorkerName(def);
+    setWorkerModal(order);
+  };
+  const confirmWorker = () => {
+    const order = workerModal;
+    if (!order) return;
+    if (!workerName) { showToast("اختر العامل", "warn"); return; }
+    const costTotal = (order.items || []).reduce((s, it) => {
+      const m = (store.menu || []).find(x => x.id === it.itemId);
+      return s + ((m?.cost || 0) * (it.qty || 0));
+    }, 0);
+    const updated = store.orders.map(o => o.id === order.id ? {
+      ...o, status: "complimentary", paymentType: "worker", isComplimentary: true,
+      paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
+      total: 0, originalTotal: o.originalTotal || order.total, stockDeducted: true,
+    } : o);
+    store.setOrders(() => updated);
+    deductOrderStock(store, order); // خصم مرة واحدة
+    store.setCompLog(p => [{
+      id: "wrk" + Date.now(), reason: "worker",
+      customerName: workerName, tableNum: order.table || "",
+      items: (order.items || []).map(it => `${it.itemName}${it.qty > 1 ? ` ×${it.qty}` : ""}`),
+      amount: costTotal, date: new Date().toISOString(),
+      createdBy: user.name, orderId: order.id, orderNum: order.orderNum,
+    }, ...p]);
+    autoFreeTable(order.table, updated);
+    logActivity({ action: "مشروب عامل", details: `${workerName} — طلب #${order.orderNum}`, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: costTotal, branch: order.branch || "main" });
+    showToast(`☕ سُجّل مشروب العامل — ${costTotal.toLocaleString()} ${CUR} تكلفة`, "success");
+    setWorkerModal(null);
+  };
+
 
   const confirmComp = (fullComp) => {
     const order = compModal;
@@ -1058,10 +1098,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 style={{ flex: 2, minWidth: 100, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 13, cursor: payingId ? "wait" : "pointer", opacity: payingId && payingId !== order.id ? .5 : 1 }}>
                 {payingId === order.id ? "⏳ جارٍ الدفع..." : "💵 دفع نقدي"}
               </button>
-              <button onClick={() => markPaid(order, "card")} disabled={!!payingId}
-                style={{ flex: 1, minWidth: 70, background: "#1565c0", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: payingId ? "wait" : "pointer", opacity: payingId ? .6 : 1 }}>
-                💳 بطاقة
-              </button>
               {tronAmt > 0 && (
                 <button onClick={() => markPaid(order, "tron")} disabled={!!payingId}
                   style={{ flex: 1, minWidth: 70, background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: payingId ? "wait" : "pointer", opacity: payingId ? .6 : 1 }}>
@@ -1075,6 +1111,10 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
               <button onClick={() => openComp(order)}
                 style={{ flex: 1, minWidth: 60, background: "rgba(0,137,123,.15)", color: "#00897b", border: "1.5px solid rgba(0,137,123,.25)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 🎁 ضيافة
+              </button>
+              <button onClick={() => openWorker(order)}
+                style={{ flex: 1, minWidth: 60, background: "rgba(121,85,72,.15)", color: "#795548", border: "1.5px solid rgba(121,85,72,.3)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                ☕ مشروب عامل
               </button>
               <button onClick={() => markDebt(order)}
                 style={{ flex: 1, minWidth: 60, background: "rgba(106,27,154,.15)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.25)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
@@ -1261,6 +1301,28 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       )}
 
       {/* Complimentary Modal */}
+      {workerModal && (
+        <div onClick={() => setWorkerModal(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", fontSize: 40, marginBottom: 8 }}>☕</div>
+            <h3 style={{ textAlign: "center", fontWeight: 900, fontSize: 16, marginBottom: 4 }}>مشروب عامل</h3>
+            <p style={{ textAlign: "center", fontSize: 12, color: "var(--sub)", marginBottom: 14 }}>
+              طلب #{workerModal.orderNum} — يُغلق بلا دفع ويُسجَّل بالتكلفة (لا إيراد)
+            </p>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>العامل</label>
+            <select value={workerName} onChange={e => setWorkerName(e.target.value)} className="input" style={{ marginBottom: 16 }}>
+              {(store.users || []).filter(u => u.role !== "customer" && u.active !== false).map(u => (
+                <option key={u.id} value={u.name}>{u.name} — {u.role}</option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setWorkerModal(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+              <button onClick={confirmWorker} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#795548", color: "#fff", fontWeight: 800 }}>☕ تأكيد</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {compModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div className="card fade-in" style={{ width: "100%", maxWidth: 420 }}>
