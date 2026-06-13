@@ -50,7 +50,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, weekStartThursday } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -977,7 +977,7 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
   const getStart = () => {
     const d = new Date();
     if (period === "today") { return businessDayStart(); }
-    if (period === "week") { d.setDate(d.getDate() - 7); return d; }
+    if (period === "week") { return weekStartThursday(); }
     if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
     return new Date(0);
   };
@@ -1420,7 +1420,7 @@ export function ReceiptsTab({ store, showToast, dm, settings }) {
   const getStart = () => {
     const d = new Date();
     if (period === "today") { return businessDayStart(); }
-    if (period === "week") { d.setDate(d.getDate() - 7); return d; }
+    if (period === "week") { return weekStartThursday(); }
     if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
     return new Date(0);
   };
@@ -1645,7 +1645,7 @@ export function ReportsTab({store,dm,settings}){
   const getStart=()=>{
     const d=new Date();
     if(period==="today"){return businessDayStart()}
-    if(period==="week"){d.setDate(d.getDate()-7);return d}
+    if(period==="week"){return weekStartThursday()}
     if(period==="month"){d.setDate(1);d.setHours(0,0,0,0);return d}
     return new Date(0);
   };

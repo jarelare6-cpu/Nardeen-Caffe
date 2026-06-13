@@ -14,6 +14,14 @@ export const businessDayStart = (ref = new Date()) => {
 export const businessDayLabel = (ref = new Date()) =>
   businessDayStart(ref).toLocaleDateString("ar-SY", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
+// v31.1: بداية الأسبوع = أحدث يوم خميس (الأسبوع من الخميس إلى الخميس) عند ساعة القطع
+export const weekStartThursday = (ref = new Date()) => {
+  const d = businessDayStart(ref);
+  const diff = (d.getDay() - 4 + 7) % 7; // 4 = الخميس
+  d.setDate(d.getDate() - diff);
+  return d;
+};
+
 
 // تحسينات v6:
 //  - تنبيه نفاد المخزون (checkStockAlerts)
