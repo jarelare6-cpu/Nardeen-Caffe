@@ -215,7 +215,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const [branch, setBranch] = useState("main");
   const [openingCash, setOpeningCash] = useState("");
-  const [shiftType, setShiftType] = useState("evening"); // v31.2: نوع الوردية (مسائي/ليلي/صباحي)
+  const [shiftType, setShiftType] = useState(""); // v31.6: بلا افتراضي — يُجبَر الكاشير على الاختيار
   const [confirmType, setConfirmType] = useState(false);  // تأكيد توقيت الوردية
   const [countedCash, setCountedCash] = useState("");
   const [notes, setNotes] = useState("");
@@ -273,7 +273,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   const closeShift = () => {
     if (!openShift || !summary) return;
     const counted = Math.max(0, +countedCash || 0);
-    const expectedCash = (openShift.openingCash || 0) + summary.cashSales - summary.expensesTotal;
+    const expectedCash = (openShift.openingCash || 0) + summary.cashSales + (summary.debtSettledCash || 0) - summary.expensesTotal; // v31.6: + نقد سداد الديون
     const difference = counted - expectedCash;
 
     const closed = {
@@ -302,7 +302,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       notifyTelegram(targets, "shift", buildShiftReport(closed, cafeName, CUR));
 
       // v31.2: ملخص اليوم يُرسل عند إغلاق الوردية المسائية فقط (لا بالساعة)
-      const isEveningClose = (openShift.shiftType || "evening") === "evening";
+      const isEveningClose = openShift.shiftType === "evening"; // v31.6: صريح فقط
       if (isEveningClose) {
         const today = businessDayStart();
         const inToday = (iso) => iso && new Date(iso) >= today;
@@ -320,7 +320,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           tron: sum(paidToday, o => o.tronAmount || 0),
           expenses: expToday,
           debts: sum((store.orders || []).filter(o => o.status === "debt" && inToday(o.createdAt))),
-          comp: sum(paidToday, o => o.compAmount || 0),
+          comp: (store.orders || []).filter(o => inToday(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6: كل طلبات اليوم
           profit: revenue - costToday - expToday,
           orders: paidToday.length,
           dayLabel: businessDayLabel(),
@@ -348,7 +348,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
               cash: sum(paidWk.filter(o => o.paymentType === "cash")),
               card: sum(paidWk.filter(o => o.paymentType === "card")),
               debts: sum((store.orders || []).filter(o => o.status === "debt" && inWeek(o.createdAt))),
-              comp: sum(paidWk, o => o.compAmount || 0),
+              comp: (store.orders || []).filter(o => inWeek(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6
               fromLabel: wkStart.toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
               toLabel: new Date().toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
             };
@@ -373,7 +373,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   };
 
   const expectedCash = openShift && summary
-    ? (openShift.openingCash || 0) + summary.cashSales - summary.expensesTotal
+    ? (openShift.openingCash || 0) + summary.cashSales + (summary.debtSettledCash || 0) - summary.expensesTotal
     : 0;
   const liveDiff = (+countedCash || 0) - expectedCash;
 
@@ -429,8 +429,8 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           <input className="input" type="number" min="0" value={openingCash}
             onChange={e => setOpeningCash(e.target.value)} placeholder="0"
             style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 14 }} />
-          <button onClick={() => setConfirmType(true)}
-            style={{ width: "100%", background: "#2e7d32", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+          <button onClick={() => { if (!shiftType) { showToast("اختر نوع الوردية أولاً", "warn"); return; } setConfirmType(true); }}
+            style={{ width: "100%", background: shiftType ? "#2e7d32" : "#999", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: shiftType ? "pointer" : "not-allowed" }}>
             🔓 فتح الوردية
           </button>
 

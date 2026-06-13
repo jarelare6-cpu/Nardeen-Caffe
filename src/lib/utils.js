@@ -477,6 +477,8 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const paid = shiftOrders.filter(o => o.status === "paid");
   const cashSales = paid.filter(o => o.paymentType === "cash").reduce((s, o) => s + (o.total || 0), 0);
   const cardSales = paid.filter(o => o.paymentType === "card").reduce((s, o) => s + (o.total || 0), 0);
+  // v31.6: نقد سداد الديون يدخل الصندوق فعلياً — يُحتسب في المتوقع
+  const debtSettledCash = paid.filter(o => o.paymentType === "debt_settled").reduce((s, o) => s + (o.total || 0), 0);
   const tronSales = paid.reduce((s, o) => s + (o.tronAmount || 0), 0);
   const debtTotal = shiftOrders.filter(o => o.status === "debt").reduce((s, o) => s + (o.total || 0), 0);
   const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
@@ -490,7 +492,7 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   }).reduce((s, e) => s + (e.amount || 0), 0);
 
   return {
-    cashSales, cardSales, tronSales, debtTotal, compTotal, totalSales,
+    cashSales, cardSales, tronSales, debtTotal, compTotal, totalSales, debtSettledCash,
     ordersCount: paid.length,
     expensesTotal: shiftExpenses,
   };

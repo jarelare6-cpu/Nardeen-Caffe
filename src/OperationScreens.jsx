@@ -708,6 +708,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const [discounts, setDiscounts] = useState({});      // الخصم المُثبَّت (مبلغ ثابت) المؤثّر في الإجمالي
   const [discInput, setDiscInput] = useState({});      // v31.5: المبلغ المُدخَل قبل التثبيت
   const [discConfirm, setDiscConfirm] = useState(null); // {orderId, amount} نافذة تأكيد التثبيت
+  const [cashConfirm, setCashConfirm] = useState(null); // v31.6: تأكيد الدفع النقدي
   const [tronAmounts, setTronAmounts] = useState({});
   const [debtModal, setDebtModal] = useState(null);
   const [debtNameInput, setDebtNameInput] = useState("");
@@ -1112,7 +1113,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
             </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-              <button onClick={() => markPaid(order, "cash")} disabled={!!payingId}
+              <button onClick={() => setCashConfirm(order)} disabled={!!payingId}
                 style={{ flex: 2, minWidth: 100, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 13, cursor: payingId ? "wait" : "pointer", opacity: payingId && payingId !== order.id ? .5 : 1 }}>
                 {payingId === order.id ? "⏳ جارٍ الدفع..." : "💵 دفع نقدي"}
               </button>
@@ -1319,6 +1320,27 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       )}
 
       {/* Complimentary Modal */}
+      {cashConfirm && (() => {
+        const d = discounts[cashConfirm.id] || 0;
+        const dAmt = Math.min(Math.max(0, d), cashConfirm.total);
+        const finalT = cashConfirm.total - dAmt;
+        return (
+          <div onClick={() => setCashConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 330, textAlign: "center" }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>💵</div>
+              <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>تأكيد الدفع النقدي</h3>
+              <p style={{ fontSize: 13, color: "var(--sub)", marginBottom: 4 }}>طلب #{cashConfirm.orderNum} — {cashConfirm.customerName || "زبون"}</p>
+              {dAmt > 0 && <p style={{ fontSize: 12, color: "#e65100", marginBottom: 4 }}>بعد خصم {dAmt.toLocaleString()} {CUR}</p>}
+              <p style={{ fontSize: 24, fontWeight: 900, color: "#2e7d32", marginBottom: 16 }}>{finalT.toLocaleString()} {CUR}</p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setCashConfirm(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>لا</button>
+                <button onClick={() => { const o = cashConfirm; setCashConfirm(null); markPaid(o, "cash"); }} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 800 }}>نعم، ادفع</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {discConfirm && (
         <div onClick={() => setDiscConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 330, textAlign: "center" }}>
@@ -1330,6 +1352,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
               <button onClick={() => setDiscConfirm(null)} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>لا</button>
               <button onClick={() => {
                 setDiscounts(p => ({ ...p, [discConfirm.orderId]: discConfirm.amount }));
+                try { const o = store.orders.find(x => x.id === discConfirm.orderId); logActivity({ action: "تثبيت خصم", details: `طلب #${o?.orderNum || ""} — ${discConfirm.amount.toLocaleString()} ${CUR}`, userName: user.name, userRole: user.role, orderNum: o?.orderNum || "", amount: discConfirm.amount, branch: "main" }); } catch {}
                 showToast(`✓ ثُبّت خصم ${discConfirm.amount.toLocaleString()} ${CUR}`, "success");
                 setDiscConfirm(null);
               }} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#e65100", color: "#fff", fontWeight: 800 }}>نعم، ثبّت</button>

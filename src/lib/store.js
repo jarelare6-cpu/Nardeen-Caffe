@@ -389,6 +389,7 @@ const sbWrite = {
     expenses_total: s.expensesTotal || 0,
     status: s.status || "open",
     notes: s.notes || "",
+    shift_type: s.shiftType || "", // v31.6: حفظ نوع الوردية
     created_at: s.createdAt || new Date().toISOString(),
   }),
 
@@ -546,6 +547,7 @@ const mapShift = s => ({
   expensesTotal: s.expenses_total ?? s.expensesTotal ?? 0,
   status:        s.status        ?? "open",
   notes:         s.notes         ?? "",
+  shiftType:     s.shift_type    ?? s.shiftType    ?? "", // v31.6
   createdAt:     s.created_at    ?? s.createdAt    ?? new Date().toISOString(),
 });
 const mapLoyalty = l => ({
