@@ -1200,6 +1200,23 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [addModal, setAddModal] = useState(false); // v31.3: إضافة زبون يدوياً
+  const [nc, setNc] = useState({ name: "", phone: "", notes: "" });
+
+  const saveNewCustomer = () => {
+    const name = nc.name.trim();
+    if (!name) { showToast("اسم الزبون مطلوب", "error"); return; }
+    if ((store.customers || []).some(c => c.name === name)) { showToast("زبون بنفس الاسم موجود", "error"); return; }
+    const cust = {
+      id: "cust_" + Date.now(), name, phone: nc.phone.trim(), notes: nc.notes.trim(),
+      visits: 0, totalOrders: 0, totalSpent: 0, loyaltyPoints: 0, loyaltyRedeemed: 0,
+      tier: "bronze", lastVisit: new Date().toISOString(), createdAt: new Date().toISOString(), orders: [],
+    };
+    store.setCustomers(p => [cust, ...p]);
+    try { logActivity({ action: "إضافة زبون", details: name, userName: "أدمن", userRole: "admin", branch: "main" }); } catch {}
+    showToast("✓ أُضيف الزبون");
+    setAddModal(false); setNc({ name: "", phone: "", notes: "" });
+  };
 
   // 🔵 تحميل الزبائن من Supabase عند فتح التبويب (يحافظ على كل الحقول)
   useEffect(() => {
@@ -1381,8 +1398,30 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
           </span>
         )}
       </div>
+      <button onClick={() => setAddModal(true)}
+        style={{ width: "100%", background: "#1565c0", color: "#fff", border: "none", borderRadius: 12, padding: 13, fontWeight: 800, fontSize: 14, cursor: "pointer", marginBottom: 12 }}>
+        ＋ إضافة زبون
+      </button>
       <input className="input" placeholder="🔍 ابحث عن زبون..." value={search}
         onChange={e => setSearch(e.target.value)} style={{ marginBottom: 14 }} />
+
+      {addModal && (
+        <div onClick={() => setAddModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 14 }}>➕ إضافة زبون جديد</h3>
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>الاسم *</label>
+            <input className="input" value={nc.name} onChange={e => setNc(f => ({ ...f, name: e.target.value }))} style={{ marginBottom: 12 }} />
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>الهاتف (اختياري)</label>
+            <input className="input" inputMode="tel" value={nc.phone} onChange={e => setNc(f => ({ ...f, phone: e.target.value }))} style={{ marginBottom: 12 }} />
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", display: "block", marginBottom: 4 }}>ملاحظات (اختياري)</label>
+            <textarea className="input" value={nc.notes} onChange={e => setNc(f => ({ ...f, notes: e.target.value }))} style={{ height: 56, resize: "none", marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => { setAddModal(false); setNc({ name: "", phone: "", notes: "" }); }} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700 }}>إلغاء</button>
+              <button onClick={saveNewCustomer} style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#1565c0", color: "#fff", fontWeight: 800 }}>حفظ</button>
+            </div>
+          </div>
+        </div>
+      )}
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🔄</div>
