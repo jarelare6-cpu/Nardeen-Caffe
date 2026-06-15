@@ -138,7 +138,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
           <div>
             <div style={{fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:6}}>
               {settings?.cafeName||"ناردين كافيه"}
-              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v31.6</span>
+              <span style={{fontSize:9,fontWeight:900,background:"#D4A017",color:"#1a0a00",borderRadius:6,padding:"1px 5px"}}>v{typeof __APP_VERSION__!=="undefined"?__APP_VERSION__:""}</span>
             </div>
             <div style={{fontSize:10,opacity:.8}}>{settings?.signature||"بإدارة يحيى داؤود"}</div>
           </div>

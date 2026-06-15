@@ -1,6 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { readFileSync } from "fs";
+
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url)));
 
 export default defineConfig({
   plugins: [
@@ -28,7 +31,7 @@ export default defineConfig({
     }),
   ],
   publicDir: "public",
-  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
+  define: { __BUILD_TIME__: JSON.stringify(new Date().toISOString()), __APP_VERSION__: JSON.stringify(pkg.version) },
   build: {
     outDir: "dist", assetsDir: "assets",
     // v23: تقسيم المكتبات لملفات منفصلة — تحميل أولي أسرع وكاش أفضل

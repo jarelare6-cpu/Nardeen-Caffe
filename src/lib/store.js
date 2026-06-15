@@ -278,6 +278,20 @@ export const rowOfCash = (e) => ({
   branch: e.branch || "main",
 });
 
+export const rowOfExpense = (e) => ({
+  id: e.id, label: e.label || e.description || "",
+  description: e.description || e.label || "",
+  amount: e.amount, category: e.category || "other",
+  date: e.date, by: e.by || e.createdBy || "",
+  created_by: e.createdBy || e.by || "",
+  notes: e.notes || "", is_secondary: e.isSecondary || false,
+  order_id: e.orderId || null, order_num: e.orderNum || "",
+  is_complimentary: e.isComplimentary || false,
+  shift_id: e.shiftId || null, // v4.7.0: ربط المصروف بالوردية
+});
+// fallback لقاعدة لم تُرقَّ بعد (لا عمود shift_id) — يمنع فشل الكتابة واختفاء البيانات
+const rowOfExpenseLegacy = (e) => { const { shift_id, ...r } = rowOfExpense(e); return r; };
+
 const sbWrite = {
   user: async (u) => {
     const pw = await hashPassword(u.password);
@@ -325,17 +339,7 @@ const sbWrite = {
     order_num: d.orderNum || "",
   }),
 
-  expense: (e) => sbUpsert("expenses", {
-    id: e.id, label: e.label || e.description || "",
-    description: e.description || e.label || "",
-    amount: e.amount, category: e.category || "other",
-    date: e.date, by: e.by || e.createdBy || "",
-    created_by: e.createdBy || e.by || "",
-    notes: e.notes || "", is_secondary: e.isSecondary || false,
-    order_id: e.orderId || null, order_num: e.orderNum || "",
-    is_complimentary: e.isComplimentary || false,
-    shift_id: e.shiftId || null, // v4.7.0: ربط المصروف بالوردية
-  }),
+  expense: (e) => sbUpsert("expenses", rowOfExpense(e), "id", rowOfExpenseLegacy(e)),
 
   cashLog: (e) => sbUpsert("cash_log", rowOfCash(e)),
 
@@ -717,7 +721,12 @@ export const useStore = () => {
       broadcast("nc_expenses", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(e => e.id));
-        next.filter(e => !prevIds.has(e.id)).forEach(e => sbWrite.expense(e));
+        const added = next.filter(e => !prevIds.has(e.id));
+        // v33.1: عبر الطابور الدائم + fallback => المصروف لا يُفقد عند فشل/انقطاع ولا تمحوه المزامنة
+        added.forEach(e => enqueueWrite("expenses", rowOfExpense(e), "id", rowOfExpenseLegacy(e)));
+        const nextIds = new Set(next.map(e => e.id));
+        p.filter(e => !nextIds.has(e.id)).forEach(e => enqueueDelete("expenses", e.id));
+        if (added.length) flushOutbox();
       }
       return next;
     });
@@ -1030,7 +1039,17 @@ export const useStore = () => {
       if (prof.data?.length) { setUsersRaw(prof.data);               }
       else { getHashedDefaultUsers().then(hu => hu.forEach(u => sbWrite.user(u))); }
       if (dbt.data)  { const d = dbt.data.map(mapDebt);     setDebtsRaw(d);    }
-      if (exp.data)  { const d = exp.data.map(mapExpense);   setExpensesRaw(d); }
+      if (exp.data)  {
+        const d = exp.data.map(mapExpense);
+        // v33.1: لا تمحُ مصروفًا محليًا لم يُرفع بعد (طابور)
+        setExpensesRaw(prev => {
+          const pend = outboxPendingIds("expenses");
+          if (!pend.size) return d;
+          const cloudIds = new Set(d.map(e => e.id));
+          const keepLocal = prev.filter(e => pend.has(e.id) && !cloudIds.has(e.id));
+          return [...keepLocal, ...d];
+        });
+      }
       if (cash.data) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  }
       if (rct.data)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); }
       if (tbl.data?.length)  { const d = tbl.data.map(mapTable);    setTablesRaw(d);   }
