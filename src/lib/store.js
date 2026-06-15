@@ -900,17 +900,37 @@ export const useStore = () => {
   // فقط تُحدَّث الحالة المحلية. أي فشل/مهلة يُرمى للواجهة لعرضه للمستخدم.
   // ══════════════════════════════════════════════════════════
   const payOrder = useCallback(async (paidOrder, cashEntry, { freeTable = false } = {}) => {
-    if (SUPABASE_READY) {
+    // v32: الدفع محليًا أولًا — فوري وidempotent، فلا تُفقد الفاتورة/النقد أبدًا عند انقطاع الشبكة.
+    const stamped = { ...paidOrder, updatedAt: new Date().toISOString() };
+    setOrdersRaw(p => { const n = p.map(o => o.id === paidOrder.id ? stamped : o); broadcast("nc_orders", n); return n; });
+    setCashLogRaw(p => p.some(c => c.id === cashEntry.id) ? p : (() => { const n = [cashEntry, ...p]; broadcast("nc_cash", n); return n; })());
+    if (!SUPABASE_READY) return { cloud: false };
+
+    const enqueuePay = () => {
+      const row = rowOfOrder(stamped);
+      const { stock_deducted, updated_at, ...legacy } = row; // fallback لقاعدة لم تُرقَّ
+      enqueueWrite("orders", row, "id", legacy);
+      enqueueWrite("cash_log", rowOfCash(cashEntry));
+      flushOutbox();
+    };
+
+    // دون اتصال: لا ننتظر مهلة 10ث — نُدرج مباشرةً في الطابور
+    if (typeof navigator !== "undefined" && navigator.onLine === false) { enqueuePay(); return { cloud: false }; }
+
+    try {
       await payOrderAtomic({
-        orderRow: rowOfOrder(paidOrder),
+        orderRow: rowOfOrder(stamped),
         cashRow: rowOfCash(cashEntry),
         freeTable,
         tableNum: paidOrder.table,
         branch: paidOrder.branch || "main",
       });
+      return { cloud: true };
+    } catch (e) {
+      // فشل/مهلة السحابة — الدفع محفوظ محليًا، نُدرج للمزامنة لاحقًا (idempotent، لا دفع مزدوج)
+      enqueuePay();
+      return { cloud: false };
     }
-    setOrdersRaw(p => { const n = p.map(o => o.id === paidOrder.id ? paidOrder : o); broadcast("nc_orders", n); return n; });
-    setCashLogRaw(p => { const n = [cashEntry, ...p]; broadcast("nc_cash", n); return n; });
   }, []);
 
   // ── BroadcastChannel ───────────────────────────────────────
@@ -995,9 +1015,9 @@ export const useStore = () => {
             const local = prevById.get(row.id);
             if (!local) return row;
             if (pending.has(row.id)) return local; // تغيير محلي لم يُرفع — أبقِه
-            const lt = local.updatedAt ? Date.parse(local.updatedAt) : 0;
-            const rt = row.updatedAt ? Date.parse(row.updatedAt) : 0;
-            return lt > rt ? local : row; // الأحدث يفوز
+            // v32: الخادم مرجعي ما لم يكن للطرفين طابع زمني والمحلي أحدث
+            if (local.updatedAt && row.updatedAt && Date.parse(local.updatedAt) > Date.parse(row.updatedAt)) return local;
+            return row;
           });
           // طلبات محلية معلّقة غير موجودة في السحابة بعد — لا تحذفها
           const cloudIds = new Set(d.map(o => o.id));
@@ -1068,9 +1088,8 @@ export const useStore = () => {
       const local = p.find(o => o.id === m.id);
       if (local) {
         if (outboxPendingIds("orders").has(m.id)) return p; // محلي لم يُرفع
-        const lt = local.updatedAt ? Date.parse(local.updatedAt) : 0;
-        const rt = m.updatedAt ? Date.parse(m.updatedAt) : 0;
-        if (lt > rt) return p;
+        // v32: لا نرفض تحديث الخادم إلا إذا كان لدى الطرفين طابع زمني والمحلي أحدث فعلًا
+        if (local.updatedAt && m.updatedAt && Date.parse(local.updatedAt) > Date.parse(m.updatedAt)) return p;
       }
       const n = [m, ...p.filter(o => o.id !== m.id)];
       broadcast("nc_orders", n); return n;

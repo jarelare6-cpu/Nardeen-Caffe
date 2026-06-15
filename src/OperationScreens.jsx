@@ -745,14 +745,10 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const markPaid = async (order, payType = "cash") => {
     // v22: حمايات الدفع — منع النقر المزدوج + رفض الدفع دون اتصال
     if (payingId) return;
-    // v4.7.0: حارس الدفع المزدوج عبر الأجهزة — إن لم يَعُد الطلب جاهزًا فقد دُفع من جهاز آخر
+    // v32: لم يَعُد الدفع يُجهض عند انقطاع الشبكة — يُحفظ محليًا ويُزامن لاحقًا (انظر payOrder)
     const cur = store.orders.find(o => o.id === order.id);
     if (cur && !["ready", "preparing", "pending"].includes(cur.status)) {
       showToast("⚠ الطلب لم يعد متاحًا للدفع (رُبّما عولج من جهاز آخر)", "warn");
-      return;
-    }
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error");
       return;
     }
     const disc = discounts[order.id] || 0;
@@ -781,14 +777,8 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     ).length === 0;
 
     setPayingId(order.id);
-    try {
-      // ✅ v22: السحابة أولاً (ذرّي) — إن فشلت لا يتغيّر شيء محلياً ولا يعلق التطبيق (مهلة 10ث)
-      await store.payOrder(paid, cashEntry, { freeTable: shouldFreeTable });
-    } catch (e) {
-      showToast("⚠ فشل الدفع: " + (e?.message || "خطأ في الاتصال — حاول مجدداً"), "error");
-      setPayingId(null);
-      return;
-    }
+    // v32: payOrder لم يَعُد يرمي — يحفظ محليًا دائمًا ويُعيد حالة المزامنة
+    const payRes = await store.payOrder(paid, cashEntry, { freeTable: shouldFreeTable });
 
     // v23: خصم المخزون عند الدفع (للطلبات الجديدة غير المخصومة)
     deductOrderStock(store, order);
@@ -840,7 +830,8 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
     try { await generateReceiptPDF(paid, settings, tronAmt); } catch (e) { console.warn("receipt pdf:", e); }
 
-    showToast(`💰 تم الدفع — ${order.customerName || "زبون"} #${order.orderNum}`);
+    if (payRes && payRes.cloud === false) showToast(`💾 تم الدفع محليًا (#${order.orderNum}) — سيُزامن تلقائيًا عند عودة الاتصال`, "warn");
+    else showToast(`💰 تم الدفع — ${order.customerName || "زبون"} #${order.orderNum}`);
     autoFreeTable(order.table, updated);
     setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setDiscInput(p => { const n = { ...p }; delete n[order.id]; return n; });
@@ -1180,7 +1171,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
               <button onClick={() => {
                 const paid = Math.min(Math.max(0, +partialInput || 0), partialModal.total);
                 if (paid <= 0) { showToast("أدخل مبلغاً صحيحاً", "error"); return; }
-                if (typeof navigator !== "undefined" && navigator.onLine === false) { showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error"); return; }
+                const offlineP = typeof navigator !== "undefined" && navigator.onLine === false; // v32: لا يحجب — يُحفظ محليًا
                 if (paid >= partialModal.total) { markPaid(partialModal, "cash"); setPartialModal(null); return; }
                 const remaining = partialModal.total - paid;
                 const openShiftP = (store.shifts || []).find(s => s.status === "open" && s.branch === (partialModal.branch || "main")); // v4.7.0
@@ -1199,7 +1190,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 saveReceiptRecord({ ...partialModal, total: paid, paymentType: "cash" }, settings, store, 0);
                 autoFreeTable(partialModal.table, updated);
                 logActivity({ action: "دفع جزئي", details: `دفع ${paid.toLocaleString()} — باقي ${remaining.toLocaleString()} دين`, userName: user.name, userRole: user.role, orderNum: partialModal.orderNum, amount: paid, branch: partialModal.branch || "main" });
-                showToast(`✓ دفع جزئي ${paid.toLocaleString()} ${CUR} — باقي ${remaining.toLocaleString()} ${CUR} دين`);
+                showToast(`✓ دفع جزئي ${paid.toLocaleString()} ${CUR} — باقي ${remaining.toLocaleString()} ${CUR} دين${offlineP ? " — سيُزامن لاحقًا" : ""}`);
                 setPartialModal(null);
               }} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#e65100", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
                 ✓ تأكيد الدفع الجزئي
