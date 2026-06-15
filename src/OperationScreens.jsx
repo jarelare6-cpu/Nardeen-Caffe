@@ -1438,13 +1438,37 @@ export function DebtsTab({store,user,showToast,dm,settings}){
   const [form,setForm]=useState({customerName:"",amount:"",notes:""});
   const [editDebtId,setEditDebtId]=useState(null); // v30: تعديل دين
   const [partialDebt,setPartialDebt]=useState(null); // v25.1: {id, remaining, amount} مودال استيفاء جزئي
+  const [selectedPerson,setSelectedPerson]=useState(null); // v4.8.0: ملف الشخص
+  const [search,setSearch]=useState(""); // v4.8.0: بحث بالاسم
 
   const debts=store.debts||[];
-  const filtered=debts.filter(d=>filter==="all"?true:filter==="settled"?d.settled:!d.settled)
-    .sort((a,b)=>new Date(b.date)-new Date(a.date));
 
   const totalUnsettled=debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
   const totalSettled=debts.filter(d=>d.settled).reduce((s,d)=>s+d.amount,0);
+
+  // v4.8.0: تجميع الديون حسب الشخص — ملف لكل شخص يجمع ديونه
+  const nameKey=(n)=>(n||"بدون اسم").trim();
+  const groups=useMemo(()=>{
+    const m=new Map();
+    (debts||[]).forEach(d=>{
+      const key=nameKey(d.customerName);
+      if(!m.has(key)) m.set(key,{name:key,items:[],remaining:0,original:0,unsettledCount:0,settledCount:0,lastDate:0});
+      const g=m.get(key);
+      g.items.push(d);
+      g.original+=d.amount||0;
+      if(d.settled) g.settledCount++; else { g.remaining+=d.remaining||0; g.unsettledCount++; }
+      const t=new Date(d.date).getTime(); if(t>g.lastDate) g.lastDate=t;
+    });
+    return Array.from(m.values());
+  },[debts]);
+
+  const visibleGroups=groups
+    .filter(g=>filter==="all"?true:filter==="settled"?(g.unsettledCount===0&&g.settledCount>0):g.unsettledCount>0)
+    .filter(g=>!search||g.name.includes(search.trim()))
+    .sort((a,b)=>(b.remaining-a.remaining)||(b.lastDate-a.lastDate));
+
+  const personGroup=selectedPerson?groups.find(g=>g.name===selectedPerson):null;
+  const personItems=personGroup?[...personGroup.items].sort((a,b)=>new Date(b.date)-new Date(a.date)):[];
 
   const settleDebt=(id,amount)=>{
     const debt=store.debts.find(d=>d.id===id);
@@ -1500,11 +1524,65 @@ export function DebtsTab({store,user,showToast,dm,settings}){
     setEditDebtId(d.id); setShowAdd(true);
   };
 
+  // v4.8.0: تسجيل دين جديد لنفس الشخص من داخل ملفه
+  const addForPerson=(name)=>{
+    setForm({customerName:name==="بدون اسم"?"":name,amount:"",notes:""});
+    setEditDebtId(null); setShowAdd(true);
+  };
+
+  // v4.8.0: بطاقة دين مفردة — تُستخدم داخل ملف الشخص (تفصيل الديون)
+  const renderDebtCard=(d)=>(
+    <div key={d.id} className="card" style={{borderRight:`4px solid ${d.settled?"#2e7d32":"#c62828"}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div>
+          <div style={{fontSize:12,color:"var(--sub)"}}>
+            {new Date(d.date).toLocaleDateString("ar-SY")} • طلب #{d.orderNum}
+          </div>
+        </div>
+        <span style={{background:d.settled?"rgba(46,125,50,.2)":"rgba(198,40,40,.2)",
+          color:d.settled?"#2e7d32":"#c62828",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>
+          {d.settled?"✅ مستوفى":"⏳ معلق"}
+        </span>
+      </div>
+      {!d.settled&&(
+        <button onClick={()=>startEditDebt(d)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",marginBottom:8}}>✏ تعديل</button>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
+        <span style={{color:"var(--sub)"}}>المبلغ الأصلي:</span>
+        <span style={{fontWeight:700}}>{d.amount.toLocaleString()} {CUR}</span>
+      </div>
+      {!d.settled&&d.remaining!==d.amount&&(
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
+          <span style={{color:"var(--sub)"}}>المتبقي:</span>
+          <span style={{fontWeight:900,color:"#c62828"}}>{d.remaining.toLocaleString()} {CUR}</span>
+        </div>
+      )}
+      {d.notes&&<div style={{fontSize:12,color:"var(--sub)",marginBottom:8}}>📝 {d.notes}</div>}
+      {!d.settled&&(
+        <div style={{display:"flex",gap:8,marginTop:8}}>
+          <button onClick={()=>settleDebt(d.id,d.remaining)}
+            style={{flex:1,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontWeight:700,fontSize:12}}>
+            ✅ استيفاء كامل ({d.remaining.toLocaleString()} {CUR})
+          </button>
+          <button onClick={()=>setPartialDebt({id:d.id,remaining:d.remaining,amount:""})}
+            style={{background:"rgba(46,125,50,.2)",color:"#2e7d32",border:"none",borderRadius:8,padding:"9px 12px",fontWeight:700,fontSize:12}}>
+            جزئي
+          </button>
+        </div>
+      )}
+      {d.settled&&d.settledAt&&(
+        <div style={{fontSize:11,color:"#2e7d32",marginTop:6}}>
+          ✅ استوفي بتاريخ {new Date(d.settledAt).toLocaleDateString("ar-SY")}
+        </div>
+      )}
+    </div>
+  );
+
   return(
     <div className="fade-in">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <h2 style={{fontSize:18,fontWeight:900}}>💳 سجل الديون</h2>
-        <button className="btn btn-red" onClick={()=>setShowAdd(true)}>+ دين يدوي</button>
+        <h2 style={{fontSize:18,fontWeight:900}}>💳 ملفّات الديون</h2>
+        <button className="btn btn-red" onClick={()=> selectedPerson ? addForPerson(selectedPerson) : setShowAdd(true)}>+ دين يدوي</button>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:18}}>
         <div className="card" style={{borderTop:"4px solid #c62828",textAlign:"center"}}>
@@ -1523,68 +1601,81 @@ export function DebtsTab({store,user,showToast,dm,settings}){
           <div style={{fontSize:18,fontWeight:900,color:"#f9a825"}}>{debts.filter(d=>!d.settled).length}</div>
         </div>
       </div>
-      <div style={{display:"flex",gap:8,marginBottom:14}}>
-        {[["unsettled","معلقة"],["settled","مستوفاة"],["all","الكل"]].map(([v,l])=>(
-          <button key={v} onClick={()=>setFilter(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
-            background:filter===v?"#c62828":"var(--card2)",color:filter===v?"#fff":"var(--sub)",fontWeight:700,fontSize:12}}>
-            {l}
+      {selectedPerson && personGroup ? (
+        /* ── ملف شخص واحد: يجمع ديونه ويعرض تفصيلها ── */
+        <>
+          <button onClick={()=>setSelectedPerson(null)}
+            style={{background:"var(--card2)",border:"none",borderRadius:10,padding:"8px 16px",fontWeight:700,fontSize:13,cursor:"pointer",marginBottom:16,fontFamily:"inherit"}}>
+            ← رجوع لكل الملفّات
           </button>
-        ))}
-      </div>
-      {!filtered.length?(
-        <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
-          <div style={{fontSize:48}}>💳</div><div style={{marginTop:10}}>لا توجد ديون</div>
-        </div>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          {filtered.map(d=>(
-            <div key={d.id} className="card" style={{borderRight:`4px solid ${d.settled?"#2e7d32":"#c62828"}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div>
-                  <div style={{fontWeight:900,fontSize:15}}>👤 {d.customerName}</div>
-                  <div style={{fontSize:11,color:"var(--sub)"}}>
-                    {new Date(d.date).toLocaleDateString("ar-SY")} • طلب #{d.orderNum}
-                  </div>
-                </div>
-                <span style={{background:d.settled?"rgba(46,125,50,.2)":"rgba(198,40,40,.2)",
-                  color:d.settled?"#2e7d32":"#c62828",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>
-                  {d.settled?"✅ مستوفى":"⏳ معلق"}
-                </span>
+          <div className="card" style={{marginBottom:16,borderTop:`4px solid ${personGroup.unsettledCount?"#c62828":"#2e7d32"}`}}>
+            <div style={{fontSize:36,textAlign:"center",marginBottom:6}}>👤</div>
+            <div style={{fontWeight:900,fontSize:18,textAlign:"center",marginBottom:12}}>{personGroup.name}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+              <div style={{textAlign:"center",background:"var(--card2)",borderRadius:10,padding:10}}>
+                <div style={{fontSize:11,color:"var(--sub)"}}>إجمالي المتبقي</div>
+                <div style={{fontWeight:900,fontSize:15,color:"#c62828"}}>{personGroup.remaining.toLocaleString()} {CUR}</div>
               </div>
-              {!d.settled&&(
-                <button onClick={()=>startEditDebt(d)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",marginBottom:8}}>✏ تعديل</button>
-              )}
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
-                <span style={{color:"var(--sub)"}}>المبلغ الأصلي:</span>
-                <span style={{fontWeight:700}}>{d.amount.toLocaleString()} {CUR}</span>
+              <div style={{textAlign:"center",background:"var(--card2)",borderRadius:10,padding:10}}>
+                <div style={{fontSize:11,color:"var(--sub)"}}>ديون معلقة</div>
+                <div style={{fontWeight:900,fontSize:18,color:"#f9a825"}}>{personGroup.unsettledCount}</div>
               </div>
-              {!d.settled&&d.remaining!==d.amount&&(
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,fontSize:14}}>
-                  <span style={{color:"var(--sub)"}}>المتبقي:</span>
-                  <span style={{fontWeight:900,color:"#c62828"}}>{d.remaining.toLocaleString()} {CUR}</span>
-                </div>
-              )}
-              {d.notes&&<div style={{fontSize:12,color:"var(--sub)",marginBottom:8}}>📝 {d.notes}</div>}
-              {!d.settled&&(
-                <div style={{display:"flex",gap:8,marginTop:8}}>
-                  <button onClick={()=>settleDebt(d.id,d.remaining)}
-                    style={{flex:1,background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,padding:"9px",fontWeight:700,fontSize:12}}>
-                    ✅ استيفاء كامل ({d.remaining.toLocaleString()} {CUR})
-                  </button>
-                  <button onClick={()=>setPartialDebt({id:d.id,remaining:d.remaining,amount:""})}
-                    style={{background:"rgba(46,125,50,.2)",color:"#2e7d32",border:"none",borderRadius:8,padding:"9px 12px",fontWeight:700,fontSize:12}}>
-                    جزئي
-                  </button>
-                </div>
-              )}
-              {d.settled&&d.settledAt&&(
-                <div style={{fontSize:11,color:"#2e7d32",marginTop:6}}>
-                  ✅ استوفي بتاريخ {new Date(d.settledAt).toLocaleDateString("ar-SY")}
-                </div>
-              )}
+              <div style={{textAlign:"center",background:"var(--card2)",borderRadius:10,padding:10}}>
+                <div style={{fontSize:11,color:"var(--sub)"}}>إجمالي الأصلي</div>
+                <div style={{fontWeight:700,fontSize:13,color:"var(--text)"}}>{personGroup.original.toLocaleString()} {CUR}</div>
+              </div>
             </div>
-          ))}
-        </div>
+            {personGroup.unsettledCount>1&&(
+              <button onClick={()=>{ personItems.filter(d=>!d.settled).forEach(d=>settleDebt(d.id,d.remaining)); }}
+                style={{width:"100%",marginTop:12,background:"#2e7d32",color:"#fff",border:"none",borderRadius:10,padding:"11px",fontWeight:900,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                ✅ استيفاء كل المتبقي ({personGroup.remaining.toLocaleString()} {CUR})
+              </button>
+            )}
+          </div>
+          <div style={{fontSize:13,fontWeight:800,color:"var(--sub)",marginBottom:10}}>📋 تفصيل الديون ({personItems.length})</div>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            {personItems.map(renderDebtCard)}
+          </div>
+        </>
+      ) : (
+        /* ── قائمة الملفّات: بطاقة لكل شخص ── */
+        <>
+          <input className="input" placeholder="🔍 بحث باسم الشخص" value={search}
+            onChange={e=>setSearch(e.target.value)} style={{marginBottom:12}}/>
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
+            {[["unsettled","معلقة"],["settled","مستوفاة"],["all","الكل"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setFilter(v)} style={{padding:"7px 16px",borderRadius:20,border:"none",
+                background:filter===v?"#c62828":"var(--card2)",color:filter===v?"#fff":"var(--sub)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                {l}
+              </button>
+            ))}
+          </div>
+          {!visibleGroups.length?(
+            <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
+              <div style={{fontSize:48}}>💳</div><div style={{marginTop:10}}>لا توجد ملفّات ديون</div>
+            </div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {visibleGroups.map(g=>(
+                <button key={g.name} onClick={()=>setSelectedPerson(g.name)} className="card"
+                  style={{textAlign:"right",border:"none",borderRight:`4px solid ${g.unsettledCount?"#c62828":"#2e7d32"}`,cursor:"pointer",width:"100%",fontFamily:"inherit",display:"block"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontWeight:900,fontSize:15}}>👤 {g.name}</div>
+                      <div style={{fontSize:11,color:"var(--sub)",marginTop:3}}>
+                        {g.unsettledCount?`${g.unsettledCount} دين معلق`:"كل الديون مستوفاة"}{g.settledCount?` • ${g.settledCount} مستوفى`:""} • آخر دين {new Date(g.lastDate).toLocaleDateString("ar-SY")}
+                      </div>
+                    </div>
+                    <div style={{textAlign:"left",whiteSpace:"nowrap",paddingRight:10}}>
+                      <div style={{fontWeight:900,fontSize:16,color:g.unsettledCount?"#c62828":"#2e7d32"}}>{g.remaining.toLocaleString()} {CUR}</div>
+                      <div style={{fontSize:11,color:"var(--sub)"}}>المتبقي ›</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
       {partialDebt&&(
         <div onClick={e=>{if(e.target===e.currentTarget)setPartialDebt(null);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
