@@ -35,7 +35,7 @@ export const generateReceiptPDF = async (order, settings, tronAmount = 0) => {
 
 export const saveReceiptRecord = (order, settings, store, tronAmount = 0) => {
   const receipt = {
-    id: "rcpt_" + order.id + "_" + Date.now(),
+    id: "rcpt_" + order.id, // v33: حتمي => دفع/فاتورة مزدوجة لا تتكرر
     orderId: order.id, orderNum: order.orderNum || order.order_num || "",
     customerName: order.customerName || order.customer_name || "",
     tableNum: String(order.table || order.table_num || ""),

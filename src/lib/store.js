@@ -1015,8 +1015,9 @@ export const useStore = () => {
             const local = prevById.get(row.id);
             if (!local) return row;
             if (pending.has(row.id)) return local; // تغيير محلي لم يُرفع — أبقِه
-            // v32: الخادم مرجعي ما لم يكن للطرفين طابع زمني والمحلي أحدث
-            if (local.updatedAt && row.updatedAt && Date.parse(local.updatedAt) > Date.parse(row.updatedAt)) return local;
+            // v33: الحالة النهائية من الخادم مرجعية؛ غير النهائية: المحلي الأحدث يفوز
+            const TERM = ["paid", "debt", "complimentary", "cancelled"];
+            if (!TERM.includes(row.status) && local.updatedAt && row.updatedAt && Date.parse(local.updatedAt) > Date.parse(row.updatedAt)) return local;
             return row;
           });
           // طلبات محلية معلّقة غير موجودة في السحابة بعد — لا تحذفها
@@ -1088,8 +1089,9 @@ export const useStore = () => {
       const local = p.find(o => o.id === m.id);
       if (local) {
         if (outboxPendingIds("orders").has(m.id)) return p; // محلي لم يُرفع
-        // v32: لا نرفض تحديث الخادم إلا إذا كان لدى الطرفين طابع زمني والمحلي أحدث فعلًا
-        if (local.updatedAt && m.updatedAt && Date.parse(local.updatedAt) > Date.parse(m.updatedAt)) return p;
+        // v33: الحالة النهائية من الخادم مرجعية (تقارب الأجهزة)؛ غير النهائية: الأحدث يفوز
+        const TERM = ["paid", "debt", "complimentary", "cancelled"];
+        if (!TERM.includes(m.status) && local.updatedAt && m.updatedAt && Date.parse(local.updatedAt) > Date.parse(m.updatedAt)) return p;
       }
       const n = [m, ...p.filter(o => o.id !== m.id)];
       broadcast("nc_orders", n); return n;
