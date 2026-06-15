@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS orders (
   table_num          TEXT DEFAULT '',
   items              JSONB DEFAULT '[]',
   total              NUMERIC(12,2) DEFAULT 0,
-  discount           NUMERIC(6,2)  DEFAULT 0,
+  discount           NUMERIC(12,2) DEFAULT 0,
   status             TEXT DEFAULT 'pending', -- pending|preparing|ready|paid|cancelled|debt|complimentary
   payment_type       TEXT DEFAULT 'cash',    -- cash|card|tron|debt
   payment_status     TEXT DEFAULT 'pending',
@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS orders (
   branch             TEXT DEFAULT 'main',    -- main | outdoor
   shift_id           TEXT,
   preparing_at       TIMESTAMPTZ,
-  ready_at           TIMESTAMPTZ
+  ready_at           TIMESTAMPTZ,
+  updated_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ── الطاولات ───────────────────────────────────────────────────────────────
@@ -115,7 +116,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   is_secondary     BOOLEAN DEFAULT FALSE,
   order_id         TEXT,
   order_num        TEXT DEFAULT '',
-  is_complimentary BOOLEAN DEFAULT FALSE
+  is_complimentary BOOLEAN DEFAULT FALSE,
+  shift_id         TEXT
 );
 
 -- ── سجل النقد ──────────────────────────────────────────────────────────────
@@ -140,7 +142,7 @@ CREATE TABLE IF NOT EXISTS receipts (
   table_num     TEXT DEFAULT '',
   items         JSONB DEFAULT '[]',
   total         NUMERIC(12,2) DEFAULT 0,
-  discount      NUMERIC(6,2)  DEFAULT 0,
+  discount      NUMERIC(12,2) DEFAULT 0,
   payment_type  TEXT DEFAULT 'cash',
   notes         TEXT DEFAULT '',
   created_by    TEXT DEFAULT '',
@@ -252,6 +254,17 @@ ALTER TABLE orders     ADD COLUMN IF NOT EXISTS tron_amount      NUMERIC(12,2) D
 ALTER TABLE orders     ADD COLUMN IF NOT EXISTS shift_id         TEXT;
 ALTER TABLE orders     ADD COLUMN IF NOT EXISTS preparing_at     TIMESTAMPTZ;
 ALTER TABLE orders     ADD COLUMN IF NOT EXISTS ready_at         TIMESTAMPTZ;
+
+-- v4.7.0 ───────────────────────────────────────────────────────────────────
+-- إصلاح دقّة الخصم (كان NUMERIC(6,2) سقفه 9999.99 → يُفشل أي خصم ≥ 10000 ل.س)
+ALTER TABLE orders     ALTER COLUMN discount TYPE NUMERIC(12,2);
+ALTER TABLE receipts   ALTER COLUMN discount TYPE NUMERIC(12,2);
+-- طابع زمني لحلّ تعارض المزامنة بين الأجهزة
+ALTER TABLE orders     ADD COLUMN IF NOT EXISTS updated_at       TIMESTAMPTZ DEFAULT NOW();
+-- ربط المصروف بالوردية لدقّة تقرير الإقفال
+ALTER TABLE expenses   ADD COLUMN IF NOT EXISTS shift_id         TEXT;
+-- ────────────────────────────────────────────────────────────────────────────
+
 
 ALTER TABLE customers  ADD COLUMN IF NOT EXISTS loyalty_points   NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE customers  ADD COLUMN IF NOT EXISTS loyalty_redeemed NUMERIC(12,2) DEFAULT 0;

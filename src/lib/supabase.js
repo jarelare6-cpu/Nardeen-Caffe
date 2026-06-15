@@ -107,6 +107,91 @@ export const sbDelete = async (table, id) => {
   }
 };
 
+// ══════════════════════════════════════════════════════════════
+// v4.7.0 — طابور الإرسال (Outbox) الدائم
+// ──────────────────────────────────────────────────────────────
+// أي كتابة تفشل (offline / مهلة / خطأ لحظي) تُحفظ في localStorage وتُعاد
+// محاولتها عند عودة الاتصال أو فتح التطبيق — بدل أن تُفقد ثم يمحوها pullAll
+// (كان هذا الجذر العام وراء "الطلب يُغلق ثم يعود للظهور").
+// كما يوفّر outboxPendingIds لحماية الحالة المحلية من الكتابة فوقها بسحب قديم.
+// ══════════════════════════════════════════════════════════════
+const OUTBOX_KEY = "nc_outbox";
+const OUTBOX_MAX_TRIES = 8;
+let flushing = false;
+
+const loadOutbox = () => {
+  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); }
+  catch { return []; }
+};
+const saveOutbox = (q) => {
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(q)); } catch {}
+};
+
+// إضافة عملية للطابور — تُلغي عمليةً سابقة على نفس (الجدول+المعرّف) لتبقى الأحدث فقط
+const outboxPush = (entry) => {
+  const q = loadOutbox().filter(e => !(e.table === entry.table && e.id === entry.id));
+  q.push({ ...entry, ts: Date.now(), tries: 0 });
+  saveOutbox(q);
+};
+
+export const enqueueWrite = (table, row, conflict = "id", fallbackRow = null) =>
+  outboxPush({ op: "upsert", table, id: row?.id, row, conflict, fallbackRow });
+
+export const enqueueDelete = (table, id) =>
+  outboxPush({ op: "delete", table, id });
+
+// معرّفات الصفوف المعلّقة في الطابور لجدول معيّن — تُستخدم لحماية الحالة المحلية
+export const outboxPendingIds = (table) => {
+  const s = new Set();
+  loadOutbox().forEach(e => { if (e.table === table && e.id != null) s.add(e.id); });
+  return s;
+};
+
+export const outboxCount = () => loadOutbox().length;
+
+// محاولة تفريغ الطابور — تُستدعى عند التحميل/عودة الاتصال/فتح التطبيق
+export const flushOutbox = async () => {
+  if (!supabase || flushing) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  flushing = true;
+  try {
+    let q = loadOutbox();
+    const keep = [];
+    for (const e of q) {
+      let err = null;
+      try {
+        if (e.op === "delete") {
+          const r = await withNet(`flush:del:${e.table}`, () => supabase.from(e.table).delete().eq("id", e.id));
+          err = r.error || null;
+        } else {
+          let r = await withNet(`flush:up:${e.table}`, () => supabase.from(e.table).upsert(e.row, { onConflict: e.conflict || "id" }));
+          if (r.error && e.fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(r.error.message || "")) {
+            r = await withNet(`flush:up:${e.table}`, () => supabase.from(e.table).upsert(e.fallbackRow, { onConflict: e.conflict || "id" }));
+          }
+          err = r.error || null;
+        }
+      } catch (ex) { err = ex; }
+
+      if (err) {
+        const tries = (e.tries || 0) + 1;
+        if (tries >= OUTBOX_MAX_TRIES) {
+          reportSyncError("outbox-drop", e.table, String(err?.message || err)); // عنصر سامّ — يُسقط بعد محاولات
+        } else {
+          keep.push({ ...e, tries });
+        }
+      }
+    }
+    saveOutbox(keep);
+    try { window.dispatchEvent(new CustomEvent("nc-outbox", { detail: { pending: keep.length } })); } catch {}
+  } finally {
+    flushing = false;
+  }
+};
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => { flushOutbox(); });
+}
+
 export const sbDeleteAll = async (table) => {
   if (!supabase) return;
   const { error } = await supabase.from(table).delete().neq("id", "__never__");
@@ -319,7 +404,7 @@ export const payOrderAtomic = async ({ orderRow, cashRow, freeTable, tableNum, b
   // 2) fallback: تحديث الطلب أولاً (الحرِج) ثم النقد ثم الطاولة
   let o = await withNet("pay:order", () => supabase.from("orders").upsert(orderRow, { onConflict: "id" }));
   if (o.error && /(column|schema|does not exist|could not find|cache)/i.test(o.error.message || "")) {
-    const { stock_deducted, ...legacyRow } = orderRow;
+    const { stock_deducted, updated_at, ...legacyRow } = orderRow; // v4.7.0
     o = await withNet("pay:order", () => supabase.from("orders").upsert(legacyRow, { onConflict: "id" }));
   }
   if (o.error) throw new Error("فشل تحديث الطلب: " + o.error.message);

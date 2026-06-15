@@ -19,6 +19,7 @@ import {
   subscribeSettings, subscribePermOverrides,
   subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll, payOrderAtomic,
+  enqueueWrite, enqueueDelete, flushOutbox, outboxPendingIds,
 } from "./supabase";
 
 // ── v22: أونلاين فقط — لا تخزين محلي للبيانات. السحابة هي مصدر الحقيقة الوحيد. ──
@@ -237,7 +238,13 @@ export const getNextInvoiceNum = async (orders) => {
       if (!isNaN(n) && n > max) max = n;
     }
   });
-  return `${prefix}${String(max + 1).padStart(3, "0")}`;
+  // v4.7.0: لاحقة جهاز عند الارتداد المحلي (offline) لمنع تطابق الأرقام بين جهازين
+  let devSuffix = "";
+  try {
+    const id = (typeof localStorage !== "undefined" && localStorage.getItem("nc_dev_id")) || "";
+    if (id) devSuffix = id.slice(-2).toUpperCase();
+  } catch {}
+  return `${prefix}${String(max + 1).padStart(3, "0")}${devSuffix ? "-" + devSuffix : ""}`;
 };
 
 export const rowOfOrder = (o) => ({
@@ -262,6 +269,7 @@ export const rowOfOrder = (o) => ({
   preparing_at: o.preparingAt || null,
   ready_at: o.readyAt || null,
   stock_deducted: o.stockDeducted !== false, // v23
+  updated_at: o.updatedAt || new Date().toISOString(), // v4.7.0: حلّ تعارض المزامنة
 });
 export const rowOfCash = (e) => ({
   id: e.id, order_id: e.orderId || null,
@@ -326,6 +334,7 @@ const sbWrite = {
     notes: e.notes || "", is_secondary: e.isSecondary || false,
     order_id: e.orderId || null, order_num: e.orderNum || "",
     is_complimentary: e.isComplimentary || false,
+    shift_id: e.shiftId || null, // v4.7.0: ربط المصروف بالوردية
   }),
 
   cashLog: (e) => sbUpsert("cash_log", rowOfCash(e)),
@@ -431,6 +440,7 @@ const mapOrder = o => ({
   preparingAt:  o.preparing_at  ?? o.preparingAt  ?? null,
   readyAt:      o.ready_at       ?? o.readyAt      ?? null,
   stockDeducted: (o.stock_deducted ?? o.stockDeducted) !== false, // v23: القديم = true
+  updatedAt:    o.updated_at    ?? o.updatedAt    ?? null, // v4.7.0
 });
 const mapMenu = m => ({
   ...m,
@@ -462,6 +472,7 @@ const mapExpense = e => ({
   orderId:      e.order_id ?? e.orderId ?? null,
   orderNum:     e.order_num ?? e.orderNum ?? "",
   isComplimentary: e.is_complimentary ?? e.isComplimentary ?? false,
+  shiftId:      e.shift_id ?? e.shiftId ?? null, // v4.7.0
 });
 // v25: تعقيم نصوص الطاولة — يزيل المحارف الفاسدة (U+FFFD وأشباهها) ويقصّ الطول.
 // حماية دائمة: حتى لو تلفت البيانات في القاعدة مستقبلاً، لا تصل للواجهة أبداً.
@@ -637,9 +648,15 @@ export const useStore = () => {
                  (old.tronAmount || 0) !== (o.tronAmount || 0) ||
                  JSON.stringify(old.items) !== JSON.stringify(o.items);
         });
-        changed.forEach(o => sbWrite.order(o));
+        // v4.7.0: عبر الطابور الدائم — يضمن إعادة المحاولة ولا يُفقد التغيير عند الفشل
+        changed.forEach(o => {
+          const row = rowOfOrder(o);
+          const { stock_deducted, updated_at, ...legacy } = row; // fallback لقاعدة لم تُرقَّ
+          enqueueWrite("orders", row, "id", legacy);
+        });
         const nextIds = new Set(next.map(o => o.id));
-        p.filter(o => !nextIds.has(o.id)).forEach(o => sbWrite.deleteOrder(o.id));
+        p.filter(o => !nextIds.has(o.id)).forEach(o => enqueueDelete("orders", o.id));
+        if (changed.length || next.length !== p.length) flushOutbox();
       }
       return next;
     });
@@ -968,7 +985,26 @@ export const useStore = () => {
       const [ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy] =
         results.map(r => r.status === "fulfilled" ? r.value : { data: null, error: r.reason });
 
-      if (ord.data)  { const d = ord.data.map(mapOrder);    setOrdersRaw(d);   }
+      if (ord.data)  {
+        const d = ord.data.map(mapOrder);
+        // v4.7.0: لا تكتب فوق طلب لم تُرفَع تعديلاته بعد (طابور) أو تعديله المحلي أحدث
+        setOrdersRaw(prev => {
+          const pending = outboxPendingIds("orders");
+          const prevById = new Map(prev.map(o => [o.id, o]));
+          const merged = d.map(row => {
+            const local = prevById.get(row.id);
+            if (!local) return row;
+            if (pending.has(row.id)) return local; // تغيير محلي لم يُرفع — أبقِه
+            const lt = local.updatedAt ? Date.parse(local.updatedAt) : 0;
+            const rt = row.updatedAt ? Date.parse(row.updatedAt) : 0;
+            return lt > rt ? local : row; // الأحدث يفوز
+          });
+          // طلبات محلية معلّقة غير موجودة في السحابة بعد — لا تحذفها
+          const cloudIds = new Set(d.map(o => o.id));
+          prev.forEach(o => { if (!cloudIds.has(o.id) && pending.has(o.id)) merged.push(o); });
+          return merged;
+        });
+      }
       if (men.data?.length)  { const d = men.data.map(mapMenu);     setMenuRaw(d);     }
       if (prof.data?.length) { setUsersRaw(prof.data);               }
       else { getHashedDefaultUsers().then(hu => hu.forEach(u => sbWrite.user(u))); }
@@ -998,7 +1034,7 @@ export const useStore = () => {
       if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);}
 
       setCloudReady(true);
-    }).finally(() => setSyncing(false));
+    }).finally(() => { setSyncing(false); flushOutbox(); }); // v4.7.0: فرّغ الطابور بعد السحب
   }, []);
 
   useEffect(() => { pullAll(); }, [pullAll]);
@@ -1011,6 +1047,7 @@ export const useStore = () => {
     if (!SUPABASE_READY) return;
     const onReconnect = async () => {
       lastPullRef.current = Date.now();
+      await flushOutbox(); // v4.7.0: ادفع المؤجّل أولًا
       await pullAll();
     };
     const onVis = () => {
@@ -1026,10 +1063,22 @@ export const useStore = () => {
 
   useEffect(() => {
     if (!SUPABASE_READY) return;
+    // v4.7.0: تجاهل الحدث إن كان الطلب معلّقًا في الطابور أو نسخته المحلية أحدث
+    const applyRemote = (m) => setOrdersRaw(p => {
+      const local = p.find(o => o.id === m.id);
+      if (local) {
+        if (outboxPendingIds("orders").has(m.id)) return p; // محلي لم يُرفع
+        const lt = local.updatedAt ? Date.parse(local.updatedAt) : 0;
+        const rt = m.updatedAt ? Date.parse(m.updatedAt) : 0;
+        if (lt > rt) return p;
+      }
+      const n = [m, ...p.filter(o => o.id !== m.id)];
+      broadcast("nc_orders", n); return n;
+    });
     return subscribeOrders(
-      (r) => setOrdersRaw(p => { const m = mapOrder(r); const n = [m, ...p.filter(o => o.id !== m.id)]; broadcast("nc_orders", n); return n; }),
-      (r) => setOrdersRaw(p => { const m = mapOrder(r); const n = p.map(o => o.id === m.id ? m : o);    broadcast("nc_orders", n); return n; }),
-      (r) => setOrdersRaw(p => { const n = p.filter(o => o.id !== r.id);                                broadcast("nc_orders", n); return n; }),
+      (r) => applyRemote(mapOrder(r)),
+      (r) => applyRemote(mapOrder(r)),
+      (r) => setOrdersRaw(p => { const n = p.filter(o => o.id !== r.id); broadcast("nc_orders", n); return n; }),
     );
   }, []);
 

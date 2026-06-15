@@ -745,6 +745,12 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const markPaid = async (order, payType = "cash") => {
     // v22: حمايات الدفع — منع النقر المزدوج + رفض الدفع دون اتصال
     if (payingId) return;
+    // v4.7.0: حارس الدفع المزدوج عبر الأجهزة — إن لم يَعُد الطلب جاهزًا فقد دُفع من جهاز آخر
+    const cur = store.orders.find(o => o.id === order.id);
+    if (cur && !["ready", "preparing", "pending"].includes(cur.status)) {
+      showToast("⚠ الطلب لم يعد متاحًا للدفع (رُبّما عولج من جهاز آخر)", "warn");
+      return;
+    }
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error");
       return;
@@ -763,7 +769,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       stockDeducted: true, // v23: يُخصم الآن عند الدفع
     };
     const cashEntry = {
-      id: Date.now().toString(), orderId: order.id, orderNum: order.orderNum,
+      id: "cash_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7), orderId: order.id, orderNum: order.orderNum,
       amount: finalTotal, at: new Date().toISOString(), by: user.name,
       type: payType === "tron" ? "tron" : "sale",
       branch: order.branch || "main", shiftId: openShift?.id || null,
@@ -796,6 +802,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         amount: (it.customCost || 0) * (it.qty || 1), category: "purchases",
         date: new Date().toISOString(), by: user.name, createdBy: user.name,
         orderId: order.id, orderNum: order.orderNum, isSecondary: false,
+        shiftId: openShift?.id || order.shiftId || null, // v4.7.0
       }));
       store.setExpenses(p => [...exps, ...p]);
       logActivity({ action: "مصروف تلقائي", details: `تكلفة طلب خاص (${customLines.length})`, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: exps.reduce((a, e) => a + e.amount, 0), branch: order.branch || "main" });
@@ -857,8 +864,9 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       return;
     }
     const order = debtModal;
+    const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main")); // v4.7.0
     const updated = store.orders.map(o =>
-      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse, stockDeducted: true } : o
+      o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse, stockDeducted: true, shiftId: openShift?.id || o.shiftId || null } : o
     );
     store.setOrders(() => updated);
     deductOrderStock(store, order); // v23: خصم عند تحويل الطلب لدين
@@ -923,10 +931,14 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       const m = (store.menu || []).find(x => x.id === it.itemId);
       return s + ((m?.cost || 0) * (it.qty || 0));
     }, 0);
+    const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main")); // v4.7.0
     const updated = store.orders.map(o => o.id === order.id ? {
       ...o, status: "complimentary", paymentType: "worker", isComplimentary: true,
       paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
       total: 0, originalTotal: o.originalTotal || order.total, stockDeducted: true,
+      workerName,                       // v4.7.0: حفظ اسم العامل على الطلب
+      compAmount: (o.compAmount || 0) + costTotal, // v4.7.0: تظهر تكلفته في تقارير الضيافة
+      shiftId: openShift?.id || o.shiftId || null, // v4.7.0
     } : o);
     store.setOrders(() => updated);
     deductOrderStock(store, order); // خصم مرة واحدة
@@ -946,6 +958,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
 
   const confirmComp = (fullComp) => {
     const order = compModal;
+    const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main")); // v4.7.0
     let compAmt = 0;
     let updatedItems = [...order.items];
     if (fullComp) {
@@ -970,6 +983,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       isComplimentary: fullyComp,
       paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
       stockDeducted: fullyComp ? true : (o.stockDeducted !== false), // v23
+      shiftId: openShift?.id || o.shiftId || null, // v4.7.0
     } : o);
     store.setOrders(() => updated);
     if (fullyComp) deductOrderStock(store, order); // v23: الضيافة الكاملة = تسليم
@@ -1169,16 +1183,18 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 if (typeof navigator !== "undefined" && navigator.onLine === false) { showToast("⚠ لا يوجد اتصال بالإنترنت — لا يمكن إتمام الدفع", "error"); return; }
                 if (paid >= partialModal.total) { markPaid(partialModal, "cash"); setPartialModal(null); return; }
                 const remaining = partialModal.total - paid;
+                const openShiftP = (store.shifts || []).find(s => s.status === "open" && s.branch === (partialModal.branch || "main")); // v4.7.0
                 const updated = store.orders.map(o => o.id === partialModal.id ? {
                   ...o, status: "paid", paymentStatus: "partial",
                   paymentType: "cash", paidAt: new Date().toISOString(),
                   paidBy: user.id, paidByName: user.name,
                   partialPaid: paid, total: paid,
                   stockDeducted: true, // v23
+                  shiftId: openShiftP?.id || o.shiftId || null, // v4.7.0
                 } : o);
                 store.setOrders(() => updated);
                 deductOrderStock(store, partialModal); // v23: خصم عند الدفع الجزئي
-                store.setCashLog(p => [{ id: Date.now().toString(), orderId: partialModal.id, orderNum: partialModal.orderNum, amount: paid, at: new Date().toISOString(), by: user.name, type: "partial" }, ...p]);
+                store.setCashLog(p => [{ id: "cash_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7), orderId: partialModal.id, orderNum: partialModal.orderNum, amount: paid, at: new Date().toISOString(), by: user.name, type: "partial", branch: partialModal.branch || "main", shiftId: openShiftP?.id || null }, ...p]);
                 store.setDebts(p => [{ id: "d" + Date.now(), orderId: partialModal.id, orderNum: partialModal.orderNum, customerName: partialModal.customerName || "زبون", amount: remaining, remaining, date: new Date().toISOString(), settled: false, settledAt: null, createdBy: user.name, notes: `دفع جزئي — دفع ${paid.toLocaleString()} ${CUR}` }, ...p]);
                 saveReceiptRecord({ ...partialModal, total: paid, paymentType: "cash" }, settings, store, 0);
                 autoFreeTable(partialModal.table, updated);
@@ -1670,6 +1686,7 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
       category:form.category,notes:form.notes,
       date:new Date().toISOString(),createdBy:user.name,by:user.name,
       isSecondary:form.isSecondary||false,
+      shiftId:((store.shifts||[]).find(s=>s.status==="open"&&(s.branch||"main")==="main")||{}).id||null, // v4.7.0
     },...p]);
     showToast(form.isSecondary?"تم تسجيل المصروف الثانوي ⭐":"تم تسجيل المصروف");
     setShowAdd(false);setForm({description:"",amount:"",category:"other",notes:"",isSecondary:false});

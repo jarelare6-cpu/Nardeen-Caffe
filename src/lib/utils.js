@@ -463,16 +463,18 @@ export const printOrder = (order, menu, copy = 1, settings) => {
  * @param {Date} openedAt - وقت فتح الوردية
  * @param {string} branch - الفرع
  */
-export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "main") => {
-  const from = openedAt ? new Date(openedAt) : new Date(0);
-  // طلبات الوردية: إما بنفس shiftId أو ضمن النطاق الزمني وبنفس الفرع
-  const shiftOrders = orders.filter(o => {
-    const matchBranch = (o.branch || "main") === branch;
-    if (!matchBranch) return false;
+export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "main", closedAt = null) => {
+  const from = openedAt ? new Date(openedAt).getTime() : 0;
+  const to = closedAt ? new Date(closedAt).getTime() : Infinity; // وردية مفتوحة = حتى الآن
+  // v4.7.0: المطابقة بالمعرّف أولًا. الطلبات القديمة بلا shiftId تُطابَق زمنيًا
+  // ضمن نطاق الوردية [البدء..الإغلاق] فقط — فلا تُسحَب طلبات وردية أخرى ولا تُفقد.
+  const inWindow = (iso) => { const t = iso ? new Date(iso).getTime() : NaN; return t >= from && t <= to; };
+  const belongs = (o) => {
+    if ((o.branch || "main") !== branch) return false;
     if (shiftId && o.shiftId) return o.shiftId === shiftId;
-    const paidTime = o.paidAt ? new Date(o.paidAt) : null;
-    return paidTime && paidTime >= from;
-  });
+    return inWindow(o.paidAt || o.createdAt);
+  };
+  const shiftOrders = orders.filter(belongs);
 
   const paid = shiftOrders.filter(o => o.status === "paid");
   const cashSales = paid.filter(o => o.paymentType === "cash").reduce((s, o) => s + (o.total || 0), 0);
@@ -485,10 +487,12 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const totalSales = paid.reduce((s, o) => s + (o.total || 0), 0);
 
   const shiftExpenses = (expenses || []).filter(e => {
-    const eTime = new Date(e.date);
-    const matchBranch = (e.branch || "main") === branch;
+    if ((e.branch || "main") !== branch) return false;
     // v30.1: المصاريف الثانوية لا تدخل حساب الوردية إطلاقاً (لا تمسّ الصندوق)
-    return matchBranch && !e.isSecondary && eTime >= from;
+    if (e.isSecondary) return false;
+    // v4.7.0: بالمعرّف أولًا، ثم زمنيًا ضمن نطاق الوردية للمصاريف القديمة
+    if (shiftId && e.shiftId) return e.shiftId === shiftId;
+    return inWindow(e.date);
   }).reduce((s, e) => s + (e.amount || 0), 0);
 
   return {
