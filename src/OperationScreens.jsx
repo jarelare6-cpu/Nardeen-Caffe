@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, getNextInvoiceNum } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, orderCash, orderTron } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
@@ -692,16 +692,17 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const isAdmin = user?.role === "admin";
   const today = useMemo(() => businessDayStart(), []);
   const todayRevenue = useMemo(() =>
-    store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + o.total, 0)
+    store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderCash(o), 0) // v36: بلا ترون
     , [store.orders, today]);
   const readyOrders = useMemo(() => store.orders.filter(o => o.status === "ready"), [store.orders]);
   const todayExpenses = useMemo(() =>
     (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && new Date(e.date) >= today).reduce((s, e) => s + e.amount, 0)
     , [store.expenses, today]);
+  // v36: الترون بند منفصل — يُعرض للاطّلاع فقط ولا يدخل الجرد اليومي
   const tronToday = useMemo(() =>
-    (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today).reduce((s, r) => s + r.tronAmount, 0)
-    , [store.receipts, today]);
-  const dailyInventory = todayRevenue - todayExpenses + tronToday;
+    store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderTron(o), 0)
+    , [store.orders, today]);
+  const dailyInventory = todayRevenue - todayExpenses; // v36: الترون مستبعَد من الجرد
   const todayProfit = useMemo(() => calcNetProfit(store.orders, store.menu, today), [store.orders, store.menu, today]);
 
   const [customerFilter, setCustomerFilter] = useState("");
@@ -754,19 +755,25 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     const disc = discounts[order.id] || 0;
     const discAmt = Math.min(Math.max(0, disc), order.total); // v31.5: مبلغ ثابت
     const finalTotal = order.total - discAmt;
-    const tronAmt = tronAmounts[order.id] || 0;
+    const tronAmtRaw = tronAmounts[order.id] || 0;
+    // v36: تثبيت حصّة الترون على الطلب نفسه ليُستبعَد لاحقاً من النقد/الإيراد/الربح.
+    // دفع ترون كامل ⇒ الفاتورة كلها ترون؛ دفع نقدي/بطاقة مع ترون ⇒ ترون جزئي.
+    const tronAmt = payType === "tron" ? finalTotal : Math.min(Math.max(0, tronAmtRaw), finalTotal);
+    const cashPortion = Math.max(0, finalTotal - tronAmt); // النقد الفعلي الداخل للصندوق
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
     const paid = {
       ...order, status: "paid", paymentStatus: "paid",
       paymentType: payType,
       paidAt: new Date().toISOString(), paidBy: user.id, paidByName: user.name,
       discount: disc, originalTotal: order.total, total: finalTotal,
+      tronAmount: tronAmt, // v36: حصّة الترون مخزّنة على الطلب
       shiftId: openShift?.id || order.shiftId || null,
       stockDeducted: true, // v23: يُخصم الآن عند الدفع
     };
     const cashEntry = {
       id: "cash_pay_" + order.id, orderId: order.id, orderNum: order.orderNum, // v33: حتمي => دفع مزدوج لا يضاعف النقد
-      amount: finalTotal, at: new Date().toISOString(), by: user.name,
+      amount: payType === "tron" ? tronAmt : cashPortion, // v36: نقد فعلي فقط (الترون لا يدخل الصندوق)
+      at: new Date().toISOString(), by: user.name,
       type: payType === "tron" ? "tron" : "sale",
       branch: order.branch || "main", shiftId: openShift?.id || null,
     };
@@ -944,6 +951,11 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     }, ...p]);
     autoFreeTable(order.table, updated);
     logActivity({ action: "مشروب عامل", details: `${workerName} — طلب #${order.orderNum}`, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: costTotal, branch: order.branch || "main" });
+    // v36: تصفير الفاتورة وإزالتها من الشاشة — تنظيف أي حالة عالقة للطلب
+    setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
+    setDiscInput(p => { const n = { ...p }; delete n[order.id]; return n; });
+    setTronAmounts(p => { const n = { ...p }; delete n[order.id]; return n; });
+    setCustomerFilter("");
     showToast(`☕ سُجّل مشروب العامل — ${costTotal.toLocaleString()} ${CUR} تكلفة`, "success");
     setWorkerModal(null);
   };

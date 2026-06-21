@@ -50,7 +50,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, weekStartThursday } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, weekStartThursday, orderCash, orderTron } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -90,13 +90,13 @@ export function DashboardTab({store,dm,settings}){
   },[]);
   const today = businessDayStart();
   const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
-  const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+o.total,0);
+  const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
   const todayPaidOrders=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
-  const todayRevenue=todayPaidOrders.reduce((s,o)=>s+o.total,0);
+  const todayRevenue=todayPaidOrders.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
   const pending=store.orders.filter(o=>o.status==="pending").length;
   const preparing=store.orders.filter(o=>o.status==="preparing").length;
   const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
-  const todayExpenses=(store.expenses||[]).filter(e=>new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0);
+  const todayExpenses=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0); // v36: المصاريف الثانوية منفصلة
   const lowStock=checkStockAlerts(store.menu); // v28: موحّد — حقيقي فقط وعند النفاد (<1)
   const todayProfit=calcNetProfit(store.orders,store.menu,today);
   const totalProfit=calcNetProfit(store.orders,store.menu);
@@ -107,7 +107,7 @@ export function DashboardTab({store,dm,settings}){
     const h=now.getHours()-11+i;
     const s=new Date();s.setHours(h,0,0,0);
     const e=new Date();e.setHours(h+1,0,0,0);
-    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=s&&new Date(o.paidAt||o.createdAt)<e).reduce((s,o)=>s+o.total,0);
+    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=s&&new Date(o.paidAt||o.createdAt)<e).reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
     return{h:`${h<0?24+h:h}`,rev};
   });
   const maxRev=Math.max(...hourly.map(d=>d.rev),1);
@@ -279,10 +279,10 @@ export function InventoryTab({store,settings}){
   const today = businessDayStart();
 
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
-  const todayRevenue=todayPaid.reduce((s,o)=>s+o.total,0);
+  const todayRevenue=todayPaid.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
 
-  // الترون اليوم
-  const tronToday=(store.receipts||[]).filter(r=>r.tronAmount>0&&new Date(r.createdAt)>=today).reduce((s,r)=>s+r.tronAmount,0);
+  // الترون اليوم — بند منفصل تماماً (لا يدخل الجرد ولا الإيراد)
+  const tronToday=todayPaid.reduce((s,o)=>s+orderTron(o),0);
 
   // مصاريف عادية (تدخل الجرد) — الضيافة لا تدخل المصاريف بعد الآن
   const primaryExp=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=today);
@@ -292,8 +292,8 @@ export function InventoryTab({store,settings}){
   const secondaryExp=(store.expenses||[]).filter(e=>e.isSecondary&&new Date(e.date)>=today);
   const secondaryTotal=secondaryExp.reduce((s,e)=>s+e.amount,0);
 
-  // الجرد = الإجمالي - المصروف اليومي + الترون
-  const net=todayRevenue-primaryTotal+tronToday;
+  // v36: الجرد = الإيراد النقدي − المصروف اليومي (الترون مستبعَد ومعروض منفصلاً)
+  const net=todayRevenue-primaryTotal;
 
   // سجل الضيافة اليوم
   const todayComp=(store.compLog||[]).filter(c=>new Date(c.date)>=today);
@@ -340,7 +340,7 @@ export function InventoryTab({store,settings}){
             <div key={o.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",
               borderBottom:"1px solid var(--border)",fontSize:13}}>
               <span>#{o.orderNum} — {o.customerName}</span>
-              <span style={{fontWeight:700,color:"#2e7d32"}}>{o.total.toLocaleString()} {CUR}</span>
+              <span style={{fontWeight:700,color:"#2e7d32"}}>{orderCash(o).toLocaleString()} {CUR}{orderTron(o)>0?<span style={{color:"#6a1b9a",fontWeight:700}}> · 💠{orderTron(o).toLocaleString()}</span>:""}</span>
             </div>
           ))
         }
@@ -377,7 +377,7 @@ export function InventoryTab({store,settings}){
           </span>
         </div>
         <div style={{fontSize:12,color:"var(--sub)",marginTop:4}}>
-          {todayRevenue.toLocaleString()} إيرادات − {primaryTotal.toLocaleString()} مصاريف + {tronToday.toLocaleString()} ترون
+          {todayRevenue.toLocaleString()} إيرادات نقدية − {primaryTotal.toLocaleString()} مصاريف · 💠 {tronToday.toLocaleString()} ترون منفصل
         </div>
       </div>
 
@@ -1492,7 +1492,7 @@ export function ReceiptsTab({ store, showToast, dm, settings }) {
     .filter(r => !search || (r.orderNum || "").includes(search) || (r.customerName || "").includes(search) || (r.tableNum || "").includes(search))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-  const totalRevenue = receipts.reduce((s, r) => s + (r.total || 0), 0);
+  const totalRevenue = receipts.reduce((s, r) => s + Math.max(0, (r.total || 0) - (r.tronAmount || 0)), 0); // v36: بلا ترون
   const tronTotal = receipts.filter(r => r.tronAmount > 0).reduce((s, r) => s + r.tronAmount, 0);
 
   return (
@@ -1715,8 +1715,8 @@ export function ReportsTab({store,dm,settings}){
   const start=getStart();
   const pOrders=store.orders.filter(o=>new Date(o.createdAt)>=start);
   const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=start);
-  const revenue=paidOrders.reduce((s,o)=>s+o.total,0);
-  const expenses=(store.expenses||[]).filter(e=>new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0);
+  const revenue=paidOrders.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
+  const expenses=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0); // v36: المصاريف الثانوية منفصلة
   const netProfit=revenue-expenses;
   const cancelled=pOrders.filter(o=>o.status==="cancelled").length;
   const debtsTotal=pOrders.filter(o=>o.status==="debt").reduce((s,o)=>s+o.total,0);

@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
 import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
 import {
-  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, businessDayLabel, weekStartThursday } from "./lib/utils.js";
+  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // 1. KITCHEN DISPLAY SYSTEM (KDS)
@@ -309,15 +309,12 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
         const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
         const sum = (a, f = o => o.total || 0) => a.reduce((s, o) => s + f(o), 0);
         const expToday = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inToday(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
-        const costToday = paidToday.reduce((s, o) => s + (o.items || []).reduce((a, it) => {
-          const m = (store.menu || []).find(x => x.id === it.itemId);
-          return a + ((m?.cost || 0) * (it.qty || 0));
-        }, 0), 0);
-        const revenue = sum(paidToday);
+        const costToday = paidToday.reduce((s, o) => s + orderCogs(o, store.menu) * orderCashFrac(o), 0); // v36: تكلفة الجزء النقدي فقط
+        const revenue = sum(paidToday, orderCash); // v36: إيراد نقدي بلا ترون
         const daily = {
-          revenue, cash: sum(paidToday.filter(o => o.paymentType === "cash")),
-          card: sum(paidToday.filter(o => o.paymentType === "card")),
-          tron: sum(paidToday, o => o.tronAmount || 0),
+          revenue, cash: sum(paidToday.filter(o => o.paymentType === "cash"), orderCash),
+          card: sum(paidToday.filter(o => o.paymentType === "card"), orderCash),
+          tron: sum(paidToday, orderTron), // v36: بند الترون المنفصل
           expenses: expToday,
           debts: sum((store.orders || []).filter(o => o.status === "debt" && inToday(o.createdAt))),
           comp: (store.orders || []).filter(o => inToday(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6: كل طلبات اليوم
@@ -336,17 +333,15 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
             const inWeek = (iso) => iso && new Date(iso) >= wkStart;
             const paidWk = (store.orders || []).filter(o => o.status === "paid" && inWeek(o.paidAt || o.createdAt));
             const expWk = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
-            const costWk = paidWk.reduce((s, o) => s + (o.items || []).reduce((a, it) => {
-              const m = (store.menu || []).find(x => x.id === it.itemId);
-              return a + ((m?.cost || 0) * (it.qty || 0));
-            }, 0), 0);
-            const revWk = sum(paidWk);
+            const costWk = paidWk.reduce((s, o) => s + orderCogs(o, store.menu) * orderCashFrac(o), 0); // v36: تكلفة الجزء النقدي
+            const revWk = sum(paidWk, orderCash); // v36: بلا ترون
             const weekly = {
               revenue: revWk, expenses: expWk,
               profit: revWk - costWk - expWk,
               orders: paidWk.length,
-              cash: sum(paidWk.filter(o => o.paymentType === "cash")),
-              card: sum(paidWk.filter(o => o.paymentType === "card")),
+              cash: sum(paidWk.filter(o => o.paymentType === "cash"), orderCash),
+              card: sum(paidWk.filter(o => o.paymentType === "card"), orderCash),
+              tron: sum(paidWk, orderTron), // v36: بند الترون المنفصل
               debts: sum((store.orders || []).filter(o => o.status === "debt" && inWeek(o.createdAt))),
               comp: (store.orders || []).filter(o => inWeek(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6
               fromLabel: wkStart.toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
