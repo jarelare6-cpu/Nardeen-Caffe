@@ -453,6 +453,27 @@ export const printOrder = (order, menu, copy = 1, settings) => {
 };
 
 // ══════════════════════════════════════════════════════════════
+// v36 — فصل الترون: مصدر واحد للحقيقة
+// ══════════════════════════════════════════════════════════════
+// الترون يُعامَل معاملة الضيافة والديون: بند منفصل تماماً لا يدخل
+// النقد الفعلي ولا الإيرادات ولا المبيعات ولا الربح الصافي.
+//  - orderTron: حصّة الترون من الطلب (مخزّنة على الطلب عند الدفع).
+//  - orderCash: الجزء النقدي/البطاقة الفعلي = الإجمالي − الترون.
+//  - orderCashFrac: نسبة الجزء النقدي (لتوزيع التكلفة بدقّة).
+//  - orderCogs: تكلفة البضاعة المباعة للطلب (تستثني الأصناف المُقدّمة ضيافةً).
+export const orderTron = (o) => Math.max(0, +(o?.tronAmount) || 0);
+export const orderCash = (o) => Math.max(0, (+(o?.total) || 0) - orderTron(o));
+export const orderCashFrac = (o) => { const t = +(o?.total) || 0; return t > 0 ? orderCash(o) / t : 0; };
+export const orderCogs = (o, menu) => {
+  const costOf = (id) => { const m = (menu || []).find(x => x.id === id); return m && m.cost != null ? +m.cost : 0; };
+  return (o?.items || []).reduce((s, i) => {
+    const qty = +i.qty || 0;
+    const freeQty = i.complimentary ? qty : (+i.compQty || 0); // الضيافة لا تُحتسب تكلفةً
+    return s + costOf(i.itemId) * Math.max(0, qty - freeQty);
+  }, 0);
+};
+
+// ══════════════════════════════════════════════════════════════
 // v7 — أدوات تقفيل الوردية (8)
 // ══════════════════════════════════════════════════════════════
 /**
@@ -477,14 +498,15 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const shiftOrders = orders.filter(belongs);
 
   const paid = shiftOrders.filter(o => o.status === "paid");
-  const cashSales = paid.filter(o => o.paymentType === "cash").reduce((s, o) => s + (o.total || 0), 0);
-  const cardSales = paid.filter(o => o.paymentType === "card").reduce((s, o) => s + (o.total || 0), 0);
+  // v36: الترون مستبعَد من النقد الفعلي ومن المبيعات — يُطرح من كل طلب (orderCash)
+  const cashSales = paid.filter(o => o.paymentType === "cash").reduce((s, o) => s + orderCash(o), 0);
+  const cardSales = paid.filter(o => o.paymentType === "card").reduce((s, o) => s + orderCash(o), 0);
   // v31.6: نقد سداد الديون يدخل الصندوق فعلياً — يُحتسب في المتوقع
   const debtSettledCash = paid.filter(o => o.paymentType === "debt_settled").reduce((s, o) => s + (o.total || 0), 0);
-  const tronSales = paid.reduce((s, o) => s + (o.tronAmount || 0), 0);
+  const tronSales = paid.reduce((s, o) => s + orderTron(o), 0); // v36: بند الترون المنفصل
   const debtTotal = shiftOrders.filter(o => o.status === "debt").reduce((s, o) => s + (o.total || 0), 0);
   const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
-  const totalSales = paid.reduce((s, o) => s + (o.total || 0), 0);
+  const totalSales = paid.reduce((s, o) => s + orderCash(o), 0); // v36: المبيعات بلا ترون
 
   const shiftExpenses = (expenses || []).filter(e => {
     if ((e.branch || "main") !== branch) return false;
@@ -562,21 +584,15 @@ export const pointsToValue = (points, settings) => {
   return Math.floor((points || 0) * ratio);
 };
 
-// ── صافي الربح = إجمالي المبيع (بعد الخصومات) − تكلفة البضاعة المباعة ──
-// يستخدم تكلفة الصنف الحالية من المنيو (الطلبات القديمة تقريبية).
+// ── صافي الربح = الجزء النقدي (بعد الخصومات) − تكلفة البضاعة المباعة ──
+// v36: الترون مستبعَد تماماً من الربح (إيراداً وتكلفةً) كالضيافة والديون.
+// يُحسب على الجزء النقدي فقط: orderCash − تكلفة × نسبة النقد.
 export const calcNetProfit = (orders, menu, since = null) => {
-  const costOf = (id) => { const m = (menu || []).find(x => x.id === id); return m && m.cost != null ? +m.cost : 0; };
   let profit = 0;
   (orders || []).filter(o => o.status === "paid").forEach(o => {
     if (since && new Date(o.paidAt || o.createdAt) < since) return;
-    // v29: تكلفة الأصناف المُقدّمة ضيافةً لا تُحتسب — الضيافة لا ربح ولا مصروف
-    const cogs = (o.items || []).reduce((s, i) => {
-      const qty = +i.qty || 0;
-      const freeQty = i.complimentary ? qty : (+i.compQty || 0);
-      const paidQty = Math.max(0, qty - freeQty);
-      return s + costOf(i.itemId) * paidQty;
-    }, 0);
-    profit += (+o.total || 0) - cogs;
+    const cogs = orderCogs(o, menu);
+    profit += orderCash(o) - cogs * orderCashFrac(o);
   });
   return profit;
 };
