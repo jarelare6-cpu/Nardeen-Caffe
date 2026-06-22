@@ -92,6 +92,15 @@ const upsertStrip = async (label, table, row, conflict = "id") => {
     const schemaErr = /(column|schema|does not exist|could not find|cache)/i.test(r.error.message || "");
     const col = schemaErr ? extractMissingCol(r.error.message) : null;
     if (col && col !== "id" && Object.prototype.hasOwnProperty.call(work, col)) { delete work[col]; continue; }
+    // v38.1: قيد CHECK يرفض قيمة (مثل payment_type='worker') — أعد المحاولة بقيمة آمنة
+    if (/violates check constraint/i.test(r.error.message || "")) {
+      const safe = [["payment_type", "cash"], ["payment_status", "paid"]];
+      let fixed = false;
+      for (const [c, v] of safe) {
+        if ((r.error.message || "").includes(c) && c in work && work[c] !== v) { work[c] = v; fixed = true; break; }
+      }
+      if (fixed) continue;
+    }
     return r.error;
   }
   return { message: "too many missing columns" };

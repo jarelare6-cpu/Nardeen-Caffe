@@ -27,7 +27,7 @@ export const rowOfOrder = (o) => ({
   customer_name: o.customerName, customer_id: o.customerId || null,
   table_num: o.table || "", items: o.items,
   total: o.total, discount: o.discount || 0,
-  status: o.status, payment_type: o.paymentType || "cash",
+  status: o.status, payment_type: (o.paymentType === "worker" || o.paymentType === "complimentary") ? "cash" : (o.paymentType || "cash"), // v38.1: قيمة آمنة لقيد payment_type (النوع الحقيقي محفوظ في status/isComplimentary/workerName)
   payment_status: o.paymentStatus || "pending",
   partial_paid: o.partialPaid || 0,
   notes: o.notes || "", created_at: o.createdAt,
