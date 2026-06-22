@@ -88,3 +88,11 @@ export const mapExpense = e => ({
   isComplimentary: e.is_complimentary ?? e.isComplimentary ?? false,
   shiftId:      e.shift_id ?? e.shiftId ?? null, // v4.7.0
 });
+
+// v38: استخراج اسم العمود الناقص من رسالة خطأ Postgres/PostgREST (نقي، قابل للاختبار)
+export const extractMissingCol = (msg) => {
+  if (!msg) return null;
+  const m = msg.match(/the '([^']+)' column/i) || msg.match(/'([^']+)' column/i) ||
+            msg.match(/column "([^"]+)"/i) || msg.match(/column ([a-z_]+) of/i);
+  return m ? m[1] : null;
+};

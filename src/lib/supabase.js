@@ -6,6 +6,7 @@
 //  - cash_log يُرفع لـ Supabase
 // ══════════════════════════════════════════════════════════════
 import { createClient } from "@supabase/supabase-js";
+import { extractMissingCol } from "./rows.js";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -81,15 +82,26 @@ export const withNet = async (label, factory) => {
   return res;
 };
 
+// v38: upsert صامد للمخطّط — عند نقص أي عمود يحذفه ويعيد المحاولة (يمنع فشل
+// الحفظ الصامت الذي يُبقي الطلب «ready» في السحابة فيعود للظهور بعد التحديث).
+const upsertStrip = async (label, table, row, conflict = "id") => {
+  let work = { ...row };
+  for (let i = 0; i < 16; i++) {
+    const r = await withNet(label, () => supabase.from(table).upsert(work, { onConflict: conflict }));
+    if (!r.error) return null;
+    const schemaErr = /(column|schema|does not exist|could not find|cache)/i.test(r.error.message || "");
+    const col = schemaErr ? extractMissingCol(r.error.message) : null;
+    if (col && col !== "id" && Object.prototype.hasOwnProperty.call(work, col)) { delete work[col]; continue; }
+    return r.error;
+  }
+  return { message: "too many missing columns" };
+};
+
 export const sbUpsert = async (table, row, conflict = "id", fallbackRow = null) => {
   if (!supabase) return;
   try {
-    let { error } = await withNet(`upsert:${table}`, () => supabase.from(table).upsert(row, { onConflict: conflict }));
-    if (error && fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(error.message || "")) {
-      const r2 = await withNet(`upsert:${table}`, () => supabase.from(table).upsert(fallbackRow, { onConflict: conflict }));
-      error = r2.error || null;
-    }
-    if (error) { reportSyncError("sbUpsert", table, error.message); return error; }
+    const err = await upsertStrip(`upsert:${table}`, table, row, conflict);
+    if (err) { reportSyncError("sbUpsert", table, err.message); return err; }
     return null;
   } catch (err) {
     reportSyncError("sbUpsert", table, String(err?.message || err));
@@ -164,11 +176,8 @@ export const flushOutbox = async () => {
           const r = await withNet(`flush:del:${e.table}`, () => supabase.from(e.table).delete().eq("id", e.id));
           err = r.error || null;
         } else {
-          let r = await withNet(`flush:up:${e.table}`, () => supabase.from(e.table).upsert(e.row, { onConflict: e.conflict || "id" }));
-          if (r.error && e.fallbackRow && /(column|schema|does not exist|could not find|cache)/i.test(r.error.message || "")) {
-            r = await withNet(`flush:up:${e.table}`, () => supabase.from(e.table).upsert(e.fallbackRow, { onConflict: e.conflict || "id" }));
-          }
-          err = r.error || null;
+          const e2 = await upsertStrip(`flush:up:${e.table}`, e.table, e.row, e.conflict || "id");
+          err = e2 || null;
         }
       } catch (ex) { err = ex; }
 
