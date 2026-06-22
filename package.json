@@ -1,6 +1,6 @@
 {
   "name": "nardeen-caffe",
-  "version": "36",
+  "version": "37",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:sim": "node sim/stress.mjs",
-    "test:db": "node sim/integration.mjs"
+    "test:db": "node sim/integration.mjs",
+    "test:logic": "node sim/logic_test.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^6.2.1",

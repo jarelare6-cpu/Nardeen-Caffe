@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
 import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
 import {
-  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac } from "./lib/utils.js";
+  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, workDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // 1. KITCHEN DISPLAY SYSTEM (KDS)
@@ -304,7 +304,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       // v31.2: ملخص اليوم يُرسل عند إغلاق الوردية المسائية فقط (لا بالساعة)
       const isEveningClose = openShift.shiftType === "evening"; // v31.6: صريح فقط
       if (isEveningClose) {
-        const today = businessDayStart();
+        const today = workDayStart(store.shifts); // v37
         const inToday = (iso) => iso && new Date(iso) >= today;
         const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
         const sum = (a, f = o => o.total || 0) => a.reduce((s, o) => s + f(o), 0);

@@ -11,6 +11,18 @@ export const businessDayStart = (ref = new Date()) => {
   d.setHours(BUSINESS_DAY_CUTOFF_HOUR, 0, 0, 0);
   return d;
 };
+
+// v37: بداية يوم العمل = افتتاح آخر وردية (الليلية) — لا ساعة ثابتة.
+// يوم العمل يمتدّ من لحظة فتح الوردية الحالية. إن لم توجد ورديات بعد،
+// نرجع إلى businessDayStart (ساعة القطع) كحلٍّ احتياطي.
+export const workDayStart = (shifts, branch = "main", ref = new Date()) => {
+  const now = new Date(ref).getTime();
+  const opens = (shifts || [])
+    .filter(s => (s.branch || "main") === branch && s.openedAt && new Date(s.openedAt).getTime() <= now)
+    .map(s => new Date(s.openedAt).getTime())
+    .sort((a, b) => b - a);
+  return opens.length ? new Date(opens[0]) : businessDayStart(ref);
+};
 export const businessDayLabel = (ref = new Date()) =>
   businessDayStart(ref).toLocaleDateString("ar-SY", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
@@ -497,7 +509,8 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   };
   const shiftOrders = orders.filter(belongs);
 
-  const paid = shiftOrders.filter(o => o.status === "paid");
+  // v37: الضيافة معزولة كليًا — تُستبعَد صراحةً من المبيعات/النقد (لها جردها الخاص في compTotal)
+  const paid = shiftOrders.filter(o => o.status === "paid" && !o.isComplimentary);
   // v36: الترون مستبعَد من النقد الفعلي ومن المبيعات — يُطرح من كل طلب (orderCash)
   const cashSales = paid.filter(o => o.paymentType === "cash").reduce((s, o) => s + orderCash(o), 0);
   const cardSales = paid.filter(o => o.paymentType === "card").reduce((s, o) => s + orderCash(o), 0);

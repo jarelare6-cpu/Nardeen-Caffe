@@ -50,7 +50,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, weekStartThursday, orderCash, orderTron } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -88,7 +88,7 @@ export function DashboardTab({store,dm,settings}){
     load(); const iv=setInterval(load,30000);
     return ()=>{ active=false; clearInterval(iv); };
   },[]);
-  const today = businessDayStart();
+  const today = workDayStart(store.shifts); // v37
   const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
   const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
   const todayPaidOrders=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
@@ -276,7 +276,7 @@ export function DashboardTab({store,dm,settings}){
 
 export function InventoryTab({store,settings}){
   const CUR=settings?.currency||"ل.س";
-  const today = businessDayStart();
+  const today = workDayStart(store.shifts); // v37
 
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
   const todayRevenue=todayPaid.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
@@ -973,10 +973,11 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
   const [wModal, setWModal] = useState(false);
   const [editComp, setEditComp] = useState(null); // v30: تعديل سجل ضيافة/عامل
   const [eName, setEName] = useState(""); const [eAmount, setEAmount] = useState("");
+  const [selectedPerson, setSelectedPerson] = useState(null); // v37: ملف الشخص
 
   const getStart = () => {
     const d = new Date();
-    if (period === "today") { return businessDayStart(); }
+    if (period === "today") { return workDayStart(store.shifts); }
     if (period === "week") { return weekStartThursday(); }
     if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
     return new Date(0);
@@ -993,6 +994,25 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
   // ضيافة الزبائن بقيمة البيع، مشاريب العمال بقيمة التكلفة — منفصلان دائماً
   const compTotal = inPeriod.filter(c => kindOf(c) === "comp").reduce((s, c) => s + (c.amount || 0), 0);
   const workerTotal = inPeriod.filter(c => kindOf(c) === "worker").reduce((s, c) => s + (c.amount || 0), 0);
+
+  // v37: تجميع الضيافة حسب الشخص — ملف مستقل لكل شخص/عامل
+  const nameKey = (n) => (n || "بدون اسم").trim();
+  const groups = useMemo(() => {
+    const m = new Map();
+    logs.forEach(c => {
+      const key = nameKey(c.customerName);
+      if (!m.has(key)) m.set(key, { name: key, items: [], total: 0, compVal: 0, workerVal: 0, count: 0, hasWorker: false, lastDate: 0 });
+      const g = m.get(key);
+      g.items.push(c);
+      g.total += c.amount || 0;
+      if (kindOf(c) === "worker") { g.workerVal += c.amount || 0; g.hasWorker = true; } else g.compVal += c.amount || 0;
+      g.count++;
+      const t = new Date(c.date).getTime(); if (t > g.lastDate) g.lastDate = t;
+    });
+    return Array.from(m.values()).sort((a, b) => (b.total - a.total) || (b.lastDate - a.lastDate));
+  }, [logs]);
+  const personGroup = selectedPerson ? groups.find(g => g.name === selectedPerson) : null;
+  const personItems = personGroup ? personGroup.items : [];
 
   return (
     <div className="fade-in">
@@ -1039,36 +1059,97 @@ export function CompLogTab({ store, user, showToast, dm, settings }) {
       <input className="input" placeholder="🔍 ابحث بالاسم..." value={search}
         onChange={e => setSearch(e.target.value)} style={{ marginBottom: 12 }} />
 
-      {!logs.length ? (
-        <div style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
-          <div style={{ fontSize: 48 }}>🎁</div>
-          <div style={{ marginTop: 10 }}>لا توجد سجلات</div>
-        </div>
-      ) : logs.map(c => {
-        const worker = kindOf(c) === "worker";
-        const col = worker ? "#5e35b1" : "#00897b";
-        return (
-          <div key={c.id} className="card" style={{ marginBottom: 10, borderRight: `4px solid ${col}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 14 }}>{worker ? "☕" : "👤"} {c.customerName}
-                  {worker && <span style={{ fontSize: 10, background: "#5e35b1", color: "#fff", borderRadius: 6, padding: "1px 6px", marginInlineStart: 6 }}>عامل</span>}
+      {(() => {
+        // v37: بطاقة سجل ضيافة مفردة (تُستخدم داخل ملف الشخص)
+        const renderCompCard = (c) => {
+          const worker = kindOf(c) === "worker";
+          const col = worker ? "#5e35b1" : "#00897b";
+          return (
+            <div key={c.id} className="card" style={{ marginBottom: 10, borderRight: `4px solid ${col}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>{worker ? "☕" : "👤"} {c.customerName}
+                    {worker && <span style={{ fontSize: 10, background: "#5e35b1", color: "#fff", borderRadius: 6, padding: "1px 6px", marginInlineStart: 6 }}>عامل</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--sub)" }}>
+                    {c.tableNum ? `طاولة ${c.tableNum} • ` : ""}{c.orderNum ? `طلب #${c.orderNum} • ` : ""}بواسطة {c.createdBy}
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: "var(--sub)" }}>
-                  {c.tableNum ? `طاولة ${c.tableNum} • ` : ""}{c.orderNum ? `طلب #${c.orderNum} • ` : ""}بواسطة {c.createdBy}
+                <span style={{ fontWeight: 900, color: col, fontSize: 15 }}>{(c.amount || 0).toLocaleString()} {CUR}</span>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--sub)" }}>🍽 {(c.items || []).join("، ")}</div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: "var(--sub)" }}>{new Date(c.date).toLocaleString("ar-SY")}</div>
+                <button onClick={() => { setEditComp(c); setEName(c.customerName || ""); setEAmount(String(c.amount || "")); }}
+                  style={{ padding: "3px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>✏ تعديل</button>
+              </div>
+            </div>
+          );
+        };
+
+        if (selectedPerson && personGroup) {
+          // ── ملف شخص واحد: يجمع مسحوباته ──
+          return (
+            <>
+              <button onClick={() => setSelectedPerson(null)}
+                style={{ background: "var(--card2)", border: "none", borderRadius: 10, padding: "8px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 16, fontFamily: "inherit" }}>
+                ← رجوع لكل الملفّات
+              </button>
+              <div className="card" style={{ marginBottom: 16, borderTop: `4px solid ${personGroup.hasWorker ? "#5e35b1" : "#00897b"}` }}>
+                <div style={{ fontSize: 34, textAlign: "center", marginBottom: 4 }}>{personGroup.hasWorker ? "☕" : "👤"}</div>
+                <div style={{ fontWeight: 900, fontSize: 18, textAlign: "center", marginBottom: 12 }}>{personGroup.name}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                  <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>الإجمالي</div>
+                    <div style={{ fontWeight: 900, fontSize: 15, color: "#00897b" }}>{personGroup.total.toLocaleString()} {CUR}</div>
+                  </div>
+                  <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>عدد المسحوبات</div>
+                    <div style={{ fontWeight: 900, fontSize: 18 }}>{personGroup.count}</div>
+                  </div>
+                  <div style={{ textAlign: "center", background: "var(--card2)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>{personGroup.hasWorker ? "☕ عمّال" : "🎁 ضيافة"}</div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{(personGroup.hasWorker ? personGroup.workerVal : personGroup.compVal).toLocaleString()} {CUR}</div>
+                  </div>
                 </div>
               </div>
-              <span style={{ fontWeight: 900, color: col, fontSize: 15 }}>{(c.amount || 0).toLocaleString()} {CUR}</span>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--sub)" }}>🍽 {(c.items || []).join("، ")}</div>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop: 4 }}>
-              <div style={{ fontSize: 11, color: "var(--sub)" }}>{new Date(c.date).toLocaleString("ar-SY")}</div>
-              <button onClick={() => { setEditComp(c); setEName(c.customerName || ""); setEAmount(String(c.amount || "")); }}
-                style={{ padding: "3px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}>✏ تعديل</button>
-            </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--sub)", marginBottom: 10 }}>📋 تفصيل المسحوبات ({personItems.length})</div>
+              {personItems.map(renderCompCard)}
+            </>
+          );
+        }
+
+        // ── قائمة الملفّات: بطاقة لكل شخص ──
+        if (!groups.length) return (
+          <div style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
+            <div style={{ fontSize: 48 }}>🎁</div>
+            <div style={{ marginTop: 10 }}>لا توجد سجلات</div>
           </div>
         );
-      })}
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {groups.map(g => (
+              <button key={g.name} onClick={() => setSelectedPerson(g.name)} className="card"
+                style={{ textAlign: "right", border: "none", borderRight: `4px solid ${g.hasWorker ? "#5e35b1" : "#00897b"}`, cursor: "pointer", width: "100%", fontFamily: "inherit", display: "block" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 900, fontSize: 15 }}>{g.hasWorker ? "☕" : "👤"} {g.name}
+                      {g.hasWorker && <span style={{ fontSize: 10, background: "#5e35b1", color: "#fff", borderRadius: 6, padding: "1px 6px", marginInlineStart: 6 }}>عامل</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 3 }}>
+                      {g.count} مسحوب • آخر سحب {new Date(g.lastDate).toLocaleDateString("ar-SY")}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "left", whiteSpace: "nowrap", paddingRight: 10 }}>
+                    <div style={{ fontWeight: 900, fontSize: 16, color: "#00897b" }}>{g.total.toLocaleString()} {CUR}</div>
+                    <div style={{ fontSize: 11, color: "var(--sub)" }}>الإجمالي ›</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {editComp && (
         <div onClick={() => setEditComp(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -1475,13 +1556,13 @@ export function CustomerFileTab({ store, showToast, dm, settings }) {
 
 export function ReceiptsTab({ store, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
-  const today = useMemo(() => businessDayStart(), []);
+  const today = useMemo(() => workDayStart(store.shifts), [store.shifts]); // v37
   const [period, setPeriod] = useState("today");
   const [search, setSearch] = useState("");
 
   const getStart = () => {
     const d = new Date();
-    if (period === "today") { return businessDayStart(); }
+    if (period === "today") { return workDayStart(store.shifts); }
     if (period === "week") { return weekStartThursday(); }
     if (period === "month") { d.setDate(1); d.setHours(0, 0, 0, 0); return d; }
     return new Date(0);
@@ -1706,7 +1787,7 @@ export function ReportsTab({store,dm,settings}){
 
   const getStart=()=>{
     const d=new Date();
-    if(period==="today"){return businessDayStart()}
+    if(period==="today"){return workDayStart(store.shifts)}
     if(period==="week"){return weekStartThursday()}
     if(period==="month"){d.setDate(1);d.setHours(0,0,0,0);return d}
     return new Date(0);
@@ -2615,7 +2696,7 @@ export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
   const pendingCount  = outdoorOrders.filter(o => o.status === "pending").length;
   const paidCount     = outdoorOrders.filter(o => o.status === "paid").length;
 
-  const today = businessDayStart();
+  const today = workDayStart(store.shifts); // v37
   const todayRevenue = outdoorCash
     .filter(e => e.type === "sale" && new Date(e.at) >= today)
     .reduce((s, e) => s + (e.amount || 0), 0);

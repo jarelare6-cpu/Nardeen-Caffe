@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, getNextInvoiceNum } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, orderCash, orderTron } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, workDayStart, orderCash, orderTron } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
@@ -690,7 +690,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const CUR = settings?.currency || "ل.س";
   const maxDiscount = settings?.maxDiscount ?? 50;
   const isAdmin = user?.role === "admin";
-  const today = useMemo(() => businessDayStart(), []);
+  const today = useMemo(() => workDayStart(store.shifts), [store.shifts]); // v37: يوم العمل من افتتاح الوردية
   const todayRevenue = useMemo(() =>
     store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderCash(o), 0) // v36: بلا ترون
     , [store.orders, today]);
@@ -932,15 +932,17 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       return s + ((m?.cost || 0) * (it.qty || 0));
     }, 0);
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main")); // v4.7.0
-    const updated = store.orders.map(o => o.id === order.id ? {
-      ...o, status: "complimentary", paymentType: "worker", isComplimentary: true,
+    // v37: تطبيق على أحدث حالة (دالّي) — يضمن إخفاء الطلب فورًا وتسجيله ضيافةً دون بقائه معلّقًا
+    const patch = {
+      status: "complimentary", paymentType: "worker", isComplimentary: true,
       paidBy: user.id, paidByName: user.name, paidAt: new Date().toISOString(),
-      total: 0, originalTotal: o.originalTotal || order.total, stockDeducted: true,
-      workerName,                       // v4.7.0: حفظ اسم العامل على الطلب
-      compAmount: (o.compAmount || 0) + costTotal, // v4.7.0: تظهر تكلفته في تقارير الضيافة
-      shiftId: openShift?.id || o.shiftId || null, // v4.7.0
-    } : o);
-    store.setOrders(() => updated);
+      total: 0, originalTotal: order.originalTotal || order.total, stockDeducted: true,
+      workerName,
+      compAmount: (order.compAmount || 0) + costTotal,
+      shiftId: openShift?.id || order.shiftId || null,
+    };
+    store.setOrders(prev => prev.map(o => o.id === order.id ? { ...o, ...patch } : o));
+    const updated = store.orders.map(o => o.id === order.id ? { ...o, ...patch } : o);
     deductOrderStock(store, order); // خصم مرة واحدة
     store.setCompLog(p => [{
       id: "wrk" + Date.now(), reason: "worker",
@@ -1739,7 +1741,7 @@ export function DebtsTab({store,user,showToast,dm,settings}){
 
 export function ExpensesTab({store,user,showToast,dm,settings}){
   const CUR=settings?.currency||"ل.س";
-  const today = businessDayStart();
+  const today = workDayStart(store.shifts); // v37
   const [showAdd,setShowAdd]=useState(false);
   const [editId,setEditId]=useState(null); // v30: تعديل مصروف بدل الحذف
   const [period,setPeriod]=useState("today");
@@ -1756,7 +1758,7 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
 
   const getStart=()=>{
     const d=new Date();
-    if(period==="today"){return businessDayStart()}
+    if(period==="today"){return workDayStart(store.shifts)}
     if(period==="week"){d.setDate(d.getDate()-7);return d}
     if(period==="month"){d.setDate(1);d.setHours(0,0,0,0);return d}
     return new Date(0);
