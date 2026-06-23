@@ -50,7 +50,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron, orderSale } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -90,9 +90,9 @@ export function DashboardTab({store,dm,settings}){
   },[]);
   const today = workDayStart(store.shifts); // v37
   const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
-  const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
+  const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
   const todayPaidOrders=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
-  const todayRevenue=todayPaidOrders.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
+  const todayRevenue=todayPaidOrders.reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
   const pending=store.orders.filter(o=>o.status==="pending").length;
   const preparing=store.orders.filter(o=>o.status==="preparing").length;
   const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
@@ -107,7 +107,7 @@ export function DashboardTab({store,dm,settings}){
     const h=now.getHours()-11+i;
     const s=new Date();s.setHours(h,0,0,0);
     const e=new Date();e.setHours(h+1,0,0,0);
-    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=s&&new Date(o.paidAt||o.createdAt)<e).reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
+    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=s&&new Date(o.paidAt||o.createdAt)<e).reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
     return{h:`${h<0?24+h:h}`,rev};
   });
   const maxRev=Math.max(...hourly.map(d=>d.rev),1);
@@ -279,7 +279,7 @@ export function InventoryTab({store,settings}){
   const today = workDayStart(store.shifts); // v37
 
   const todayPaid=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
-  const todayRevenue=todayPaid.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
+  const todayRevenue=todayPaid.reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
 
   // الترون اليوم — بند منفصل تماماً (لا يدخل الجرد ولا الإيراد)
   const tronToday=todayPaid.reduce((s,o)=>s+orderTron(o),0);
@@ -1796,7 +1796,7 @@ export function ReportsTab({store,dm,settings}){
   const start=getStart();
   const pOrders=store.orders.filter(o=>new Date(o.createdAt)>=start);
   const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=start);
-  const revenue=paidOrders.reduce((s,o)=>s+orderCash(o),0); // v36: بلا ترون
+  const revenue=paidOrders.reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
   const expenses=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0); // v36: المصاريف الثانوية منفصلة
   const netProfit=revenue-expenses;
   const cancelled=pOrders.filter(o=>o.status==="cancelled").length;

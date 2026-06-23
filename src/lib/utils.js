@@ -476,6 +476,8 @@ export const printOrder = (order, menu, copy = 1, settings) => {
 export const orderTron = (o) => Math.max(0, +(o?.tronAmount) || 0);
 export const orderCash = (o) => Math.max(0, (+(o?.total) || 0) - orderTron(o));
 export const orderCashFrac = (o) => { const t = +(o?.total) || 0; return t > 0 ? orderCash(o) / t : 0; };
+// v39: قيمة البيع الكاملة (تشمل الترون) — للمبيعات/الإيراد/الربح. الترون يُستبعَد من نقد الدرج فقط.
+export const orderSale = (o) => Math.max(0, +(o?.total) || 0);
 export const orderCogs = (o, menu) => {
   const costOf = (id) => { const m = (menu || []).find(x => x.id === id); return m && m.cost != null ? +m.cost : 0; };
   return (o?.items || []).reduce((s, i) => {
@@ -519,7 +521,7 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const tronSales = paid.reduce((s, o) => s + orderTron(o), 0); // v36: بند الترون المنفصل
   const debtTotal = shiftOrders.filter(o => o.status === "debt").reduce((s, o) => s + (o.total || 0), 0);
   const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
-  const totalSales = paid.reduce((s, o) => s + orderCash(o), 0); // v36: المبيعات بلا ترون
+  const totalSales = paid.reduce((s, o) => s + orderSale(o), 0); // v39: المبيعات الكاملة (تشمل الترون)
 
   const shiftExpenses = (expenses || []).filter(e => {
     if ((e.branch || "main") !== branch) return false;
@@ -597,15 +599,13 @@ export const pointsToValue = (points, settings) => {
   return Math.floor((points || 0) * ratio);
 };
 
-// ── صافي الربح = الجزء النقدي (بعد الخصومات) − تكلفة البضاعة المباعة ──
-// v36: الترون مستبعَد تماماً من الربح (إيراداً وتكلفةً) كالضيافة والديون.
-// يُحسب على الجزء النقدي فقط: orderCash − تكلفة × نسبة النقد.
+// ── صافي الربح = البيع الكامل (بعد الخصومات، يشمل الترون) − تكلفة البضاعة المباعة ──
+// v39: الترون بيعٌ حقيقي يدخل الإيراد والربح؛ يُستبعَد من نقد الدرج فقط.
 export const calcNetProfit = (orders, menu, since = null) => {
   let profit = 0;
-  (orders || []).filter(o => o.status === "paid").forEach(o => {
+  (orders || []).filter(o => o.status === "paid" && !o.isComplimentary).forEach(o => {
     if (since && new Date(o.paidAt || o.createdAt) < since) return;
-    const cogs = orderCogs(o, menu);
-    profit += orderCash(o) - cogs * orderCashFrac(o);
+    profit += orderSale(o) - orderCogs(o, menu);
   });
   return profit;
 };

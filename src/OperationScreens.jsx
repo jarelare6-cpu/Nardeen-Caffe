@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, getNextInvoiceNum } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, workDayStart, orderCash, orderTron } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, workDayStart, orderCash, orderTron, orderSale } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
@@ -692,17 +692,17 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const isAdmin = user?.role === "admin";
   const today = useMemo(() => workDayStart(store.shifts), [store.shifts]); // v37: يوم العمل من افتتاح الوردية
   const todayRevenue = useMemo(() =>
-    store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderCash(o), 0) // v36: بلا ترون
+    store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderSale(o), 0) // v39: مبيعات كاملة (تشمل الترون)
     , [store.orders, today]);
   const readyOrders = useMemo(() => store.orders.filter(o => o.status === "ready"), [store.orders]);
   const todayExpenses = useMemo(() =>
     (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && new Date(e.date) >= today).reduce((s, e) => s + e.amount, 0)
     , [store.expenses, today]);
-  // v36: الترون بند منفصل — يُعرض للاطّلاع فقط ولا يدخل الجرد اليومي
+  // v39: الترون جزء من المبيعات؛ يُعرض هنا للمطابقة (كم من مبيعات اليوم جاء ترون)
   const tronToday = useMemo(() =>
     store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderTron(o), 0)
     , [store.orders, today]);
-  const dailyInventory = todayRevenue - todayExpenses; // v36: الترون مستبعَد من الجرد
+  const dailyInventory = todayRevenue - todayExpenses; // v39: المبيعات الكاملة (تشمل الترون) − المصاريف
   const todayProfit = useMemo(() => calcNetProfit(store.orders, store.menu, today), [store.orders, store.menu, today]);
 
   const [customerFilter, setCustomerFilter] = useState("");
@@ -756,9 +756,9 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     const discAmt = Math.min(Math.max(0, disc), order.total); // v31.5: مبلغ ثابت
     const finalTotal = order.total - discAmt;
     const tronAmtRaw = tronAmounts[order.id] || 0;
-    // v36: تثبيت حصّة الترون على الطلب نفسه ليُستبعَد لاحقاً من النقد/الإيراد/الربح.
-    // دفع ترون كامل ⇒ الفاتورة كلها ترون؛ دفع نقدي/بطاقة مع ترون ⇒ ترون جزئي.
-    const tronAmt = payType === "tron" ? finalTotal : Math.min(Math.max(0, tronAmtRaw), finalTotal);
+    // v39: الترون يُضاف لكل فاتورة (لا زر مستقل). حصّته تُخزَّن على الطلب وتُستبعَد
+    // من نقد الدرج فقط — البيع يبقى ضمن المبيعات كاملاً.
+    const tronAmt = Math.min(Math.max(0, tronAmtRaw), finalTotal);
     const cashPortion = Math.max(0, finalTotal - tronAmt); // النقد الفعلي الداخل للصندوق
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
     const paid = {
@@ -772,9 +772,9 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     };
     const cashEntry = {
       id: "cash_pay_" + order.id, orderId: order.id, orderNum: order.orderNum, // v33: حتمي => دفع مزدوج لا يضاعف النقد
-      amount: payType === "tron" ? tronAmt : cashPortion, // v36: نقد فعلي فقط (الترون لا يدخل الصندوق)
+      amount: cashPortion, // v39: نقد فعلي فقط (الترون لا يدخل الصندوق)
       at: new Date().toISOString(), by: user.name,
-      type: payType === "tron" ? "tron" : "sale",
+      type: "sale",
       branch: order.branch || "main", shiftId: openShift?.id || null,
     };
     const updated = store.orders.map(o => o.id === order.id ? paid : o);
@@ -1139,12 +1139,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                 style={{ flex: 2, minWidth: 100, background: "#2e7d32", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 13, cursor: payingId ? "wait" : "pointer", opacity: payingId && payingId !== order.id ? .5 : 1 }}>
                 {payingId === order.id ? "⏳ جارٍ الدفع..." : "💵 دفع نقدي"}
               </button>
-              {tronAmt > 0 && (
-                <button onClick={() => markPaid(order, "tron")} disabled={!!payingId}
-                  style={{ flex: 1, minWidth: 70, background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: payingId ? "wait" : "pointer", opacity: payingId ? .6 : 1 }}>
-                  💠 ترون
-                </button>
-              )}
               <button onClick={() => { setPartialInput(""); setPartialModal(order); }}
                 style={{ flex: 1, minWidth: 70, background: "rgba(230,81,0,.15)", color: "#e65100", border: "1.5px solid rgba(230,81,0,.3)", borderRadius: 10, padding: "10px 8px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                 💰 جزئي
