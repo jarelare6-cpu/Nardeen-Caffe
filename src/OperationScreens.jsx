@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, getNextInvoiceNum } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, logActivity } from "./lib/supabase.js";
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, workDayStart, orderCash, orderTron, orderSale } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, calcNetProfit, businessDayStart, workDayStart, orderCash, orderTron, orderSale, refreshOrderPricing } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
@@ -116,8 +116,9 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         if(ex){ ex.qty+=ci.qty; if(ci.note) ex.note=ci.note; }
         else mergedItems.push({...ci});
       });
-      const newTotal=mergedItems.reduce((s,i)=>s+i.price*i.qty,0);
-      store.setOrders(p=>p.map(o=>o.id===targetOrderId?{...o,items:mergedItems,total:newTotal,status:"pending"}:o));
+      // v40: تسعير حيّ لكل الأسطر من المنيو (يمنع اختلاط سعر قديم بجديد)
+      const repriced=refreshOrderPricing({...target,items:mergedItems},store.menu);
+      store.setOrders(p=>p.map(o=>o.id===targetOrderId?{...o,items:repriced.items,total:repriced.total,status:"pending"}:o));
       // v23: إن كان الطلب الهدف من النظام القديم (مخصوم) نخصم الإضافات فوراً؛
       // وإن كان v23 (غير مخصوم) فلا خصم الآن — يُخصم كاملاً عند الدفع.
       if (isStockDeducted(target)) {
@@ -694,7 +695,11 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const todayRevenue = useMemo(() =>
     store.orders.filter(o => o.status === "paid" && new Date(o.paidAt || o.createdAt) >= today).reduce((s, o) => s + orderSale(o), 0) // v39: مبيعات كاملة (تشمل الترون)
     , [store.orders, today]);
-  const readyOrders = useMemo(() => store.orders.filter(o => o.status === "ready"), [store.orders]);
+  // v40: المنيو مصدر السعر الوحيد — تُسعَّر الطلبات الجاهزة حيّاً (يوحّد العرض مع الفاتورة)
+  const readyOrders = useMemo(() => store.orders.filter(o => o.status === "ready").map(o => {
+    const r = refreshOrderPricing(o, store.menu);
+    return { ...o, items: r.items, total: r.total };
+  }), [store.orders, store.menu]);
   const todayExpenses = useMemo(() =>
     (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && new Date(e.date) >= today).reduce((s, e) => s + e.amount, 0)
     , [store.expenses, today]);
@@ -752,27 +757,31 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       showToast("⚠ الطلب لم يعد متاحًا للدفع (رُبّما عولج من جهاز آخر)", "warn");
       return;
     }
+    // v40: تسعير حيّ من المنيو لحظة الدفع — المنيو مصدر السعر الوحيد
+    const priced = refreshOrderPricing(order, store.menu);
+    const baseTotal = priced.total;
     const disc = discounts[order.id] || 0;
-    const discAmt = Math.min(Math.max(0, disc), order.total); // v31.5: مبلغ ثابت
-    const finalTotal = order.total - discAmt;
+    const discAmt = Math.min(Math.max(0, disc), baseTotal); // v31.5: مبلغ ثابت
+    const finalTotal = baseTotal - discAmt;
     const tronAmtRaw = tronAmounts[order.id] || 0;
-    // v39: الترون يُضاف لكل فاتورة (لا زر مستقل). حصّته تُخزَّن على الطلب وتُستبعَد
-    // من نقد الدرج فقط — البيع يبقى ضمن المبيعات كاملاً.
-    const tronAmt = Math.min(Math.max(0, tronAmtRaw), finalTotal);
-    const cashPortion = Math.max(0, finalTotal - tronAmt); // النقد الفعلي الداخل للصندوق
+    // v40: الترون إكرامية «فوق الفاتورة» — لا تُقيَّد بقيمة الفاتورة، ولا تُطرح من نقد الصندوق.
+    // نقدها موجود فعلياً بالصندوق ويُتتبَّع كبند منفصل (انظر orderTron + احتساب المتوقع).
+    const tronAmt = Math.max(0, tronAmtRaw);
+    const cashPortion = finalTotal; // نقد البضاعة كاملاً بالصندوق؛ الترون يُضاف فوقه منفصلاً
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === (order.branch || "main"));
     const paid = {
       ...order, status: "paid", paymentStatus: "paid",
       paymentType: payType,
+      items: priced.items, // v40: أسعار محسومة من المنيو لحظة الدفع
       paidAt: new Date().toISOString(), paidBy: user.id, paidByName: user.name,
-      discount: disc, originalTotal: order.total, total: finalTotal,
+      discount: disc, originalTotal: baseTotal, total: finalTotal,
       tronAmount: tronAmt, // v36: حصّة الترون مخزّنة على الطلب
       shiftId: openShift?.id || order.shiftId || null,
       stockDeducted: true, // v23: يُخصم الآن عند الدفع
     };
     const cashEntry = {
       id: "cash_pay_" + order.id, orderId: order.id, orderNum: order.orderNum, // v33: حتمي => دفع مزدوج لا يضاعف النقد
-      amount: cashPortion, // v39: نقد فعلي فقط (الترون لا يدخل الصندوق)
+      amount: cashPortion, // v40: نقد البضاعة؛ الترون يُتتبَّع منفصلاً على الطلب ويُضاف للمتوقع
       at: new Date().toISOString(), by: user.name,
       type: "sale",
       branch: order.branch || "main", shiftId: openShift?.id || null,
