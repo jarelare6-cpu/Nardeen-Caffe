@@ -273,7 +273,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   const closeShift = () => {
     if (!openShift || !summary) return;
     const counted = Math.max(0, +countedCash || 0);
-    const expectedCash = (openShift.openingCash || 0) + summary.cashSales + (summary.debtSettledCash || 0) - summary.expensesTotal; // v31.6: + نقد سداد الديون
+    const expectedCash = (openShift.openingCash || 0) + summary.cashSales + (summary.tronSales || 0) + (summary.debtSettledCash || 0) - summary.expensesTotal; // v40: + الترون (نقده في الصندوق) — v31.6: + نقد سداد الديون
     const difference = counted - expectedCash;
 
     const closed = {
@@ -368,7 +368,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   };
 
   const expectedCash = openShift && summary
-    ? (openShift.openingCash || 0) + summary.cashSales + (summary.debtSettledCash || 0) - summary.expensesTotal
+    ? (openShift.openingCash || 0) + summary.cashSales + (summary.tronSales || 0) + (summary.debtSettledCash || 0) - summary.expensesTotal // v40: + الترون (نقده في الصندوق)
     : 0;
   const liveDiff = (+countedCash || 0) - expectedCash;
 
