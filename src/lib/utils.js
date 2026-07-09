@@ -474,10 +474,37 @@ export const printOrder = (order, menu, copy = 1, settings) => {
 //  - orderCashFrac: نسبة الجزء النقدي (لتوزيع التكلفة بدقّة).
 //  - orderCogs: تكلفة البضاعة المباعة للطلب (تستثني الأصناف المُقدّمة ضيافةً).
 export const orderTron = (o) => Math.max(0, +(o?.tronAmount) || 0);
-export const orderCash = (o) => Math.max(0, (+(o?.total) || 0) - orderTron(o));
-export const orderCashFrac = (o) => { const t = +(o?.total) || 0; return t > 0 ? orderCash(o) / t : 0; };
+// v40: الترون إكرامية «فوق الفاتورة» — نقده موجود في الصندوق ويُتتبَّع كبند منفصل.
+// `total` يمثّل ثمن البضاعة فقط ولا يشمل الترون، لذا لا يُطرح منه هنا (كان يُطرح مرتين).
+export const orderCash = (o) => Math.max(0, +(o?.total) || 0);        // نقد البضاعة (الترون منفصل، يُضاف للمتوقع)
+export const orderCashFrac = (o) => 1; // البضاعة كاملة؛ الترون لا ينقص حصّة التكلفة
 // v39: قيمة البيع الكاملة (تشمل الترون) — للمبيعات/الإيراد/الربح. الترون يُستبعَد من نقد الدرج فقط.
 export const orderSale = (o) => Math.max(0, +(o?.total) || 0);
+// ══════════════════════════════════════════════════════════════
+// v40 — تسعير حيّ: المنيو هو مصدر السعر الوحيد
+// ══════════════════════════════════════════════════════════════
+// السعر لم يَعُد لقطة مجمّدة على سطر الطلب. عند الفوترة/التعديل يُقرأ السعر
+// الحالي من المنيو. الأصناف اليدوية (خاص/جلسة/سطر فريد/سداد دين) تحتفظ
+// بسعرها المُدخَل يدوياً لأنها ليست في المنيو.
+export const isManualPriceLine = (line) =>
+  !!(line?.special || line?.lineId || line?.itemId === "debt" || line?.isSession || line?.isCustom);
+
+export const livePrice = (line, menu, branch = "main") => {
+  if (isManualPriceLine(line)) return Math.max(0, +line?.price || 0);
+  const m = (menu || []).find((x) => x.id === line?.itemId);
+  if (!m) return Math.max(0, +line?.price || 0); // صنف محذوف من المنيو → أبقِ اللقطة
+  const p = branch === "outdoor" ? (m.outdoorPrice ?? m.price) : m.price;
+  return Math.max(0, p != null ? +p : (+line?.price || 0));
+};
+
+// يعيد نسخة الطلب بأسعار حيّة من المنيو + إجمالي مُعاد الحساب.
+export const refreshOrderPricing = (order, menu) => {
+  const branch = order?.branch || "main";
+  const items = (order?.items || []).map((i) => ({ ...i, price: livePrice(i, menu, branch) }));
+  const total = items.reduce((s, i) => s + (+i.price || 0) * (+i.qty || 0), 0);
+  return { items, total };
+};
+
 export const orderCogs = (o, menu) => {
   const costOf = (id) => { const m = (menu || []).find(x => x.id === id); return m && m.cost != null ? +m.cost : 0; };
   return (o?.items || []).reduce((s, i) => {
