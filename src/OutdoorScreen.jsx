@@ -5,6 +5,7 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { sbDelete, sbUpsert, SUPABASE_READY, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock } from "./lib/stock.js";
+import { refreshOrderPricing } from "./lib/utils.js";
 import { getNextInvoiceNum } from "./lib/store.js";
 import { CancelOrderModal } from "./uikit.jsx";
 
@@ -59,7 +60,10 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
   const settings  = store.settings  || {};
   const CUR       = settings.currency || "ل.س";
   const outdoorTables = store.outdoorTables || [];
-  const orders    = (store.orders || []).filter(o => o.branch === "outdoor");
+  // v40: المنيو مصدر السعر الوحيد — تُسعَّر طلبات الحديقة حيّاً (سعر الحديقة outdoorPrice)
+  const orders    = useMemo(() => (store.orders || []).filter(o => o.branch === "outdoor")
+    .map(o => { const r = refreshOrderPricing(o, store.menu); return { ...o, items: r.items, total: r.total }; }),
+    [store.orders, store.menu]);
   const receipts  = (store.receipts || []).filter(r => r.branch === "outdoor");
 
   // منيو الحديقة: يستخدم outdoor_price إذا موجود
@@ -154,6 +158,10 @@ export default function OutdoorScreen({ user, store, onLogout, showToast: parent
     }
     const now = new Date().toISOString();
     const openShift = (store.shifts || []).find(s => s.status === "open" && s.branch === "outdoor");
+
+    // v40: تسعير حيّ من المنيو لحظة الدفع (المنيو = مصدر السعر الوحيد)
+    const priced = refreshOrderPricing(order, store.menu);
+    order = { ...order, items: priced.items, total: priced.total };
 
     const paidOrder = {
       ...order,
