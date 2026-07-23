@@ -3065,18 +3065,48 @@ export function StockImportTab({ store, user, showToast, settings }){
   const liveNames = new Set(menu.map(m=>_norm(m.name)));
   const missingNew = NEW_ITEMS.filter(n => !liveNames.has(_norm(n.name)));
 
-  // عدّاد الفحم المساعد — رؤوس الأراكيل المباعة هذا الشهر (طلبات مدفوعة) ÷ 6
+  // ── v40: عدّاد استهلاك الأراكيل (فحم + معسل) ──────────────────
+  // المعدّلات المعتمدة من الإدارة:
+  const HK_HEADS_PER_KG   = 7;  // 7 رؤوس = 1 كغ فحم
+  const HK_HEADS_PER_PACK = 26; // تفاحتين: 26 رأساً = كف واحد
+  const HK_HEADS_PER_TIN  = 5;  // باقي النكهات: 5 رؤوس = علبة واحدة
+  const [hkPeriod,setHkPeriod]=useState("month"); // يوم العمل / أسبوع / شهر
+
   const charcoal = useMemo(()=>{
-    const now=new Date(); const mStart=new Date(now.getFullYear(),now.getMonth(),1);
-    const hkIds=new Set(menu.filter(m=>m.category==="hookah").map(m=>m.id));
-    let heads=0;
+    const d=new Date();
+    const start = hkPeriod==="today" ? workDayStart(store.shifts)
+                : hkPeriod==="week"  ? weekStartThursday()
+                : new Date(d.getFullYear(), d.getMonth(), 1);
+
+    const hkItems=menu.filter(m=>m.category==="hookah");
+    const hkMap=new Map(hkItems.map(m=>[m.id,m]));
+    const isDoubleApple=(m)=>_norm(m?.name).includes(_norm("تفاحتين"));
+
+    let heads=0, daHeads=0, otherHeads=0;
+    const byItem={}; // اسم الصنف -> عدد الرؤوس
+
     (store.orders||[]).forEach(o=>{
+      // يشمل: مدفوع + دين + ضيافة — كلها تستهلك فحماً ومعسلاً فعلياً
       if(!["paid","debt","complimentary"].includes(o.status)) return;
-      if(new Date(o.paidAt||o.createdAt) < mStart) return;
-      (o.items||[]).forEach(it=>{ if(hkIds.has(it.itemId)) heads += (+it.qty||0); });
+      if(new Date(o.paidAt||o.createdAt) < start) return;
+      (o.items||[]).forEach(it=>{
+        const m=hkMap.get(it.itemId); if(!m) return;
+        const q=+it.qty||0; if(q<=0) return;
+        heads+=q;
+        if(isDoubleApple(m)) daHeads+=q; else otherHeads+=q;
+        byItem[m.name]=(byItem[m.name]||0)+q;
+      });
     });
-    return { heads, kg:Math.round((heads/6)*10)/10 };
-  },[menu, store.orders]);
+
+    const r1=(n)=>Math.round(n*10)/10;
+    return {
+      heads, daHeads, otherHeads,
+      kg:        r1(heads/HK_HEADS_PER_KG),          // فحم (كغ)
+      daPacks:   r1(daHeads/HK_HEADS_PER_PACK),      // تفاحتين (كف)
+      otherTins: r1(otherHeads/HK_HEADS_PER_TIN),    // باقي النكهات (علبة)
+      breakdown: Object.entries(byItem).sort((a,b)=>b[1]-a[1]),
+    };
+  },[menu, store.orders, store.shifts, hkPeriod]);
 
   const changedCount = rows.filter(r =>
     Math.round(+r.stock)!==r.origStock ||
@@ -3164,17 +3194,52 @@ export function StockImportTab({ store, user, showToast, settings }){
         </span>
       </div>
 
-      {/* عدّاد الفحم المساعد */}
-      <div className="card" style={{borderTop:"4px solid #455a64",marginBottom:12,
-        display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:6}}>
-        <div>
-          <div style={{fontWeight:800,fontSize:13}}>🪨 عدّاد الفحم المساعد (هذا الشهر)</div>
-          <div style={{fontSize:11,color:"var(--sub)"}}>تقديري — كل 6 رؤوس = 1 كغ. لا يُخصم آلياً، الجرد يدوي.</div>
+      {/* v40: عدّاد استهلاك الأراكيل — فحم + معسل */}
+      <div className="card" style={{borderTop:"4px solid #455a64",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:10}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:13}}>💨 استهلاك الأراكيل (تقديري)</div>
+            <div style={{fontSize:11,color:"var(--sub)"}}>
+              يشمل المدفوع + الدين + الضيافة • {HK_HEADS_PER_KG} رؤوس = 1 كغ فحم • {HK_HEADS_PER_PACK} رأساً = كف تفاحتين • {HK_HEADS_PER_TIN} رؤوس = علبة نكهة
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            {[["today","يوم العمل"],["week","الأسبوع"],["month","الشهر"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setHkPeriod(v)} style={{padding:"5px 10px",borderRadius:14,border:"none",
+                background:hkPeriod===v?"#455a64":"var(--card2)",color:hkPeriod===v?"#fff":"var(--sub)",fontWeight:700,fontSize:11,cursor:"pointer"}}>
+                {l}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:20,fontWeight:900,color:"#455a64"}}>{charcoal.kg} كغ</div>
-          <div style={{fontSize:11,color:"var(--sub)"}}>{charcoal.heads} رأس مباع</div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
+          {[
+            ["🪨 فحم",       `${charcoal.kg} كغ`,        `${charcoal.heads} رأس`,      "#455a64"],
+            ["🍏 تفاحتين",   `${charcoal.daPacks} كف`,   `${charcoal.daHeads} رأس`,    "#2e7d32"],
+            ["🫙 باقي النكهات",`${charcoal.otherTins} علبة`,`${charcoal.otherHeads} رأس`,"#6a1b9a"],
+          ].map(([label,val,sub,color])=>(
+            <div key={label} style={{background:"var(--card2)",borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
+              <div style={{fontSize:11,color:"var(--sub)",fontWeight:700}}>{label}</div>
+              <div style={{fontSize:19,fontWeight:900,color}}>{val}</div>
+              <div style={{fontSize:10,color:"var(--sub)"}}>{sub}</div>
+            </div>
+          ))}
         </div>
+
+        {charcoal.breakdown.length>0&&(
+          <div style={{marginTop:10,paddingTop:8,borderTop:"1px dashed var(--border)"}}>
+            <div style={{fontSize:11,color:"var(--sub)",fontWeight:700,marginBottom:5}}>تفصيل الرؤوس حسب النكهة</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {charcoal.breakdown.map(([n,q])=>(
+                <span key={n} style={{fontSize:11,background:"var(--card2)",borderRadius:8,padding:"3px 8px",fontWeight:700}}>
+                  {n} <b style={{color:"#455a64"}}>×{q}</b>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{fontSize:10,color:"var(--sub)",marginTop:8}}>تقديري — لا يُخصم آلياً من المخزون، الجرد يدوي.</div>
       </div>
 
       {/* أصناف جديدة مقترحة */}
