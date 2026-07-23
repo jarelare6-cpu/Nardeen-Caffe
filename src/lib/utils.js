@@ -550,19 +550,25 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
   const totalSales = paid.reduce((s, o) => s + orderSale(o), 0); // v39: المبيعات الكاملة (تشمل الترون)
 
-  const shiftExpenses = (expenses || []).filter(e => {
+  // v40: نفصل المصاريف اليومية (تمسّ الصندوق) عن الثانوية (بند منفصل لا يمسّ الصندوق)
+  const inShiftWindow = (e) => {
     if ((e.branch || "main") !== branch) return false;
-    // v30.1: المصاريف الثانوية لا تدخل حساب الوردية إطلاقاً (لا تمسّ الصندوق)
-    if (e.isSecondary) return false;
-    // v4.7.0: بالمعرّف أولًا، ثم زمنيًا ضمن نطاق الوردية للمصاريف القديمة
     if (shiftId && e.shiftId) return e.shiftId === shiftId;
     return inWindow(e.date);
+  };
+  const shiftExpenses = (expenses || []).filter(e => {
+    // v30.1: المصاريف الثانوية لا تدخل حساب الوردية إطلاقاً (لا تمسّ الصندوق)
+    if (e.isSecondary) return false;
+    return inShiftWindow(e);
   }).reduce((s, e) => s + (e.amount || 0), 0);
+  const secExpensesTotal = (expenses || []).filter(e => e.isSecondary && inShiftWindow(e))
+    .reduce((s, e) => s + (e.amount || 0), 0); // v40: بند منفصل للعرض فقط
 
   return {
     cashSales, cardSales, tronSales, debtTotal, compTotal, totalSales, debtSettledCash,
     ordersCount: paid.length,
     expensesTotal: shiftExpenses,
+    secExpensesTotal, // v40
   };
 };
 
