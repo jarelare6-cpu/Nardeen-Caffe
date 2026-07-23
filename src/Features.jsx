@@ -290,6 +290,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       totalSales: summary.totalSales,
       ordersCount: summary.ordersCount,
       expensesTotal: summary.expensesTotal,
+      secExpensesTotal: summary.secExpensesTotal, // v40: بند منفصل في التقرير
       status: "closed",
       notes,
     };
@@ -309,6 +310,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
         const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
         const sum = (a, f = o => o.total || 0) => a.reduce((s, o) => s + f(o), 0);
         const expToday = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inToday(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
+        const secExpToday = (store.expenses || []).filter(e => e.isSecondary && inToday(e.date)).reduce((s, e) => s + (e.amount || 0), 0); // v40: منفصل
         const costToday = paidToday.reduce((s, o) => s + orderCogs(o, store.menu), 0); // v39: التكلفة الكاملة
         const revenue = sum(paidToday, orderSale); // v39: مبيعات كاملة (تشمل الترون)
         const daily = {
@@ -316,6 +318,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           card: sum(paidToday.filter(o => o.paymentType === "card"), orderCash),
           tron: sum(paidToday, orderTron), // v36: بند الترون المنفصل
           expenses: expToday,
+          secExpenses: secExpToday, // v40: بند منفصل — لا يُطرح من الربح
           debts: sum((store.orders || []).filter(o => o.status === "debt" && inToday(o.createdAt))),
           comp: (store.orders || []).filter(o => inToday(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6: كل طلبات اليوم
           profit: revenue - costToday - expToday,
@@ -333,10 +336,12 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
             const inWeek = (iso) => iso && new Date(iso) >= wkStart;
             const paidWk = (store.orders || []).filter(o => o.status === "paid" && inWeek(o.paidAt || o.createdAt));
             const expWk = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
+            const secExpWk = (store.expenses || []).filter(e => e.isSecondary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0); // v40: منفصل
             const costWk = paidWk.reduce((s, o) => s + orderCogs(o, store.menu), 0); // v39: التكلفة الكاملة
             const revWk = sum(paidWk, orderSale); // v39: مبيعات كاملة
             const weekly = {
               revenue: revWk, expenses: expWk,
+              secExpenses: secExpWk, // v40: بند منفصل — لا يُطرح من الربح
               profit: revWk - costWk - expWk,
               orders: paidWk.length,
               cash: sum(paidWk.filter(o => o.paymentType === "cash"), orderCash),
