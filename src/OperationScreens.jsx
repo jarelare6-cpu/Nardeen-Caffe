@@ -1767,9 +1767,35 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
     return new Date(0);
   };
 
+  const [expanded,setExpanded]=useState({}); // v40: توسيع مجموعة مصاريف متشابهة
   const expenses=store.expenses||[];
   const filtered=expenses.filter(e=>new Date(e.date)>=getStart()).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  const total=filtered.reduce((s,e)=>s+e.amount,0);
+  const primaryList=filtered.filter(e=>!e.isSecondary);
+  const secondaryList=filtered.filter(e=>e.isSecondary);
+  const primaryTotal=primaryList.reduce((s,e)=>s+e.amount,0);
+  const secondaryTotal=secondaryList.reduce((s,e)=>s+e.amount,0);
+  const total=primaryTotal; // الإجمالي المعروض = اليومي فقط (الثانوي منفصل)
+
+  // v40: تجميع داخل كل فئة حسب الوصف — مجموعات مبلغها المجمّع وعددها
+  const groupByCatDesc=(list)=>{
+    const cats={};
+    list.forEach(e=>{
+      const catId=e.category||"other";
+      const key=(e.description||"").trim()||"—";
+      if(!cats[catId]) cats[catId]={catId,total:0,groups:{}};
+      const g=cats[catId].groups[key]||(cats[catId].groups[key]={desc:key,total:0,count:0,entries:[]});
+      g.total+=e.amount||0; g.count+=1; g.entries.push(e);
+      cats[catId].total+=e.amount||0;
+    });
+    return Object.values(cats).map(c=>({
+      ...c,
+      groups:Object.values(c.groups).sort((a,b)=>b.total-a.total),
+    })).sort((a,b)=>b.total-a.total);
+  };
+  const primaryGroups=groupByCatDesc(primaryList);
+  const secondaryGroups=groupByCatDesc(secondaryList);
+  const catMeta=(id)=>expCats.find(c=>c.id===id)||expCats[expCats.length-1];
+  const toggleGroup=(k)=>setExpanded(p=>({...p,[k]:!p[k]}));
 
   const addExpense=()=>{
     if(!form.description||!form.amount){showToast("يرجى ملء الحقول","error");return}
@@ -1816,38 +1842,75 @@ export function ExpensesTab({store,user,showToast,dm,settings}){
       </div>
       <div className="card" style={{marginBottom:16,borderRight:"4px solid #e65100"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:13,color:"var(--sub)"}}>إجمالي المصاريف</div>
-          <div style={{fontSize:22,fontWeight:900,color:"#e65100"}}>{total.toLocaleString()} {CUR}</div>
+          <div style={{fontSize:13,color:"var(--sub)"}}>إجمالي المصاريف اليومية</div>
+          <div style={{fontSize:22,fontWeight:900,color:"#e65100"}}>{primaryTotal.toLocaleString()} {CUR}</div>
         </div>
+        {secondaryTotal>0&&(
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8,paddingTop:8,borderTop:"1px dashed var(--border)"}}>
+            <div style={{fontSize:12,color:"#f9a825",fontWeight:700}}>⭐ مصاريف ثانوية (منفصلة)</div>
+            <div style={{fontSize:15,fontWeight:900,color:"#f9a825"}}>{secondaryTotal.toLocaleString()} {CUR}</div>
+          </div>
+        )}
       </div>
       {!filtered.length?(
         <div style={{textAlign:"center",padding:60,color:"var(--sub)"}}>
           <div style={{fontSize:48}}>📒</div><div style={{marginTop:10}}>لا توجد مصاريف</div>
         </div>
       ):(
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {filtered.map(e=>{
-            const cat=expCats.find(c=>c.id===e.category)||expCats[expCats.length-1];
-            return(
-              <div key={e.id} className="card" style={{display:"flex",alignItems:"center",gap:12}}>
-                <div style={{fontSize:28}}>{cat.label.split(" ")[0]}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:700,fontSize:14}}>{e.description}
-                    {e.isSecondary&&<span style={{fontSize:10,background:"rgba(249,168,37,.2)",color:"#f9a825",borderRadius:6,padding:"1px 6px",marginInlineStart:6,fontWeight:800}}>⭐ ثانوي</span>}
+        [
+          {key:"p",title:"📒 مصاريف يومية",accent:"#e65100",groups:primaryGroups,total:primaryTotal},
+          {key:"s",title:"⭐ مصاريف ثانوية (منفصلة عن الصندوق)",accent:"#f9a825",groups:secondaryGroups,total:secondaryTotal},
+        ].map(sec=> sec.groups.length===0 ? null : (
+          <div key={sec.key} style={{marginBottom:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <h3 style={{fontSize:15,fontWeight:900,color:sec.accent}}>{sec.title}</h3>
+              <div style={{fontWeight:900,color:sec.accent}}>{sec.total.toLocaleString()} {CUR}</div>
+            </div>
+            {sec.groups.map(cat=>{
+              const meta=catMeta(cat.catId);
+              return(
+                <div key={sec.key+cat.catId} className="card" style={{marginBottom:10,padding:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontWeight:800,fontSize:13}}>{meta.label}</span>
+                    <span style={{fontWeight:800,color:sec.accent,fontSize:13}}>{cat.total.toLocaleString()} {CUR}</span>
                   </div>
-                  <div style={{fontSize:11,color:"var(--sub)"}}>
-                    {cat.label.split(" ").slice(1).join(" ")} • {new Date(e.date).toLocaleDateString("ar-SY")} • {e.createdBy}
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {cat.groups.map(g=>{
+                      const gkey=sec.key+"|"+cat.catId+"|"+g.desc;
+                      const open=!!expanded[gkey];
+                      return(
+                        <div key={gkey} style={{borderTop:"1px dashed var(--border)",paddingTop:6}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                            <button onClick={()=> g.count>1 ? toggleGroup(gkey) : startEditExp(g.entries[0])}
+                              style={{flex:1,textAlign:"start",background:"transparent",border:"none",color:"var(--text)",fontWeight:700,fontSize:13,cursor:"pointer",padding:0}}>
+                              {g.count>1&&<span style={{color:"var(--sub)"}}>{open?"▾":"▸"} </span>}
+                              {g.desc}
+                              {g.count>1&&<span style={{fontSize:11,color:"var(--sub)",fontWeight:700}}> ×{g.count}</span>}
+                            </button>
+                            <span style={{fontWeight:900,color:sec.accent,fontSize:14,whiteSpace:"nowrap"}}>{g.total.toLocaleString()} {CUR}</span>
+                          </div>
+                          {open&&g.count>1&&(
+                            <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6,paddingInlineStart:14}}>
+                              {g.entries.map(e=>(
+                                <div key={e.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,color:"var(--sub)"}}>
+                                  <span>{new Date(e.date).toLocaleDateString("ar-SY")} • {e.createdBy}{e.notes?` • 📝 ${e.notes}`:""}</span>
+                                  <span style={{display:"inline-flex",gap:8,alignItems:"center"}}>
+                                    <span style={{fontWeight:700,color:"var(--text)"}}>{e.amount.toLocaleString()}</span>
+                                    <button onClick={()=>startEditExp(e)} style={{padding:"2px 8px",borderRadius:6,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:10,cursor:"pointer"}}>✏</button>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                  {e.notes&&<div style={{fontSize:11,color:"var(--sub)"}}>📝 {e.notes}</div>}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-                  <div style={{fontWeight:900,color:"#e65100",fontSize:15}}>{e.amount.toLocaleString()} {CUR}</div>
-                  <button onClick={()=>startEditExp(e)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>✏ تعديل</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ))
       )}
       {showAdd&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
