@@ -77,7 +77,8 @@ export function ItemVisual({ item, size = 40, round = 12 }) {
 
 export function BottomNav({ navItems, tab, setTab, role }) {
   const [showMore, setShowMore] = useState(false);
-  const adminPrimary = ["dashboard", "outdoor_admin", "menu", "bar"];
+  // v43: الورديات بدل «الحديقة أدمن» في الشريط الأساسي — الحديقة تنتقل لقائمة «المزيد»
+  const adminPrimary = ["dashboard", "shifts", "menu", "bar"];
   let primary, rest;
   if (role === "admin") {
     primary = adminPrimary.map(k => navItems.find(([t]) => t === k)).filter(Boolean);

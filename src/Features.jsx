@@ -256,6 +256,19 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   }, [openShift, store.orders, store.expenses, branch]);
 
   const openNewShift = () => {
+    // ══════════════════════════════════════════════════════════════
+    // v43: حارس الوردية المزدوجة
+    // جهازان يفتحان وردية على الفرع نفسه في اللحظة ذاتها كان ينتج
+    // ورديتين مفتوحتين، فتتوزّع الطلبات بينهما عشوائياً وينهار جرد
+    // الصندوق. القاعدة تمنعه بفهرس فريد (هجرة v43)، وهذا الفحص يمنع
+    // الحالة قبل وصولها ويعطي رسالة مفهومة بدل خطأ قاعدة بيانات.
+    // ══════════════════════════════════════════════════════════════
+    const already = (store.shifts || []).find(x => x.status === "open" && (x.branch || "main") === branch);
+    if (already) {
+      showToast(`⚠ توجد وردية مفتوحة بالفعل (${already.userName || "—"}) — أقفلها أولاً`, "error");
+      setConfirmType(false);
+      return;
+    }
     const oc = Math.max(0, +openingCash || 0);
     const newShift = {
       id: "shift_" + Date.now(),
@@ -385,6 +398,14 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   // إن تأخّر إقفالها بعد 3:00 فجراً انتقل إيرادها كاملاً إلى جرد الغد،
   // ولم يعد جرد اليوم يشمل الورديات الثلاث. نُنبّه قبل وقوع ذلك.
   // ══════════════════════════════════════════════════════════════
+  // v43: عمر الوردية المفتوحة — تنبيه إن تُركت مفتوحة سهواً
+  const maxShiftHours = settings?.shiftMaxHours || 12;
+  const shiftAge = useMemo(() => {
+    if (!openShift?.openedAt) return { hours: 0, tooLong: false };
+    const h = (Date.now() - new Date(openShift.openedAt).getTime()) / 3600000;
+    return { hours: Math.floor(h), tooLong: h > maxShiftHours };
+  }, [openShift, countedCash, maxShiftHours]);
+
   const dayGuard = useMemo(() => {
     const now = new Date();
     const key = businessDayKey(now);
@@ -544,6 +565,13 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
                 color: dayGuard.near ? "#e65100" : "var(--sub)",
               }}>
                 🗓 ستُحتسب هذه الوردية في جرد: <strong>{formatDayKey(dayGuard.key)}</strong>
+                {shiftAge.tooLong && (
+                  <>
+                    <br />
+                    ⏱ هذه الوردية مفتوحة منذ <strong>{shiftAge.hours} ساعة</strong> — تجاوزت الحدّ المعتاد
+                    ({maxShiftHours} ساعة). تأكّد أنها لم تُترك مفتوحة سهواً.
+                  </>
+                )}
                 {dayGuard.near && (
                   <>
                     <br />

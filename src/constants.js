@@ -69,8 +69,7 @@ export const PERMISSIONS = {
   bar:          ["admin","bar"],
   hookah:       ["admin","hookah"],
   kds:          ["admin","bar","hookah","cashier"],
-  shift:        ["admin","cashier"],
-  shiftlog:     ["admin","cashier"], // v41: سجل الورديات / الجرد اليومي
+  shifts:       ["admin","cashier"], // v43: صفحة الورديات الموحّدة (تقفيل + سجل + أداء)
   stocklog:     ["admin"],            // v42: سجل حركات المخزون
   menu:         ["admin"],
   stockimport:  ["admin"],
@@ -105,3 +104,4 @@ export const THEMES = {
   teal:    { primary:"#00897b", secondary:"#00695c", accent:"#80cbc4" },
   dark:    { primary:"#c62828", secondary:"#1565c0", accent:"#f9a825" },
 };
+

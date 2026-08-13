@@ -524,7 +524,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   };
   const cancelOrder=(order,reason="")=>{
     store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled",cancelReason:reason||""}:o));
-    restoreOrderStock(store, order); // v23: يُرجع فقط إن كان قد خُصم
+    restoreOrderStock(store, order, { userId: user.id, userName: user.name, userRole: user.role }); // v23: يُرجع فقط إن كان قد خُصم
     logActivity({ action: "إلغاء طلب", details: reason||"بلا سبب", userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
     // v27: تنبيه تليجرام صامت
     notifyTelegram(settings?.telegramTargets||[], "cancel", buildEventMsg("cancel", { orderNum: order.orderNum, customerName: order.customerName, amount: order.total, reason: reason||"بلا سبب", by: user.name }, settings?.cafeName||"ناردين كافيه", settings?.currency||"ل.س"));
@@ -864,7 +864,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     const payRes = await store.payOrder(paid, cashEntry, { freeTable: shouldFreeTable });
 
     // v23: خصم المخزون عند الدفع (للطلبات الجديدة غير المخصومة)
-    deductOrderStock(store, order);
+    deductOrderStock(store, order, { userId: user.id, userName: user.name, userRole: user.role, shiftId: openShift?.id || order.shiftId || null });
 
     // v24: تسجيل مصروف تلقائي لتكلفة شراء "الطلبات الخاصة" (شراء وبيع)
     const customLines = (order.items || []).filter(it => it.special === "custom" && (it.customCost || 0) > 0);
@@ -942,7 +942,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       o.id === order.id ? { ...o, status: "debt", paymentStatus: "debt", paymentType: "debt", customerName: nameToUse, stockDeducted: true, shiftId: openShift?.id || o.shiftId || null } : o
     );
     store.setOrders(() => updated);
-    deductOrderStock(store, order); // v23: خصم عند تحويل الطلب لدين
+    deductOrderStock(store, order, { userId: user.id, userName: user.name, userRole: user.role, shiftId: openShift?.id || order.shiftId || null }); // v23: خصم عند تحويل الطلب لدين
     logActivity({ action: "تسجيل دين", details: nameToUse, userName: user.name, userRole: user.role, orderNum: order.orderNum, amount: order.total, branch: order.branch || "main" });
 
     if (debtMergeMode) {
@@ -1017,7 +1017,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     };
     store.setOrders(prev => prev.map(o => o.id === order.id ? { ...o, ...patch } : o));
     const updated = store.orders.map(o => o.id === order.id ? { ...o, ...patch } : o);
-    deductOrderStock(store, order); // خصم مرة واحدة
+    deductOrderStock(store, order, { userId: user.id, userName: user.name, userRole: user.role, shiftId: openShift?.id || order.shiftId || null, reason: "comp" }); // خصم مرة واحدة
     store.setCompLog(p => [{
       id: "wrk" + Date.now(), reason: "worker",
       customerName: workerName, tableNum: order.table || "",
@@ -1067,7 +1067,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
       shiftId: openShift?.id || o.shiftId || null, // v4.7.0
     } : o);
     store.setOrders(() => updated);
-    if (fullyComp) deductOrderStock(store, order); // v23: الضيافة الكاملة = تسليم
+    if (fullyComp) deductOrderStock(store, order, { userId: user.id, userName: user.name, userRole: user.role, shiftId: openShift?.id || order.shiftId || null, reason: "comp" }); // v23: الضيافة الكاملة = تسليم
     store.setCompLog(p => [{
       id: "comp" + Date.now(),
       customerName: order.customerName || "زبون",

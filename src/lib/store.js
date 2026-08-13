@@ -20,7 +20,7 @@ import {
   subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll, payOrderAtomic,
   enqueueWrite, enqueueDelete, flushOutbox, outboxPendingIds,
-  adjustStockAtomic, adjustSupplyAtomic, subscribeSupplies, subscribeStockMovements,
+  adjustStockAtomic, adjustSupplyAtomic, adjustStockBulkAtomic, subscribeSupplies, subscribeStockMovements,
 } from "./supabase";
 import {
   rowOfCash, rowOfExpense, rowOfExpenseLegacy, rowOfOrder, mapOrder, mapExpense,
@@ -877,6 +877,72 @@ export const useStore = () => {
   useEffect(() => { menuRef.current = menu; }, [menu]);
   useEffect(() => { suppliesRef.current = supplies; }, [supplies]);
 
+  // v43: خصم/إرجاع مخزون طلب كامل — ذرّي في القاعدة ومُسجَّل في stock_movements.
+  // كان البيع يخصم بكتابة قيمة مطلقة من المتصفح وخارج السجل تماماً، فلا
+  // يمكن تدقيقه ولا يسلم من فقدان التحديث. sign = -1 خصم، +1 إرجاع.
+  const applyOrderStock = useCallback(async (order, sign = -1, meta = {}) => {
+    const items = (order?.items || []).map(i => ({ itemId: i.itemId, qty: +i.qty || 0 }));
+    if (!items.length) return { ok: true, applied: 0 };
+    // الأصناف الخدمية/مفتوحة المخزون لا تُخصم (نفس قاعدة القاعدة)
+    const tracked = items.filter(i => {
+      const m = menuRef.current.find(x => x.id === i.itemId);
+      return m && !m.noStock && m.trackStock !== false;
+    });
+    if (!tracked.length) return { ok: true, applied: 0 };
+    const reason = meta.reason || (sign < 0 ? "sale" : "return");
+
+    if (SUPABASE_READY) {
+      const res = await adjustStockBulkAtomic({
+        items: tracked, sign, reason,
+        orderId: order.id, orderNum: order.orderNum || "",
+        userId: meta.userId || null, userName: meta.userName || "", userRole: meta.userRole || "",
+        shiftId: meta.shiftId || order.shiftId || null, branch: meta.branch || order.branch || "main",
+        key: meta.key || order.id,
+      });
+      if (res.ok) {
+        // نطبّق محلياً للعرض الفوري (القاعدة هي المرجع وستصل عبر المزامنة)
+        setMenuRaw(p => {
+          const n = p.map(m => {
+            const it = tracked.find(x => x.itemId === m.id);
+            if (!it) return m;
+            return { ...m, stock: Math.max(0, (+m.stock || 0) + sign * it.qty),
+                     totalSold: Math.max(0, (+m.totalSold || 0) - sign * it.qty) };
+          });
+          broadcast("nc_menu", n); return n;
+        });
+        return { ok: true, applied: res.applied, atomic: true };
+      }
+    }
+
+    // ارتداد محلي (قبل هجرة v43 أو دون اتصال) — مع تسجيل الحركات
+    setMenuRaw(p => {
+      const n = p.map(m => {
+        const it = tracked.find(x => x.itemId === m.id);
+        if (!it) return m;
+        return { ...m, stock: Math.max(0, (+m.stock || 0) + sign * it.qty),
+                 totalSold: Math.max(0, (+m.totalSold || 0) - sign * it.qty) };
+      });
+      broadcast("nc_menu", n);
+      if (SUPABASE_READY) n.forEach(m => {
+        if (tracked.some(x => x.itemId === m.id)) enqueueWrite("menu_items", { id: m.id, stock: m.stock, total_sold: m.totalSold }, "id");
+      });
+      return n;
+    });
+    tracked.forEach(it => {
+      const m = menuRef.current.find(x => x.id === it.itemId);
+      logStockMove({
+        id: `mv_${meta.key || order.id}_${it.itemId}_${reason}`, // حتمي ⇒ لا تكرار
+        kind: "menu", itemId: it.itemId, itemName: m?.name || "",
+        delta: sign * it.qty, qtyAfter: null, reason,
+        orderId: order.id, orderNum: order.orderNum || "",
+        userId: meta.userId || null, userName: meta.userName || "", userRole: meta.userRole || "",
+        shiftId: meta.shiftId || order.shiftId || null, branch: meta.branch || order.branch || "main",
+      });
+    });
+    if (SUPABASE_READY) flushOutbox();
+    return { ok: true, atomic: false };
+  }, [logStockMove]);
+
   const addTable = useCallback(() => {
     setTablesRaw(p => {
       const maxNum = p.length > 0 ? Math.max(...p.map(t => t.number)) : 0;
@@ -1369,6 +1435,7 @@ export const useStore = () => {
     supplies, setSupplies,                       // v42
     stockMoves, logStockMove,                    // v42
     adjustStock, adjustSupply,                   // v42: تعديل ذرّي بفارق نسبي
+    applyOrderStock,                             // v43: خصم/إرجاع مخزون الطلب ذرّياً ومُسجَّلاً
     payOrder,
     syncing, cloudReady,
   };

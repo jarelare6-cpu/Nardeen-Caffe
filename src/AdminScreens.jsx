@@ -4,6 +4,8 @@ import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { MOVE_REASONS, reasonLabel, summarizeMovements } from "./lib/stockLog.js"; // v42
+import { newMoveId } from "./lib/stockLog.js"; // v43
+import { fetchSalesTotals, fetchCogs, fetchExpenseTotals, fetchStaffPerformance, approxMark, approxNote } from "./lib/aggregates.js"; // v43
 import { notifyTelegram, buildEventMsg, testTelegramTarget, TELEGRAM_EVENTS } from "./lib/telegram.js";
 
 // v24.1: تأكيد كتابي عبر مودال داخلي موثوق (window.prompt معطّل في WebView/أندرويد)
@@ -51,7 +53,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron, orderSale, orderCogs, businessDayKey, formatDayKey, listBusinessDays, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron, orderSale, orderCogs, businessDayKey, businessDayEnd, formatDayKey, listBusinessDays, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -78,154 +80,271 @@ async function compressImage(file, max = 320, quality = 0.72) {
   });
 }
 
-export function DashboardTab({store,dm,settings}){
+// ═══════════════════════════════════════════════════════════════════════
+// v43 — لوحة التحكم، مُعاد تنظيمها
+// ───────────────────────────────────────────────────────────────────────
+// كانت تسع بطاقات متجاورة بلا تجميع: إيراد كل الوقت، مبيعات اليوم، ربح،
+// طلبات معلّقة، ديون، مصاريف، مخزون — مالي وتشغيلي وتحذيري في صفٍّ واحد.
+// الآن أربعة أقسام صريحة: يوم العمل · الإيراد · النفقات · سجل العمل.
+//
+// وأُصلحت ثلاث علل:
+//  ١) بطاقتا «كل الوقت» كانتا تحسبان آخر 500 طلب فقط ثم تسمّيانه إجمالي
+//     المشروع. صارتا تُجمَّعان في القاعدة (تشملان الأرشيف)، وإن تعذّر
+//     التجميع يُوسَم الرقم بـ«≈» صراحةً بدل الكذب الصامت.
+//  ٢) الترويسة كانت تعرض تاريخ الجهاز المحلي فوق أرقام يوم غرينتش، فبين
+//     منتصف الليل و3 فجراً دمشق يظهر عنوان يوم غير الأرقام تحته.
+//  ٣) الرسم البياني كان بساعات الجهاز المحلي، فنافذته تعبر يومين محاسبيين.
+// ═══════════════════════════════════════════════════════════════════════
+export function DashboardTab({store,dm,settings,user}){
   const CUR=settings?.currency||"ل.س";
-  // مراقبة الأجهزة المتصلة (heartbeat سحابي)
   const [devices,setDevices]=useState([]);
   const [showAllDev,setShowAllDev]=useState(false);
+  const [totals,setTotals]=useState(null);        // إجماليات الخادم (كل الوقت)
+  const [totalCogs,setTotalCogs]=useState(null);
+
   useEffect(()=>{
     let active=true;
     const load=async()=>{ try{ const d=await sbFetchDevices(); if(active) setDevices(d||[]); }catch{} };
     load(); const iv=setInterval(load,30000);
     return ()=>{ active=false; clearInterval(iv); };
   },[]);
-  const today = workDayStart(store.shifts); // v37
-  const todayOrders=store.orders.filter(o=>new Date(o.createdAt)>=today);
-  const totalRevenue=store.orders.filter(o=>o.status==="paid").reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
-  const todayPaidOrders=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=today);
-  const todayRevenue=todayPaidOrders.reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
-  const pending=store.orders.filter(o=>o.status==="pending").length;
-  const preparing=store.orders.filter(o=>o.status==="preparing").length;
-  const totalDebts=store.debts.filter(d=>!d.settled).reduce((s,d)=>s+d.remaining,0);
-  const todayExpenses=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=today).reduce((s,e)=>s+e.amount,0); // v36: المصاريف الثانوية منفصلة
-  const lowStock=checkStockAlerts(store.menu); // v28: موحّد — حقيقي فقط وعند النفاد (<1)
-  const todayProfit=calcNetProfit(store.orders,store.menu,today);
-  const totalProfit=calcNetProfit(store.orders,store.menu);
-  const topItems=store.menu.slice().sort((a,b)=>b.totalSold-a.totalSold).slice(0,5);
-  const now=new Date();
 
-  const hourly=Array.from({length:12},(_,i)=>{
-    const h=now.getHours()-11+i;
-    const s=new Date();s.setHours(h,0,0,0);
-    const e=new Date();e.setHours(h+1,0,0,0);
-    const rev=store.orders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=s&&new Date(o.paidAt||o.createdAt)<e).reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
-    return{h:`${h<0?24+h:h}`,rev};
-  });
-  const maxRev=Math.max(...hourly.map(d=>d.rev),1);
+  // v43: الإجماليات من القاعدة — رقم صحيح مهما كبر التاريخ
+  useEffect(()=>{
+    let alive=true;
+    Promise.all([
+      fetchSalesTotals(store.orders,{}),
+      fetchCogs(store.orders,store.menu,{}),
+    ]).then(([t,c])=>{ if(alive){ setTotals(t); setTotalCogs(c); } }).catch(()=>{});
+    return ()=>{ alive=false; };
+  },[store.orders.length,store.menu.length]);
 
-  const Stat=({icon,label,val,sub,color})=>(
-    <div className="card hoverable" style={{
-      background:`linear-gradient(135deg, ${color}26, var(--card) 70%)`,
-      border:`1px solid ${color}40`,
-      borderTop:`4px solid ${color}`,
-      boxShadow:`0 10px 26px ${color}22, var(--shadow)`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
-        <div>
-          <div style={{color:"var(--sub)",fontSize:12,marginBottom:6,fontWeight:600}}>{label}</div>
-          <div style={{fontSize:24,fontWeight:900,color}}>{val}</div>
-          {sub&&<div style={{fontSize:11,color:"var(--sub)",marginTop:4}}>{sub}</div>}
-        </div>
-        <span style={{fontSize:24,width:48,height:48,flexShrink:0,display:"flex",alignItems:"center",
-          justifyContent:"center",borderRadius:16,background:`${color}26`,
-          boxShadow:`inset 0 0 0 1px ${color}33`}}>{icon}</span>
+  const dayStart=useMemo(()=>businessDayStart(),[]);
+  const dayEndTs=useMemo(()=>businessDayEnd().getTime(),[]);
+  const dayKey=useMemo(()=>businessDayKey(),[]);
+
+  const inDay=useCallback((iso)=>{
+    if(!iso) return false;
+    const t=new Date(iso).getTime();
+    return t>=dayStart.getTime() && t<dayEndTs;
+  },[dayStart,dayEndTs]);
+
+  // ── حسابات اليوم (مُذكَّرة — كانت تُعاد عند كل عرض) ──
+  const d=useMemo(()=>{
+    const paid=store.orders.filter(o=>o.status==="paid"&&!o.isComplimentary&&inDay(o.paidAt||o.createdAt));
+    const sum=(a,f)=>a.reduce((s,o)=>s+f(o),0);
+    const sales=sum(paid,orderSale);
+    const cogs=paid.reduce((s,o)=>s+orderCogs(o,store.menu),0);
+    const expenses=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&inDay(e.date)).reduce((s,e)=>s+(e.amount||0),0);
+    const comps=store.orders.filter(o=>inDay(o.paidAt||o.createdAt)).reduce((s,o)=>s+(o.compAmount||0),0);
+    return {
+      paid, sales, cogs, expenses, comps,
+      cash: sum(paid.filter(o=>o.paymentType==="cash"),orderSale),
+      card: sum(paid.filter(o=>o.paymentType==="card"),orderSale),
+      tron: sum(paid,orderTron),
+      avg:  paid.length?Math.round(sales/paid.length):0,
+      debtsToday: sum(store.orders.filter(o=>o.status==="debt"&&inDay(o.createdAt)),o=>o.total||0),
+      profit: sales-cogs-expenses,
+    };
+  },[store.orders,store.menu,store.expenses,inDay]);
+
+  // ── التشغيل ──
+  const ops=useMemo(()=>{
+    const act=store.orders.filter(o=>["pending","preparing","ready"].includes(o.status));
+    const tables=new Set(act.map(o=>String(o.table||"").trim()).filter(Boolean));
+    const done=store.orders.filter(o=>o.readyAt&&o.createdAt&&inDay(o.createdAt));
+    const avgPrep=done.length?Math.round(done.reduce((s,o)=>s+(new Date(o.readyAt)-new Date(o.createdAt))/60000,0)/done.length):0;
+    return {
+      pending:   act.filter(o=>o.status==="pending").length,
+      preparing: act.filter(o=>o.status==="preparing").length,
+      ready:     act.filter(o=>o.status==="ready").length,
+      tables:    tables.size,
+      avgPrep,
+    };
+  },[store.orders,inDay]);
+
+  const shiftState=useMemo(()=>{
+    const closed=closedShiftsOfDay(store.shifts,dayKey,null);
+    const open=(store.shifts||[]).filter(s=>s.status==="open");
+    return {closed,open};
+  },[store.shifts,dayKey]);
+
+  const unsettledDebts=useMemo(()=>store.debts.filter(x=>!x.settled).reduce((s,x)=>s+x.remaining,0),[store.debts]);
+  const lowStock=useMemo(()=>checkStockAlerts(store.menu),[store.menu]);
+  const topItems=useMemo(()=>store.menu.slice().sort((a,b)=>b.totalSold-a.totalSold).slice(0,5),[store.menu]);
+  const recentActivity=useMemo(()=>(store.stockMoves||[]).slice(0,6),[store.stockMoves]);
+
+  // v43: الرسم البياني بساعات غرينتش داخل اليوم المحاسبي الواحد
+  const hourly=useMemo(()=>{
+    const buckets=Array.from({length:24},(_,i)=>({h:i,rev:0}));
+    store.orders.forEach(o=>{
+      if(o.status!=="paid"||o.isComplimentary) return;
+      const iso=o.paidAt||o.createdAt; if(!inDay(iso)) return;
+      buckets[new Date(iso).getUTCHours()].rev+=orderSale(o);
+    });
+    return buckets;
+  },[store.orders,inDay]);
+  const maxRev=Math.max(...hourly.map(x=>x.rev),1);
+
+  const n=(v)=>(+v||0).toLocaleString();
+  const Money=({v,c,approx})=>(<span style={{color:c,fontWeight:900}}>{approx?"≈ ":""}{n(v)} <span style={{fontSize:10,fontWeight:700}}>{CUR}</span></span>);
+
+  const Section=({icon,title,note,color,children})=>(
+    <div className="card" style={{marginBottom:14,borderTop:`4px solid ${color}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:12,gap:10,flexWrap:"wrap"}}>
+        <h3 style={{fontSize:15,fontWeight:900}}>{icon} {title}</h3>
+        {note&&<span style={{fontSize:10.5,color:"var(--sub)",fontWeight:600}}>{note}</span>}
       </div>
+      {children}
     </div>
   );
 
+  const Cell=({label,value,color,sub})=>(
+    <div style={{background:"var(--card2)",borderRadius:10,padding:"10px 12px"}}>
+      <div style={{fontSize:11,color:"var(--sub)",marginBottom:5,fontWeight:600}}>{label}</div>
+      <div style={{fontSize:16,fontWeight:900,color:color||"var(--text)"}}>{value}</div>
+      {sub&&<div style={{fontSize:10,color:"var(--sub)",marginTop:3}}>{sub}</div>}
+    </div>
+  );
+  const grid={display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:9};
+  const typeLbl=(t)=>t==="night"?"ليلية":t==="evening"?"مسائية":t==="morning"?"صباحية":"—";
+
   return(
     <div className="fade-in">
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <h2 style={{fontSize:20,fontWeight:900}}>📊 لوحة التحكم</h2>
-        <span style={{fontSize:12,color:"var(--sub)"}}>
-          {now.toLocaleDateString("ar-SY",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}
-        </span>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:18}}>
-        <Stat icon="💰" label="إجمالي الإيرادات" val={`${totalRevenue.toLocaleString()} ${CUR}`} sub="كل الوقت" color="#c62828"/>
-        <Stat icon="📅" label="مبيعات اليوم"    val={`${todayRevenue.toLocaleString()} ${CUR}`} sub={`${todayPaidOrders.length} طلب مدفوع`} color="#2e7d32"/>
-        <Stat icon="📈" label="صافي ربح اليوم"  val={`${todayProfit.toLocaleString()} ${CUR}`} sub="المبيع − التكلفة" color="#00897b"/>
-        <Stat icon="💎" label="صافي الربح"      val={`${totalProfit.toLocaleString()} ${CUR}`} sub="كل الوقت" color="#6a1b9a"/>
-        <Stat icon="⏳" label="طلبات معلقة"     val={pending}   sub="بحاجة معالجة" color="#f9a825"/>
-        <Stat icon="👨‍🍳" label="قيد التحضير"    val={preparing} color="#1976d2"/>
-        <Stat icon="💳" label="إجمالي الديون"   val={`${totalDebts.toLocaleString()} ${CUR}`} sub="غير مسدّدة" color="#6a1b9a"/>
-        <Stat icon="📒" label="مصاريف اليوم"   val={`${todayExpenses.toLocaleString()} ${CUR}`} color="#e65100"/>
-        <Stat icon="⚠"  label="مخزون منخفض"    val={lowStock.length} sub="صنف" color={lowStock.length>0?"#c62828":"#2e7d32"}/>
-      </div>
+      <h2 style={{fontSize:20,fontWeight:900,marginBottom:14}}>📊 لوحة التحكم</h2>
 
-      <div className="card" style={{marginBottom:16}}>
-        <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>📈 الإيرادات بالساعة</h3>
-        <div style={{display:"flex",alignItems:"flex-end",gap:3,height:80}}>
-          {hourly.map((d,i)=>(
+      {/* ══ ١) يوم العمل ══ */}
+      <Section icon="🗓" title="يوم العمل" color="#1565c0"
+        note="اليوم المحاسبي بتوقيت غرينتش — مستقلّ عن توقيت الجهاز">
+        <div style={{fontSize:15,fontWeight:800,marginBottom:10}}>{formatDayKey(dayKey)}</div>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+          {shiftState.closed.length===0&&shiftState.open.length===0&&(
+            <span style={{fontSize:12,color:"var(--sub)"}}>لا ورديات بعد في هذا اليوم</span>
+          )}
+          {shiftState.closed.map(s=>(
+            <span key={s.id} style={{background:"rgba(46,125,50,.15)",color:"#2e7d32",borderRadius:20,padding:"4px 12px",fontSize:11.5,fontWeight:800}}>
+              ✓ {typeLbl(s.shiftType)} — {n(s.totalSales)}
+            </span>
+          ))}
+          {shiftState.open.map(s=>(
+            <span key={s.id} style={{background:"rgba(230,81,0,.15)",color:"#e65100",borderRadius:20,padding:"4px 12px",fontSize:11.5,fontWeight:800}}>
+              ● {typeLbl(s.shiftType)} مفتوحة — {s.userName||"—"}
+            </span>
+          ))}
+        </div>
+        {shiftState.open.length>0&&(
+          <div style={{fontSize:10.5,color:"var(--sub)",marginTop:9,lineHeight:1.7}}>
+            الوردية المفتوحة لا تدخل الجرد اليومي — تدخل جرد اليوم الذي تُقفَل فيه.
+          </div>
+        )}
+      </Section>
+
+      {/* ══ ٢) الإيراد ══ */}
+      <Section icon="💰" title="الإيراد" color="#2e7d32" note="اليوم المحاسبي الجاري">
+        <div style={grid}>
+          <Cell label="المبيعات"       value={<Money v={d.sales} c="#2e7d32"/>} sub={`${d.paid.length} فاتورة`}/>
+          <Cell label="نقدي"           value={<Money v={d.cash} c="#1565c0"/>}/>
+          <Cell label="بطاقة"          value={<Money v={d.card} c="#0288d1"/>}/>
+          <Cell label="ترون (إكراميات)" value={<Money v={d.tron} c="#6a1b9a"/>} sub="فوق الفاتورة"/>
+          <Cell label="متوسط الفاتورة"  value={<Money v={d.avg} c="var(--text)"/>}/>
+        </div>
+      </Section>
+
+      {/* ══ ٣) النفقات والالتزامات ══ */}
+      <Section icon="📒" title="النفقات والالتزامات" color="#c62828" note="اليوم المحاسبي الجاري">
+        <div style={grid}>
+          <Cell label="مصاريف اليوم"     value={<Money v={d.expenses} c="#c62828"/>}/>
+          <Cell label="تكلفة البضاعة"    value={<Money v={d.cogs} c="#e65100"/>} sub="المباع اليوم"/>
+          <Cell label="ضيافة اليوم"      value={<Money v={d.comps} c="#00897b"/>} sub="تكلفة لا إيراد"/>
+          <Cell label="ديون اليوم"       value={<Money v={d.debtsToday} c="#6a1b9a"/>}/>
+          <Cell label="ديون غير مسدّدة"  value={<Money v={unsettledDebts} c="#6a1b9a"/>} sub="تراكمي"/>
+          <Cell label="صافي ربح اليوم"   value={<Money v={d.profit} c={d.profit>=0?"#2e7d32":"#c62828"}/>} sub="مبيعات − تكلفة − مصاريف"/>
+        </div>
+      </Section>
+
+      {/* ══ ٤) سجل العمل ══ */}
+      <Section icon="📋" title="سجل العمل" color="#f9a825" note="الحالة التشغيلية الآن">
+        <div style={grid}>
+          <Cell label="طلبات معلّقة"    value={ops.pending}   color="#f9a825"/>
+          <Cell label="قيد التحضير"     value={ops.preparing} color="#1976d2"/>
+          <Cell label="جاهزة للدفع"     value={ops.ready}     color="#2e7d32"/>
+          <Cell label="طاولات مشغولة"   value={ops.tables}    color="#c62828"/>
+          <Cell label="متوسط التحضير"   value={`${ops.avgPrep} د`} color="var(--text)"/>
+          <Cell label="مخزون منخفض"     value={lowStock.length} color={lowStock.length>0?"#c62828":"#2e7d32"} sub="صنف"/>
+        </div>
+        {recentActivity.length>0&&(
+          <div style={{marginTop:12,paddingTop:10,borderTop:"1px dashed var(--border)"}}>
+            <div style={{fontSize:11.5,fontWeight:800,color:"var(--sub)",marginBottom:7}}>آخر حركات المخزون</div>
+            {recentActivity.map(m=>(
+              <div key={m.id} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",color:"var(--sub)"}}>
+                <span>{m.delta>0?"➕":"➖"} {m.itemName} · {m.userName||"—"}</span>
+                <span style={{fontWeight:800,color:m.delta>0?"#2e7d32":"#c62828"}}>
+                  {m.delta>0?"+":""}{m.delta} · {reasonLabel(m.reason)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {/* ══ الإجماليات التراكمية ══ */}
+      <Section icon="💎" title="الإجماليات التراكمية" color="#6a1b9a"
+        note={totals?(totals.exact?"محسوبة في القاعدة — تشمل الأرشيف":approxNote(false)):"جارٍ الحساب..."}>
+        <div style={grid}>
+          <Cell label="إجمالي المبيعات" value={<Money v={totals?.revenue||0} c="#6a1b9a" approx={totals&&!totals.exact}/>}
+                sub={totals?`${n(totals.ordersCount)} فاتورة`:""}/>
+          <Cell label="صافي الربح"      value={<Money v={(totals?.revenue||0)-(totalCogs?.cogs||0)} c="#00897b" approx={totals&&!totals.exact}/>}
+                sub="المبيعات − التكلفة"/>
+          <Cell label="إجمالي الترون"   value={<Money v={totals?.tronTotal||0} c="#6a1b9a" approx={totals&&!totals.exact}/>}/>
+          <Cell label="إجمالي الضيافة"  value={<Money v={totals?.compTotal||0} c="#00897b" approx={totals&&!totals.exact}/>}/>
+        </div>
+      </Section>
+
+      {/* ══ الرسم البياني ══ */}
+      <div className="card" style={{marginBottom:14}}>
+        <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>
+          📈 الإيراد بالساعة <span style={{fontSize:10,fontWeight:600,color:"var(--sub)"}}>(بتوقيت غرينتش — 0 UTC = 3 فجراً دمشق)</span>
+        </h3>
+        <div style={{display:"flex",alignItems:"flex-end",gap:2,height:80}}>
+          {hourly.map((x,i)=>(
             <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-              <div title={`${d.rev.toLocaleString()} ${CUR}`}
-                style={{width:"100%",background:d.rev>0?"#c62828":dm?"#2a2d4a":"#eee",
-                  borderRadius:"3px 3px 0 0",height:`${(d.rev/maxRev)*64+(d.rev>0?4:0)}px`,
-                  minHeight:4,transition:"height .5s"}}/>
-              <div style={{fontSize:8,color:"var(--sub)"}}>{d.h}</div>
+              <div title={`${x.h}:00 UTC — ${n(x.rev)} ${CUR}`}
+                style={{width:"100%",background:x.rev>0?"#c62828":dm?"#2a2d4a":"#eee",
+                  borderRadius:"3px 3px 0 0",height:`${(x.rev/maxRev)*64+(x.rev>0?4:0)}px`,
+                  minHeight:3,transition:"height .5s"}}/>
+              {i%3===0&&<div style={{fontSize:7.5,color:"var(--sub)"}}>{x.h}</div>}
             </div>
           ))}
         </div>
       </div>
 
-      {/* الأجهزة المتصلة (مراقبة سحابية) */}
+      {/* ══ الأجهزة المتصلة ══ */}
       {devices.length>0&&(()=>{
-        const now=Date.now();
-        const list=[...devices].map(d=>({...d,_on:d.last_seen&&(now-new Date(d.last_seen).getTime())<120000}))
-          .sort((a,b)=>(b._on-a._on)||(new Date(b.last_seen||0)-new Date(a.last_seen||0)));
-        const onCount=list.filter(d=>d._on).length;
-        const ago=(ts)=>{ if(!ts)return"—"; const s=Math.floor((now-new Date(ts).getTime())/1000); if(s<60)return"الآن"; if(s<3600)return`${Math.floor(s/60)} د`; if(s<86400)return`${Math.floor(s/3600)} س`; return`${Math.floor(s/86400)} ي`; };
-        return (
-          <div className="card" style={{marginBottom:16,borderTop:"3px solid #1565c0"}}>
+        const list=devices.slice().sort((a,b)=>new Date(b.last_seen)-new Date(a.last_seen));
+        const isOn=(x)=>x.online&&(Date.now()-new Date(x.last_seen).getTime())<90000;
+        const onCount=list.filter(isOn).length;
+        const shown=showAllDev?list:list.slice(0,4);
+        return(
+          <div className="card" style={{marginBottom:14,borderTop:"3px solid #1565c0"}}>
             <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>📡 الأجهزة المتصلة ({onCount}/{list.length})</h3>
-            {(showAllDev?list:list.slice(0,5)).map(d=>(
-              <div key={d.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid var(--border)",fontSize:13}}>
-                <span style={{fontWeight:600}}>
-                  <span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:d._on?"#2e7d32":"#999",marginInlineEnd:8}}/>
-                  {d.label||d.id}
-                </span>
-                <span style={{color:"var(--sub)",fontSize:12}}>{d._on?"متصل":`آخر ظهور: ${ago(d.last_seen)}`}</span>
+            {shown.map(x=>(
+              <div key={x.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",fontSize:12}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:isOn(x)?"#2e7d32":"#999",flexShrink:0}}/>
+                <span style={{flex:1,fontWeight:600}}>{x.label||x.id}</span>
+                <span style={{color:"var(--sub)",fontSize:10.5}}>{ROLE_LABELS[x.role]||x.role||""}</span>
               </div>
             ))}
-            {list.length>5&&(
+            {list.length>4&&(
               <button onClick={()=>setShowAllDev(v=>!v)}
-                style={{width:"100%",marginTop:8,background:"rgba(21,101,192,.1)",color:"#1565c0",border:"none",borderRadius:8,padding:"8px",fontWeight:800,fontSize:13,cursor:"pointer"}}>
-                {showAllDev?"أقل ▲":`المزيد (${list.length-5}) ▼`}
+                style={{marginTop:8,background:"none",border:"none",color:"#1565c0",fontWeight:700,fontSize:11.5,cursor:"pointer",fontFamily:"inherit"}}>
+                {showAllDev?"▲ أقلّ":`▼ عرض الكل (${list.length})`}
               </button>
             )}
-            <div style={{fontSize:11,color:"var(--sub)",marginTop:8}}>يُحدَّث كل 30 ثانية. "متصل" = ظهر خلال آخر دقيقتين.</div>
-          </div>
-        );
-      })()}
-      {/* قسم الترون اليوم (دفعات فوق الفاتورة) */}
-      {(() => {
-        const tr = (store.receipts || []).filter(r => r.tronAmount > 0 && new Date(r.createdAt) >= today);
-        if (!tr.length) return null;
-        const tot = tr.reduce((s, r) => s + r.tronAmount, 0);
-        const cnt = tr.length;
-        const avg = Math.round(tot / cnt);
-        const byEmp = {}; tr.forEach(r => { const k = r.createdBy || "غير محدد"; byEmp[k] = (byEmp[k] || 0) + r.tronAmount; });
-        const empList = Object.entries(byEmp).sort((a, b) => b[1] - a[1]);
-        return (
-          <div className="card" style={{ marginBottom: 16, borderTop: "3px solid #6a1b9a" }}>
-            <h3 style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>💠 ترون اليوم (دفعات فوق الفاتورة)</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12 }}>
-              {[["الإجمالي", `${tot.toLocaleString()} ${CUR}`], ["عدد الدفعات", cnt], ["المتوسط", `${avg.toLocaleString()} ${CUR}`]].map(([l, v]) => (
-                <div key={l} style={{ background: "var(--card2)", borderRadius: 10, padding: 10, textAlign: "center" }}>
-                  <div style={{ fontSize: 11, color: "var(--sub)" }}>{l}</div>
-                  <div style={{ fontSize: 14, fontWeight: 900, color: "#6a1b9a" }}>{v}</div>
-                </div>
-              ))}
-            </div>
-            {empList.map(([name, amt], i) => (
-              <div key={name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: i < empList.length - 1 ? "1px solid var(--border)" : "none", fontSize: 13 }}>
-                <span style={{ fontWeight: 600 }}>👤 {name}</span>
-                <span style={{ fontWeight: 700, color: "#6a1b9a" }}>{amt.toLocaleString()} {CUR}</span>
-              </div>
-            ))}
           </div>
         );
       })()}
 
+      {/* ══ الأكثر مبيعاً + تحذيرات المخزون ══ */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}} className="grid-2">
         <div className="card">
           <h3 style={{fontSize:14,fontWeight:800,marginBottom:12}}>🏆 أكثر المبيعات</h3>
@@ -255,7 +374,7 @@ export function DashboardTab({store,dm,settings}){
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:600}}>{item.name}</div>
                 <div style={{height:4,background:"var(--border)",borderRadius:4,marginTop:4}}>
-                  <div style={{width:`${Math.min(100,(item.stock/item.minStock)*100)}%`,
+                  <div style={{width:`${Math.min(100,(item.stock/Math.max(item.minStock,1))*100)}%`,
                     height:"100%",background:item.stock===0?"#c62828":"#ff9800",borderRadius:4}}/>
                 </div>
               </div>
@@ -3494,7 +3613,128 @@ export function ShiftLogTab({ store, user, showToast, dm, settings }) {
 // تعديل الرصيد في القاعدة، فيستحيل أن يتغيّر مخزون دون حركة مقابلة.
 // السجل للقراءة والإضافة فقط — لا تعديل ولا حذف (سياسة RLS تفرض ذلك).
 // ═══════════════════════════════════════════════════════════════════════
+// v43: الجرد الدوري — مقارنة المحسوب بالفعلي وتسجيل الفارق كحركة correction.
+// هذا ما يكشف الهدر والسرقة: النظام لا يعرف إلا ما سُجّل، والفرق بين رصيده
+// والرصيد الفعلي على الرفّ هو الرقم الوحيد الذي يحكي ما لم يُسجَّل.
+export function StockCountView({ store, user, showToast, settings }) {
+  const [kind, setKind] = useState("menu");   // menu | supply
+  const [counts, setCounts] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const openShift = (store.shifts || []).find(sh => sh.status === "open");
+  const rows = useMemo(() => {
+    const base = kind === "supply"
+      ? (store.supplies || []).filter(x => x.active !== false)
+          .map(x => ({ id: x.id, name: x.name, unit: x.unit || "", system: +x.qty || 0 }))
+      : (store.menu || []).filter(m => !m.noStock && m.trackStock !== false)
+          .map(m => ({ id: m.id, name: m.name, unit: "", system: +m.stock || 0 }));
+    const q = search.trim();
+    return q ? base.filter(r => (r.name || "").includes(q)) : base;
+  }, [kind, store.menu, store.supplies, search]);
+
+  const diffs = useMemo(() => rows
+    .filter(r => counts[r.id] !== undefined && counts[r.id] !== "")
+    .map(r => ({ ...r, counted: Math.max(0, +counts[r.id] || 0), delta: Math.max(0, +counts[r.id] || 0) - r.system }))
+    .filter(r => r.delta !== 0), [rows, counts]);
+
+  const applyCount = async () => {
+    if (!diffs.length) { showToast("لا توجد فروقات لتسجيلها", "warn"); return; }
+    setSaving(true);
+    const key = "cnt_" + Date.now().toString(36);
+    for (const d of diffs) {
+      const meta = {
+        reason: "correction", userId: user.id, userName: user.name, userRole: user.role,
+        shiftId: openShift?.id || null, branch: "main",
+        note: `جرد دوري — النظام ${d.system} / الفعلي ${d.counted}`,
+        moveId: `mv_${key}_${d.id}_correction`,
+      };
+      try {
+        if (kind === "supply") await store.adjustSupply(d.id, d.delta, meta);
+        else                   await store.adjustStock(d.id, d.delta, meta);
+      } catch (e) { console.warn("count:", e); }
+    }
+    try {
+      logActivity({ action: "جرد دوري", details: `${diffs.length} فرق — ${kind === "supply" ? "مواد إضافية" : "أصناف المنيو"}`,
+        userName: user.name, userRole: user.role, amount: diffs.reduce((a, d) => a + Math.abs(d.delta), 0), branch: "main" });
+    } catch {}
+    setCounts({}); setSaving(false);
+    showToast(`✅ سُجّل الجرد — ${diffs.length} فرق`, "success");
+  };
+
+  const ipt = { width: 78, padding: "6px 8px", borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--card2)", color: "inherit", fontWeight: 800, fontSize: 13, textAlign: "center", fontFamily: "inherit" };
+  const sel = { padding: "8px 12px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--card)", color: "inherit", fontWeight: 700, fontSize: 12, fontFamily: "inherit", cursor: "pointer" };
+
+  return (
+    <div className="fade-in">
+      <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 12, lineHeight: 1.8 }}>
+        أدخل الكمية <strong>الفعلية على الرفّ</strong> لكل صنف. يُسجَّل الفارق عن رصيد النظام
+        كحركة «تصحيح جرد» باسمك — فيبقى أثر دائم لما لم يُسجَّل.
+        اترك الحقل فارغاً لأي صنف لم تعُدّه.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <select value={kind} onChange={e => { setKind(e.target.value); setCounts({}); }} style={sel}>
+          <option value="menu">أصناف المنيو</option>
+          <option value="supply">مواد إضافية</option>
+        </select>
+        <input className="input" placeholder="🔍 بحث..." value={search}
+          onChange={e => setSearch(e.target.value)} style={{ maxWidth: 190, fontSize: 12 }} />
+      </div>
+
+      {diffs.length > 0 && (
+        <div className="card" style={{ marginBottom: 12, borderTop: "3px solid #e65100", padding: "12px 14px" }}>
+          <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>
+            📋 {diffs.length} فرق — سيُسجَّل كتصحيح جرد
+          </div>
+          <div style={{ display: "grid", gap: 4, marginBottom: 10 }}>
+            {diffs.slice(0, 12).map(d => (
+              <div key={d.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
+                <span>{d.name}</span>
+                <span style={{ fontWeight: 800, color: d.delta > 0 ? "#2e7d32" : "#c62828" }}>
+                  {d.system} ← {d.counted} ({d.delta > 0 ? "+" : ""}{d.delta})
+                </span>
+              </div>
+            ))}
+            {diffs.length > 12 && <div style={{ fontSize: 10.5, color: "var(--sub)" }}>+{diffs.length - 12} صنف آخر</div>}
+          </div>
+          <button onClick={applyCount} disabled={saving}
+            style={{ width: "100%", background: saving ? "#999" : "#e65100", color: "#fff", border: "none", borderRadius: 10, padding: 12, fontWeight: 800, fontSize: 14, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}>
+            {saving ? "⏳ جارٍ التسجيل..." : "✓ تسجيل الجرد"}
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gap: 6 }}>
+        {rows.map(r => {
+          const v = counts[r.id];
+          const d = (v === undefined || v === "") ? null : Math.max(0, +v || 0) - r.system;
+          return (
+            <div key={r.id} className="card" style={{ padding: "9px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 12.5 }}>{r.name}</div>
+                <div style={{ fontSize: 10.5, color: "var(--sub)" }}>
+                  النظام: {r.system}{r.unit ? ` ${r.unit}` : ""}
+                  {d !== null && d !== 0 && (
+                    <span style={{ color: d > 0 ? "#2e7d32" : "#c62828", fontWeight: 800, marginRight: 8 }}>
+                      {d > 0 ? "▲ زيادة" : "▼ عجز"} {Math.abs(d)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <input type="number" min="0" inputMode="numeric" style={ipt} placeholder="الفعلي"
+                value={v ?? ""} onChange={e => setCounts(m => ({ ...m, [r.id]: e.target.value }))} />
+            </div>
+          );
+        })}
+        {!rows.length && <div className="card" style={{ textAlign: "center", padding: 30, color: "var(--sub)" }}>لا توجد أصناف</div>}
+      </div>
+    </div>
+  );
+}
+
 export function StockLogTab({ store, user, showToast, dm, settings }) {
+  const [view, setView] = useState("log");         // log | count
   const [period, setPeriod] = useState("today");   // today | week | all
   const [kind,   setKind]   = useState("all");     // all | menu | supply
   const [reason, setReason] = useState("all");
@@ -3542,7 +3782,19 @@ export function StockLogTab({ store, user, showToast, dm, settings }) {
 
   return (
     <div className="fade-in">
-      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>📦 سجل حركات المخزون</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>📦 المخزون</h2>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {[["log", "📋 سجل الحركات"], ["count", "🔢 الجرد الدوري"]].map(([v, l]) => (
+          <button key={v} onClick={() => setView(v)}
+            style={{ padding: "8px 18px", borderRadius: 20, border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+              background: view === v ? "#c62828" : "var(--card2)", color: view === v ? "#fff" : "var(--sub)" }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {view === "count" ? <StockCountView store={store} user={user} showToast={showToast} settings={settings} /> : (<>
       <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 14, lineHeight: 1.8 }}>
         كل تغيّر في المخزون مسجَّل هنا: من غيّره، كم، متى، ولماذا.
         السجل غير قابل للتعديل أو الحذف — أثر تدقيق دائم.
@@ -3615,6 +3867,127 @@ export function StockLogTab({ store, user, showToast, dm, settings }) {
               تُعرض أحدث 300 حركة من أصل {rows.length} — استخدم المرشّحات أو صدّر لملف
             </div>
           )}
+        </div>
+      )}
+      </>)}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// v43 — أداء الموظفين
+// ───────────────────────────────────────────────────────────────────────
+// يُبنى من لقطات الورديات المُقفلة لا من الطلبات: الطلبات مبتورة عند 500
+// صف، أما الورديات فصفٌّ واحد لكل وردية — سجل كامل وثابت.
+// فروقات الصندوق هي المؤشّر الأهم هنا: عجز متكرّر عند موظّف بعينه إشارة
+// تستحقّ النظر، لكنها ليست إثباتاً — قد تكون خطأ عدّ أو مصروفاً غير مسجَّل.
+// ═══════════════════════════════════════════════════════════════════════
+export function StaffPerformanceView({ store, settings, showToast }) {
+  const CUR = settings?.currency || "ل.س";
+  const [period, setPeriod] = useState("week");
+  const [res, setRes] = useState({ exact: false, rows: [] });
+  const [loading, setLoading] = useState(true);
+
+  const from = useMemo(() => {
+    if (period === "today") return businessDayStart();
+    if (period === "week")  return weekStartThursday();
+    if (period === "month") { const d = businessDayStart(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)); }
+    return null;
+  }, [period]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetchStaffPerformance(store.shifts, { from })
+      .then(r => { if (alive) { setRes(r); setLoading(false); } })
+      .catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [store.shifts, from]);
+
+  const n = (v) => (+v || 0).toLocaleString();
+  const sel = { padding: "8px 12px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--card)", color: "inherit", fontWeight: 700, fontSize: 12, fontFamily: "inherit", cursor: "pointer" };
+
+  const exportRows = () => {
+    if (!res.rows.length) { showToast("لا توجد بيانات", "warn"); return; }
+    try {
+      exportToExcel(res.rows.map(r => ({
+        "الموظف": r.userName, "عدد الورديات": r.shiftsCount, "عدد الفواتير": r.ordersCount,
+        "إجمالي المبيعات": r.totalSales, "نقدي": r.cashSales, "ترون": r.tronSales,
+        "ضيافة": r.compTotal, "ديون": r.debtTotal, "مصاريف": r.expensesTotal,
+        "صافي فروقات الصندوق": r.varianceSum, "مجموع الفروقات المطلقة": r.varianceAbs,
+        "أسوأ عجز": r.worstVariance,
+      })), `أداء_الموظفين_${new Date().toISOString().slice(0, 10)}`);
+      showToast("📊 تم التصدير");
+    } catch { showToast("تعذّر التصدير", "error"); }
+  };
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        <select value={period} onChange={e => setPeriod(e.target.value)} style={sel}>
+          <option value="today">اليوم</option>
+          <option value="week">هذا الأسبوع</option>
+          <option value="month">هذا الشهر</option>
+          <option value="all">كل الوقت</option>
+        </select>
+        <button onClick={exportRows} style={{ ...sel, background: "#1a237e", color: "#fff", border: "none" }}>📊 تصدير</button>
+        {!loading && !res.exact && (
+          <span style={{ fontSize: 10.5, color: "#e65100", fontWeight: 700 }}>{approxNote(false)}</span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="card" style={{ textAlign: "center", padding: 30, color: "var(--sub)" }}>⏳ جارٍ الحساب...</div>
+      ) : !res.rows.length ? (
+        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
+          <div style={{ fontSize: 44, marginBottom: 10 }}>👨‍💼</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>لا توجد ورديات مُقفلة في هذه الفترة</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {res.rows.map((r, i) => {
+            const avg = r.ordersCount ? r.totalSales / r.ordersCount : 0;
+            const varColor = Math.abs(r.varianceSum) < 1 ? "#2e7d32" : r.varianceSum > 0 ? "#e65100" : "#c62828";
+            return (
+              <div key={r.userName} className="card" style={{ borderRight: `4px solid ${i === 0 ? "#f9a825" : "var(--border)"}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ fontWeight: 900, fontSize: 15 }}>
+                    {i === 0 ? "🥇 " : ""}{r.userName}
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "var(--sub)", marginRight: 8 }}>
+                      {r.shiftsCount} وردية · {r.ordersCount} فاتورة
+                    </span>
+                  </div>
+                  <div style={{ fontWeight: 900, fontSize: 16, color: "#2e7d32" }}>{approxMark(res.exact)}{n(r.totalSales)} {CUR}</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(115px,1fr))", gap: 8, fontSize: 11.5 }}>
+                  {[
+                    ["💵 نقدي", n(r.cashSales), "#1565c0"],
+                    ["💠 ترون", n(r.tronSales), "#6a1b9a"],
+                    ["🎁 ضيافة", n(r.compTotal), "#00897b"],
+                    ["💳 ديون", n(r.debtTotal), "#e65100"],
+                    ["📒 مصاريف", n(r.expensesTotal), "#c62828"],
+                    ["🧾 متوسط الفاتورة", n(Math.round(avg)), "var(--sub)"],
+                  ].map(([l, v, c]) => (
+                    <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                      <span style={{ color: "var(--sub)" }}>{l}</span><span style={{ fontWeight: 800, color: c }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed var(--border)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: 11.5, fontWeight: 700 }}>
+                  <span style={{ color: "var(--sub)" }}>فروقات الصندوق</span>
+                  <span style={{ color: varColor }}>
+                    صافي {r.varianceSum > 0 ? "+" : ""}{n(r.varianceSum)} · مطلق {n(r.varianceAbs)}
+                    {r.worstVariance < 0 ? ` · أسوأ عجز ${n(r.worstVariance)}` : ""}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 10.5, color: "var(--sub)", lineHeight: 1.8, padding: "6px 4px" }}>
+            ℹ️ فروقات الصندوق مؤشّر لا إثبات — قد تنشأ من خطأ عدّ أو مصروف غير مسجَّل.
+            راجعها مع الموظف قبل أي استنتاج.
+          </div>
         </div>
       )}
     </div>

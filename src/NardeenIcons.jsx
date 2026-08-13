@@ -334,7 +334,25 @@ export function IconQR({ size = 22, color = "currentColor" }) {
 }
 
 // ── خريطة الأيقونات للتنقل ─────────────────────────────────────
+// v43: أيقونات التبويبات الجديدة (كانت تسقط للإيموجي فلا تتحوّل للأبيض عند التفعيل)
+const IconShifts = ({ size = 22, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="9" cy="9" r="6" />
+    <path d="M9 6v3l2 1.5" />
+    <path d="M15 16h6M15 19.5h6M15 12.5h6" />
+  </svg>
+);
+const IconStockLog = ({ size = 22, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z" />
+    <path d="M3 7.5 12 12l9-4.5M12 12v9" />
+    <path d="M7.5 5.2 16.5 9.8" />
+  </svg>
+);
+
 export const NAV_ICONS = {
+  shifts:        (s,c) => <IconShifts size={s} color={c} />,
+  stocklog:      (s,c) => <IconStockLog size={s} color={c} />,
   dashboard:     (s,c) => <IconDashboard size={s} color={c} />,
   order:         (s,c) => <IconOrderNew size={s} color={c} />,
   orders:        (s,c) => <IconOrders size={s} color={c} />,

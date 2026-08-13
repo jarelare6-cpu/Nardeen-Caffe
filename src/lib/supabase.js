@@ -416,6 +416,38 @@ const adjustRpc = async (fn, idParam, args) => {
 };
 
 export const adjustStockAtomic  = (args) => adjustRpc("adjust_stock",  "p_item_id",   args);
+
+// v43: خصم/إرجاع مخزون طلب كامل في نداء ذرّي واحد + حركة لكل صنف.
+// معرّف الحركة مشتقّ من (المفتاح + الصنف + السبب) داخل القاعدة، فإعادة
+// الإرسال بعد انقطاع لا تخصم مرتين.
+export const adjustStockBulkAtomic = async ({ items, sign = -1, reason = "sale",
+  orderId = null, orderNum = "", userId = null, userName = "", userRole = "",
+  shiftId = null, branch = "main", key = null }) => {
+  if (!supabase) return { ok: false, reason: "offline" };
+  const payload = (items || [])
+    .map(i => ({ itemId: i.itemId, qty: Math.max(0, +i.qty || 0) }))
+    .filter(i => i.itemId && i.qty > 0);
+  if (!payload.length) return { ok: true, applied: 0 };
+  try {
+    const { data, error } = await withNet("rpc:adjust_stock_bulk", () =>
+      supabase.rpc("adjust_stock_bulk", {
+        p_items: payload, p_sign: sign, p_reason: reason,
+        p_order_id: orderId, p_order_num: orderNum,
+        p_user_id: userId, p_user_name: userName, p_user_role: userRole,
+        p_shift_id: shiftId, p_branch: branch, p_key: key,
+      }));
+    if (error) {
+      if (/(function|does not exist|PGRST202|schema cache)/i.test(error.message || "")) return { ok: false, reason: "no_rpc" };
+      reportSyncError("rpc", "adjust_stock_bulk", error.message);
+      return { ok: false, reason: "error", message: error.message };
+    }
+    return { ok: true, applied: +data || 0 };
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (/(function|does not exist|PGRST202|schema cache)/i.test(msg)) return { ok: false, reason: "no_rpc" };
+    return { ok: false, reason: "offline", message: msg };
+  }
+};
 export const adjustSupplyAtomic = (args) => adjustRpc("adjust_supply", "p_supply_id", args);
 
 export const subscribeSupplies = (onChange) => {

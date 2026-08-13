@@ -24,6 +24,7 @@ const MenuTab         = lazyAdmin("MenuTab");
 const TablesTab       = lazyAdmin("TablesTab");
 const ShiftLogTab     = lazyAdmin("ShiftLogTab"); // v41: سجل الورديات / الجرد اليومي
 const StockLogTab     = lazyAdmin("StockLogTab"); // v42: سجل حركات المخزون
+const StaffPerformanceView = lazyAdmin("StaffPerformanceView"); // v43
 const CompLogTab      = lazyAdmin("CompLogTab");
 const CustomerFileTab = lazyAdmin("CustomerFileTab");
 const ReceiptsTab     = lazyAdmin("ReceiptsTab");
@@ -32,6 +33,40 @@ const ReportsTab      = lazyAdmin("ReportsTab");
 const SettingsTab     = lazyAdmin("SettingsTab");
 const OutdoorAdminTab = lazyAdmin("OutdoorAdminTab");
 import { KitchenDisplayTab, ShiftCloseTab } from "./Features.jsx";
+
+// ═══════════════════════════════════════════════════════════════════════
+// v43 — صفحة الورديات الموحّدة
+// ───────────────────────────────────────────────────────────────────────
+// كانت صفحتين منفصلتين: «تقفيل الوردية» و«سجل الورديات». الفصل يجبر على
+// التنقّل بين تبويبين لعمل واحد: الكاشير عند التقفيل يريد رؤية ورديات
+// اليوم، والأدمن في السجل قد يحتاج إقفال وردية عالقة. دُمجتا هنا مع
+// «أداء الموظفين» لأنه مشتقّ من الورديات نفسها.
+// ═══════════════════════════════════════════════════════════════════════
+function ShiftsPage({ store, user, showToast, dm, settings }) {
+  const [sub, setSub] = useState("close");
+  const isAdmin = user?.role === "admin";
+  const tabs = [["close", "🔐 تقفيل"], ["log", "🕐 السجل"]];
+  if (isAdmin) tabs.push(["staff", "👨‍💼 الموظفون"]);
+
+  return (
+    <div className="fade-in">
+      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 12 }}>🕐 الورديات</h2>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        {tabs.map(([v, l]) => (
+          <button key={v} onClick={() => setSub(v)}
+            style={{ padding: "8px 18px", borderRadius: 20, border: "none", fontWeight: 700, fontSize: 13,
+              cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+              background: sub === v ? "#c62828" : "var(--card2)", color: sub === v ? "#fff" : "var(--sub)" }}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {sub === "close" && <ShiftCloseTab store={store} user={user} showToast={showToast} dm={dm} settings={settings} />}
+      {sub === "log"   && <ShiftLogTab   store={store} user={user} showToast={showToast} dm={dm} settings={settings} />}
+      {sub === "staff" && isAdmin && <StaffPerformanceView store={store} settings={settings} showToast={showToast} />}
+    </div>
+  );
+}
 
 // ── ErrorBoundary ──────────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -148,8 +183,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     ["menu","🍽","المنيو"],
     ["stockimport","📦","جرد المخزون"],
     ["tables","🪑","الطاولات"],
-    ["shift","🔐","تقفيل الوردية"],
-    ["shiftlog","🕐","سجل الورديات"],
+    ["shifts","🕐","الورديات"],
     ["stocklog","📦","سجل المخزون"],
     ["staff","👨‍💼","الموظفون"],
     ["reports","📈","التقارير"],
@@ -258,7 +292,9 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
       <main style={{flex:1,padding:16,paddingBottom:96,maxWidth:1280,width:"100%",margin:"0 auto"}}>
         <ErrorBoundary key={tab}>
         <React.Suspense fallback={<div style={{textAlign:"center",padding:40,color:"var(--sub)",fontSize:14}}>⏳ جارٍ التحميل...</div>}>
-        {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} key={store.orders.length+"_"+store.orders.filter(o=>o.status==="paid").length}/>}
+        {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} user={user}/>}
+        {/* v43: أُزيل key المشتقّ من عدد الطلبات — كان يُعيد تركيب اللوحة كلياً
+            عند كل طلب أو دفعة (إعادة جلب الأجهزة وتصفير حالة الواجهة). */}
         {tab==="inventory"  &&canAccess(user.role,"dashboard") &&<InventoryTab   store={store} settings={settings}/>}
         {tab==="order"      &&canAccess(user.role,"order")     &&<NewOrderTab    store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="orders"     &&canAccess(user.role,"orders")    &&<OrdersTab      store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
@@ -268,11 +304,10 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="bar"        &&canAccess(user.role,"bar")       &&<BarTab         store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="hookah"     &&canAccess(user.role,"hookah")    &&<HookahTab      store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="kds"        &&canAccess(user.role,"kds")       &&<KitchenDisplayTab store={store} user={user} showToast={showToast} addNotification={addNotification} settings={settings}/>}
-        {tab==="shift"      &&canAccess(user.role,"shift")     &&<ShiftCloseTab  store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="shifts"     &&canAccess(user.role,"shifts")    &&<ShiftsPage     store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="stockimport"&&canAccess(user.role,"stockimport")&&<StockImportTab store={store} user={user} showToast={showToast} settings={settings}/>}
         {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
-        {tab==="shiftlog"   &&canAccess(user.role,"shiftlog")  &&<ShiftLogTab    store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="stocklog"   &&canAccess(user.role,"stocklog")  &&<StockLogTab    store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}

@@ -13,40 +13,36 @@
 // هل خُصم مخزون هذا الطلب؟ (undefined/null = طلب قديم = نعم)
 export const isStockDeducted = (order) => order?.stockDeducted !== false;
 
+// ══════════════════════════════════════════════════════════════
+// v43: الخصم والإرجاع يمرّان بـ store.applyOrderStock
+// ──────────────────────────────────────────────────────────────
+// كان الخصم يكتب قيمة مطلقة من المتصفح (stock = 25) وخارج سجل الحركات:
+//  • جهازان يبيعان الصنف نفسه معاً ⇒ خصم واحد يُمحى (فقدان تحديث).
+//  • ولا أثر يُدقَّق: لا نعرف أي طلب خصم أي كمية.
+// الآن: خصم نسبي ذرّي داخل القاعدة + حركة لكل صنف بمعرّف حتمي مشتقّ من
+// (الطلب + الصنف + السبب) فيستحيل الخصم المزدوج حتى مع إعادة الإرسال.
+//
+// التوقيع محفوظ (store, order) فلا تتغيّر مواضع الاستدعاء؛ وأُضيف وسيط
+// meta اختياري لتمرير المستخدم والوردية إلى السجل.
+// ══════════════════════════════════════════════════════════════
+
 // خصم مخزون أصناف الطلب (إن لم يُخصم بعد) — يعيد الطلب موسوماً
-export const deductOrderStock = (store, order) => {
+export const deductOrderStock = (store, order, meta = {}) => {
   if (!order || isStockDeducted(order)) return order;
-  const items = order.items || [];
-  if (items.length) {
-    store.setMenu(p => p.map(m => {
-      if (m.noStock || m.trackStock === false) return m; // v24 خدمي / v28 مخزون مفتوح: لا يُخصم
-      const ci = items.find(c => c.itemId === m.id);
-      if (!ci) return m;
-      return {
-        ...m,
-        stock: Math.max(0, (m.stock || 0) - ci.qty),
-        totalSold: (m.totalSold || 0) + ci.qty,
-      };
-    }));
+  if (store?.applyOrderStock) {
+    // لا ننتظرها: الحالة المحلية تُحدَّث داخلها فوراً، والقاعدة مرجع لاحق
+    Promise.resolve(store.applyOrderStock(order, -1, { ...meta, reason: meta.reason || "sale" }))
+      .catch(e => console.warn("deductOrderStock:", e));
   }
   return { ...order, stockDeducted: true };
 };
 
 // إرجاع مخزون أصناف الطلب — فقط إن كان قد خُصم فعلاً
-export const restoreOrderStock = (store, order) => {
+export const restoreOrderStock = (store, order, meta = {}) => {
   if (!order || !isStockDeducted(order)) return false;
-  const items = order.items || [];
-  if (items.length) {
-    store.setMenu(p => p.map(m => {
-      if (m.noStock || m.trackStock === false) return m; // v24 خدمي / v28 مخزون مفتوح: لا يُرجَّع
-      const ci = items.find(c => c.itemId === m.id);
-      if (!ci) return m;
-      return {
-        ...m,
-        stock: (m.stock || 0) + ci.qty,
-        totalSold: Math.max(0, (m.totalSold || 0) - ci.qty),
-      };
-    }));
+  if (store?.applyOrderStock) {
+    Promise.resolve(store.applyOrderStock(order, +1, { ...meta, reason: meta.reason || "return" }))
+      .catch(e => console.warn("restoreOrderStock:", e));
   }
   return true;
 };
