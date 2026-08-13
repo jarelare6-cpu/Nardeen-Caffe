@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
+import { MOVE_REASONS, reasonLabel, summarizeMovements } from "./lib/stockLog.js"; // v42
 import { notifyTelegram, buildEventMsg, testTelegramTarget, TELEGRAM_EVENTS } from "./lib/telegram.js";
 
 // v24.1: تأكيد كتابي عبر مودال داخلي موثوق (window.prompt معطّل في WebView/أندرويد)
@@ -50,7 +51,7 @@ function useDangerConfirm() {
   return { trigger, modal };
 }
 import OutdoorScreen from "./OutdoorScreen.jsx";
-import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron, orderSale } from "./lib/utils.js";
+import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron, orderSale, orderCogs, businessDayKey, formatDayKey, listBusinessDays, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
@@ -621,13 +622,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
   const alertMinutes = settings?.tableAlertMinutes || 60;
   const tableTimerAlert = settings?.tableTimerAlert || false;
 
-  const toggleStatus = (id) => store.setTables(p => p.map(t =>
-    t.id === id ? {
-      ...t,
-      status: t.status === "free" ? "occupied" : "free",
-      openedAt: t.status === "free" ? new Date().toISOString() : null,
-    } : t
-  ));
+  // v41: حُذف toggleStatus — الإشغال مُشتقّ من الطلبات النشطة ولا يُبدَّل يدوياً.
 
   // تفريغ طاولة مع إعادة المخزون
   const confirmClear = (t, hardDelete) => {
@@ -674,9 +669,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
           ? { ...o, status: "cancelled" } : o
       ));
     }
-    store.setTables(p => p.map(tb =>
-      tb.id === t.id ? { ...tb, status: "free", openedAt: null } : tb
-    ));
+    // v41: الطاولة تتحرر من نفسها (إشغال مُشتقّ) — لا كتابة حالة
     showToast(`🪑 تم تفريغ ${t.label} وإعادة المخزون`);
   };
 
@@ -694,7 +687,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
     );
     store.setOrders(() => updated);
     tOrders.forEach(o => deductOrderStock(store, o));
-    store.setTables(p => p.map(tb => tb.id === t.id ? { ...tb, status: "free", openedAt: null } : tb));
+    // v41: الطاولة تتحرر من نفسها (إشغال مُشتقّ)
     logActivity({ action: "دفع طلب", details: `دفع كامل طاولة ${t.number} (${tOrders.length} طلب)`, userName: user?.name || "", userRole: user?.role || "admin", orderNum: "", amount: total, branch: "main" });
     showToast(`✓ تم دفع طاولة ${t.number} — ${total.toLocaleString()} ${CUR}`);
   };
@@ -712,13 +705,11 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
     const toBusy = store.orders.some(o => String(o.table) === String(to) && !ACTIVE_ST.includes(o.status));
     if (toBusy) { showToast(`⚠ الطاولة ${to} مشغولة — لا يمكن النقل إليها`, "error"); return; }
     const ids = new Set(picked.map(o => o.id));
+    // v41: النقل صار يُزامَن فعلاً — كان كاشف التغيير في setOrders يُسقط الحقل
+    // `table` فلا يصل التحديث لـ Supabase، فتعود الطلبات للطاولة الأولى بعد
+    // تحديث الصفحة. الإصلاح في src/lib/store.js (مقارنة الصف كاملاً).
+    // ولا حاجة لتحديث جدول الطاولات: الإشغال مُشتقّ من الطلبات النشطة.
     store.setOrders(p => p.map(o => ids.has(o.id) ? { ...o, table: to } : o));
-    const remainOnFrom = xferFromOrders.filter(o => !ids.has(o.id)).length;
-    store.setTables(p => p.map(t => {
-      if (String(t.number) === String(to)) return { ...t, status: "occupied", openedAt: t.openedAt || new Date().toISOString() };
-      if (String(t.number) === String(from)) return remainOnFrom > 0 ? t : { ...t, status: "free", openedAt: null };
-      return t;
-    }));
     logActivity({ action: "نقل طاولة", details: `${picked.length} فاتورة من ط${from} ← ط${to}`, userName: user?.name || "", userRole: user?.role || "", branch: "main" });
     showToast(`🔀 نُقلت ${picked.length} فاتورة إلى طاولة ${to}`, "success");
     setXferModal(false); setXFrom(""); setXTo(""); setXPicked({});
@@ -3296,6 +3287,336 @@ export function StockImportTab({ store, user, showToast, settings }){
           💾 حفظ الجرد ({changedCount} تعديل{missingNew.filter(n=>newSel[n.key]).length?` + ${missingNew.filter(n=>newSel[n.key]).length} جديد`:""})
         </button>
       </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// v41 — سجل الوردية / الجرد اليومي  (لوحة التحكم)
+// ───────────────────────────────────────────────────────────────────────
+// اليوم المحاسبي بتوقيت غرينتش (UTC)، يبدأ الساعة DAY_START_UTC_HOUR.
+// الوردية تُنسب لليوم الذي أُقفلت فيه. الوردية المفتوحة لا تدخل الجرد —
+// تدخل جرد اليوم الذي ستُقفل فيه (مثال: الليلية تدخل جرد الغد).
+// الأرقام لقطة ثابتة محفوظة لحظة الإقفال (سجل تدقيق لا يُعاد حسابه).
+// ═══════════════════════════════════════════════════════════════════════
+export function ShiftLogTab({ store, user, showToast, dm, settings }) {
+  const CUR = settings?.currency || "ل.س";
+  const [branch, setBranch] = useState("all");   // all | main | outdoor
+  const [dayKey, setDayKey] = useState(() => businessDayKey());
+  const [expanded, setExpanded] = useState(null);
+
+  const days = useMemo(() => {
+    const list = listBusinessDays(store.shifts);
+    const todayKey = businessDayKey();
+    return list.includes(todayKey) ? list : [todayKey, ...list];
+  }, [store.shifts]);
+
+  const branchFilter = branch === "all" ? null : branch;
+  const dayShifts = useMemo(
+    () => closedShiftsOfDay(store.shifts, dayKey, branchFilter),
+    [store.shifts, dayKey, branchFilter]
+  );
+  const agg = useMemo(() => sumShifts(dayShifts), [dayShifts]);
+
+  // الورديات المفتوحة الآن — تُعرض كتنبيه ولا تدخل الجرد
+  const openShifts = useMemo(
+    () => (store.shifts || []).filter(sh => sh.status === "open" && (!branchFilter || (sh.branch || "main") === branchFilter)),
+    [store.shifts, branchFilter]
+  );
+
+  // التكلفة/الربح من طلبات ورديات هذا اليوم
+  const dayProfit = useMemo(() => {
+    const os = ordersOfShifts(store.orders, dayShifts).filter(o => o.status === "paid" && !o.isComplimentary);
+    const cogs = os.reduce((a, o) => a + orderCogs(o, store.menu), 0);
+    return { cogs, net: agg.totalSales - cogs - agg.expensesTotal };
+  }, [store.orders, store.menu, dayShifts, agg]);
+
+  const typeLabel = (t) => t === "night" ? "ليلية" : t === "evening" ? "مسائية" : t === "morning" ? "صباحية" : "—";
+  const clock = (iso) => iso ? new Date(iso).toLocaleTimeString("ar-SY", { hour: "2-digit", minute: "2-digit" }) : "—";
+  const num = (v) => (+v || 0).toLocaleString();
+
+  const exportDay = () => {
+    const rows = dayShifts.map(sh => ({
+      "الوردية": typeLabel(sh.shiftType),
+      "الفرع": (sh.branch || "main") === "outdoor" ? "الحديقة" : "الكافيه",
+      "الموظف": sh.userName || "",
+      "الفتح": clock(sh.openedAt),
+      "الإقفال": clock(sh.closedAt),
+      "عدد الطلبات": +sh.ordersCount || 0,
+      "نقدي": +sh.cashSales || 0,
+      "بطاقة": +sh.cardSales || 0,
+      "ترون": +sh.tronSales || 0,
+      "ديون": +sh.debtTotal || 0,
+      "ضيافة": +sh.compTotal || 0,
+      "مصاريف": +sh.expensesTotal || 0,
+      "إجمالي المبيعات": +sh.totalSales || 0,
+      "المتوقع بالصندوق": +sh.expectedCash || 0,
+      "المعدود": +sh.countedCash || 0,
+      "الفرق": +sh.difference || 0,
+    }));
+    if (!rows.length) { showToast("لا توجد ورديات مقفلة في هذا اليوم", "warn"); return; }
+    try { exportToExcel(rows, `سجل_الورديات_${dayKey}`); showToast("📊 تم التصدير"); }
+    catch { showToast("تعذّر التصدير", "error"); }
+  };
+
+  const KPI = ({ label, value, color, hint }) => (
+    <div className="card" style={{ padding: 12, textAlign: "center" }}>
+      <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 17, fontWeight: 900, color }}>{num(value)} <span style={{ fontSize: 10, fontWeight: 700 }}>{CUR}</span></div>
+      {hint && <div style={{ fontSize: 9, color: "var(--sub)", marginTop: 3 }}>{hint}</div>}
+    </div>
+  );
+
+  const sel = { padding: "8px 12px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--card)", color: "inherit", fontWeight: 700, fontSize: 12, fontFamily: "inherit", cursor: "pointer" };
+
+  return (
+    <div className="fade-in">
+      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>🕐 سجل الورديات — الجرد اليومي</h2>
+      <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 14, lineHeight: 1.8 }}>
+        اليوم المحاسبي بتوقيت غرينتش (UTC{DAY_START_UTC_HOUR ? `+${DAY_START_UTC_HOUR}س` : ""}) — مستقلّ عن توقيت الجهاز.
+        <br />
+        الوردية تدخل جرد اليوم الذي <strong>أُقفلت</strong> فيه؛ الوردية المفتوحة لا تدخل الجرد الحالي.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+        <select value={dayKey} onChange={e => { setDayKey(e.target.value); setExpanded(null); }} style={{ ...sel, minWidth: 200 }}>
+          {days.map(d => <option key={d} value={d}>{formatDayKey(d)}</option>)}
+        </select>
+        <select value={branch} onChange={e => setBranch(e.target.value)} style={sel}>
+          <option value="all">كل الفروع</option>
+          <option value="main">الكافيه</option>
+          <option value="outdoor">الحديقة</option>
+        </select>
+        <button onClick={exportDay} style={{ ...sel, background: "#1a237e", color: "#fff", border: "none" }}>📊 تصدير Excel</button>
+      </div>
+
+      {openShifts.length > 0 && (
+        <div style={{ background: "rgba(230,81,0,.1)", border: "1.5px solid rgba(230,81,0,.3)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#e65100", fontWeight: 700, lineHeight: 1.8 }}>
+          ⏳ {openShifts.length} وردية مفتوحة الآن ({openShifts.map(sh => typeLabel(sh.shiftType)).join("، ")}) — لا تدخل هذا الجرد.
+          ستُحتسب في جرد اليوم الذي تُقفل فيه.
+        </div>
+      )}
+
+      {!dayShifts.length ? (
+        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
+          <div style={{ fontSize: 44, marginBottom: 10 }}>🕐</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>لا توجد ورديات مقفلة في هذا اليوم</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginBottom: 8 }}>
+            <KPI label="إجمالي المبيعات" value={agg.totalSales} color="#2e7d32" hint={`${agg.ordersCount} فاتورة`} />
+            <KPI label="نقدي" value={agg.cashSales} color="#1565c0" />
+            <KPI label="بطاقة" value={agg.cardSales} color="#0288d1" />
+            <KPI label="ترون (إكراميات)" value={agg.tronSales} color="#6a1b9a" />
+            <KPI label="ديون" value={agg.debtTotal} color="#e65100" />
+            <KPI label="ضيافة" value={agg.compTotal} color="#00897b" hint="تكلفة لا إيراد" />
+            <KPI label="مصاريف" value={agg.expensesTotal} color="#c62828" />
+            <KPI label="صافي الربح" value={dayProfit.net} color={dayProfit.net >= 0 ? "#2e7d32" : "#c62828"} hint={`تكلفة ${num(dayProfit.cogs)}`} />
+          </div>
+
+          <div className="card" style={{ padding: "10px 14px", marginBottom: 16, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, fontSize: 12, fontWeight: 700 }}>
+            <span>🔢 {agg.shiftsCount} وردية</span>
+            <span>🧾 {agg.ordersCount} فاتورة</span>
+            <span style={{ color: "var(--sub)" }}>متوقع: {num(agg.expectedCash)} {CUR}</span>
+            <span style={{ color: "var(--sub)" }}>معدود: {num(agg.countedCash)} {CUR}</span>
+            <span style={{ color: Math.abs(agg.difference) < 1 ? "#2e7d32" : agg.difference > 0 ? "#e65100" : "#c62828" }}>
+              {Math.abs(agg.difference) < 1 ? "✅ مطابق" : agg.difference > 0 ? `▲ زيادة ${num(agg.difference)}` : `▼ عجز ${num(Math.abs(agg.difference))}`}
+            </span>
+          </div>
+
+          <h3 style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>ورديات اليوم</h3>
+          <div style={{ display: "grid", gap: 10 }}>
+            {dayShifts.map(sh => {
+              const diff = +sh.difference || 0;
+              const open = expanded === sh.id;
+              return (
+                <div key={sh.id} className="card" style={{ padding: 0, overflow: "hidden", borderRight: `4px solid ${Math.abs(diff) < 1 ? "#2e7d32" : diff > 0 ? "#e65100" : "#c62828"}` }}>
+                  <div onClick={() => setExpanded(open ? null : sh.id)}
+                    style={{ padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 900, fontSize: 14 }}>
+                        {typeLabel(sh.shiftType)} — {(sh.branch || "main") === "outdoor" ? "🌿 الحديقة" : "☕ الكافيه"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--sub)", marginTop: 3 }}>
+                        👤 {sh.userName || "—"} • {clock(sh.openedAt)} ← {clock(sh.closedAt)} • {+sh.ordersCount || 0} فاتورة
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontWeight: 900, fontSize: 15, color: "#2e7d32" }}>{num(sh.totalSales)} {CUR}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: Math.abs(diff) < 1 ? "#2e7d32" : diff > 0 ? "#e65100" : "#c62828" }}>
+                        {Math.abs(diff) < 1 ? "✅ صندوق مطابق" : diff > 0 ? `▲ زيادة ${num(diff)}` : `▼ عجز ${num(Math.abs(diff))}`}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: "var(--sub)" }}>{open ? "▲" : "▼"}</span>
+                  </div>
+                  {open && (
+                    <div style={{ background: "var(--card2)", padding: "12px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, fontSize: 12 }}>
+                      {[
+                        ["💵 نقدي", sh.cashSales, "#1565c0"],
+                        ["💳 بطاقة", sh.cardSales, "#0288d1"],
+                        ["💠 ترون", sh.tronSales, "#6a1b9a"],
+                        ["💳 ديون", sh.debtTotal, "#e65100"],
+                        ["🎁 ضيافة", sh.compTotal, "#00897b"],
+                        ["📒 مصاريف", sh.expensesTotal, "#c62828"],
+                        ["🔓 رصيد افتتاحي", sh.openingCash, "var(--sub)"],
+                        ["📐 متوقع", sh.expectedCash, "var(--sub)"],
+                        ["🔢 معدود", sh.countedCash, "var(--sub)"],
+                      ].map(([l, v, c]) => (
+                        <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                          <span style={{ color: "var(--sub)" }}>{l}</span>
+                          <span style={{ fontWeight: 800, color: c }}>{num(v)}</span>
+                        </div>
+                      ))}
+                      {sh.notes && (
+                        <div style={{ gridColumn: "1/-1", background: "rgba(249,168,37,.12)", borderRadius: 8, padding: "7px 10px", fontSize: 11, color: "#e65100" }}>
+                          📝 {sh.notes}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// v42 — سجل حركات المخزون
+// ───────────────────────────────────────────────────────────────────────
+// أثر تدقيق كامل: من غيّر، ماذا، كم، متى، ولماذا. يُكتب داخل نفس معاملة
+// تعديل الرصيد في القاعدة، فيستحيل أن يتغيّر مخزون دون حركة مقابلة.
+// السجل للقراءة والإضافة فقط — لا تعديل ولا حذف (سياسة RLS تفرض ذلك).
+// ═══════════════════════════════════════════════════════════════════════
+export function StockLogTab({ store, user, showToast, dm, settings }) {
+  const [period, setPeriod] = useState("today");   // today | week | all
+  const [kind,   setKind]   = useState("all");     // all | menu | supply
+  const [reason, setReason] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const from = useMemo(() => {
+    if (period === "today") return businessDayStart();
+    if (period === "week")  return weekStartThursday();
+    return new Date(0);
+  }, [period]);
+
+  const res = useMemo(() => summarizeMovements(store.stockMoves || [], {
+    from,
+    kind:   kind   === "all" ? null : kind,
+    reason: reason === "all" ? null : reason,
+  }), [store.stockMoves, from, kind, reason]);
+
+  const rows = useMemo(() => {
+    const q = search.trim();
+    if (!q) return res.list;
+    return res.list.filter(m =>
+      (m.itemName || "").includes(q) || (m.userName || "").includes(q) || (m.note || "").includes(q));
+  }, [res.list, search]);
+
+  const exportLog = () => {
+    if (!rows.length) { showToast("لا توجد حركات للتصدير", "warn"); return; }
+    try {
+      exportToExcel(rows.map(m => ({
+        "التاريخ": new Date(m.at).toLocaleString("ar-SY"),
+        "النوع": m.kind === "supply" ? "مادة إضافية" : "صنف منيو",
+        "الصنف": m.itemName,
+        "الحركة": m.delta > 0 ? `+${m.delta}` : String(m.delta),
+        "الرصيد بعدها": m.qtyAfter ?? "",
+        "السبب": reasonLabel(m.reason),
+        "المستخدم": m.userName,
+        "الدور": m.userRole,
+        "الطلب": m.orderNum || "",
+        "ملاحظة": m.note || "",
+      })), `سجل_المخزون_${new Date().toISOString().slice(0, 10)}`);
+      showToast("📊 تم التصدير");
+    } catch { showToast("تعذّر التصدير", "error"); }
+  };
+
+  const sel = { padding: "8px 12px", borderRadius: 10, border: "1.5px solid var(--border)", background: "var(--card)", color: "inherit", fontWeight: 700, fontSize: 12, fontFamily: "inherit", cursor: "pointer" };
+
+  return (
+    <div className="fade-in">
+      <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>📦 سجل حركات المخزون</h2>
+      <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 14, lineHeight: 1.8 }}>
+        كل تغيّر في المخزون مسجَّل هنا: من غيّره، كم، متى، ولماذا.
+        السجل غير قابل للتعديل أو الحذف — أثر تدقيق دائم.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        <select value={period} onChange={e => setPeriod(e.target.value)} style={sel}>
+          <option value="today">اليوم</option>
+          <option value="week">هذا الأسبوع</option>
+          <option value="all">الكل</option>
+        </select>
+        <select value={kind} onChange={e => setKind(e.target.value)} style={sel}>
+          <option value="all">كل الأنواع</option>
+          <option value="menu">أصناف المنيو</option>
+          <option value="supply">مواد إضافية</option>
+        </select>
+        <select value={reason} onChange={e => setReason(e.target.value)} style={sel}>
+          <option value="all">كل الأسباب</option>
+          {Object.entries(MOVE_REASONS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <input className="input" placeholder="🔍 صنف / موظف / ملاحظة..." value={search}
+          onChange={e => setSearch(e.target.value)} style={{ maxWidth: 210, fontSize: 12 }} />
+        <button onClick={exportLog} style={{ ...sel, background: "#1a237e", color: "#fff", border: "none" }}>📊 تصدير</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 16 }}>
+        {[["عدد الحركات", res.count, "#1565c0"], ["إجمالي المُضاف", res.added, "#2e7d32"], ["إجمالي المخصوم", res.removed, "#c62828"], ["الصافي", res.net, res.net >= 0 ? "#2e7d32" : "#c62828"]].map(([l, v, c]) => (
+          <div key={l} className="card" style={{ padding: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 4 }}>{l}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: c }}>{(+v || 0).toLocaleString()}</div>
+          </div>
+        ))}
+      </div>
+
+      {!rows.length ? (
+        <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--sub)" }}>
+          <div style={{ fontSize: 44, marginBottom: 10 }}>📦</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>لا توجد حركات في هذه الفترة</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 7 }}>
+          {rows.slice(0, 300).map(m => {
+            const up = m.delta > 0;
+            return (
+              <div key={m.id} className="card" style={{ padding: "10px 13px", borderRight: `4px solid ${up ? "#2e7d32" : "#c62828"}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13 }}>
+                    {m.kind === "supply" ? "🧂" : "🍹"} {m.itemName || m.itemId}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "var(--sub)", marginTop: 3 }}>
+                    👤 {m.userName || "—"}{m.userRole ? ` (${ROLE_LABELS[m.userRole] || m.userRole})` : ""}
+                    {" • "}{new Date(m.at).toLocaleString("ar-SY", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    {m.orderNum ? ` • 🧾 #${m.orderNum}` : ""}
+                    {m.note ? ` • 📝 ${m.note}` : ""}
+                  </div>
+                </div>
+                <div style={{ textAlign: "left", whiteSpace: "nowrap" }}>
+                  <div style={{ fontWeight: 900, fontSize: 15, color: up ? "#2e7d32" : "#c62828" }}>
+                    {up ? "+" : ""}{(+m.delta || 0).toLocaleString()}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--sub)" }}>
+                    {reasonLabel(m.reason)}{m.qtyAfter != null ? ` • رصيد ${(+m.qtyAfter).toLocaleString()}` : ""}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {rows.length > 300 && (
+            <div style={{ textAlign: "center", fontSize: 11, color: "var(--sub)", padding: 10 }}>
+              تُعرض أحدث 300 حركة من أصل {rows.length} — استخدم المرشّحات أو صدّر لملف
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
