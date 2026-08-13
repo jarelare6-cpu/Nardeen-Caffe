@@ -535,6 +535,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
               style={{ resize: "none", height: 60, marginBottom: 14 }} />
 
             {!confirmClose ? (
+              <>
               <div style={{
                 background: dayGuard.near ? "rgba(230,81,0,.12)" : "rgba(21,101,192,.08)",
                 border: `1.5px solid ${dayGuard.near ? "rgba(230,81,0,.4)" : "rgba(21,101,192,.25)"}`,
@@ -555,6 +556,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
                 style={{ width: "100%", background: "#e65100", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
                 🔐 تقفيل الوردية
               </button>
+              </>
             ) : (
               <div style={{ display: "flex", gap: 10 }}>
                 <button onClick={closeShift}
