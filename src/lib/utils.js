@@ -1,37 +1,106 @@
 // src/lib/utils.js — Nardeen Caffe v6.0
 // ══════════════════════════════════════════════════════════════
-// v30.3: اليوم المحاسبي (Business Day) — يبدأ الساعة 1 صباحاً لا منتصف الليل
-//  يطابق دورة العمل: المسائي يختم اليوم (12–1)، الليلي يبدأ التالي.
-//  كل حسابات "اليوم" تستخدم businessDayStart بدل setHours(0,0,0,0).
+// v41: اليوم المحاسبي (Business Day) — بالتوقيت العالمي UTC، لا بتوقيت الجهاز
+//  ──────────────────────────────────────────────────────────────
+//  يبدأ اليوم الساعة DAY_START_UTC_HOUR بتوقيت غرينتش، بغضّ النظر عن
+//  الورديات وعن المنطقة الزمنية للجهاز. كل الأجهزة تتفق على نفس اليوم.
+//
+//  ⚠ سوريا = UTC+3، لذا الساعة 0 UTC تعادل 3:00 فجراً بتوقيت دمشق.
+//  إن كانت الوردية الليلية تُقفَل قرب الساعة 3 فجراً محلياً، فإن حدّ اليوم
+//  يقع داخل لحظة الإقفال، فتُنسب الوردية لليوم السابق أو التالي حسب دقائق.
+//  العلاج: غيّر الثابت أدناه فقط — 3 = 6 صباحاً دمشق، 5 = 8 صباحاً دمشق.
 // ══════════════════════════════════════════════════════════════
-export const BUSINESS_DAY_CUTOFF_HOUR = 1; // ساعة بداية اليوم المحاسبي
+export const DAY_START_UTC_HOUR = 0;
+export const BUSINESS_DAY_CUTOFF_HOUR = DAY_START_UTC_HOUR; // اسم قديم — للتوافق
+
+const DAY_MS = 86400000;
+
 export const businessDayStart = (ref = new Date()) => {
   const d = new Date(ref);
-  if (d.getHours() < BUSINESS_DAY_CUTOFF_HOUR) d.setDate(d.getDate() - 1);
-  d.setHours(BUSINESS_DAY_CUTOFF_HOUR, 0, 0, 0);
-  return d;
+  if (isNaN(d.getTime())) return new Date(0);
+  const anchor = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), DAY_START_UTC_HOUR, 0, 0, 0);
+  return new Date(anchor <= d.getTime() ? anchor : anchor - DAY_MS);
 };
 
-// v37: بداية يوم العمل = افتتاح آخر وردية (الليلية) — لا ساعة ثابتة.
-// يوم العمل يمتدّ من لحظة فتح الوردية الحالية. إن لم توجد ورديات بعد،
-// نرجع إلى businessDayStart (ساعة القطع) كحلٍّ احتياطي.
-export const workDayStart = (shifts, branch = "main", ref = new Date()) => {
-  const now = new Date(ref).getTime();
-  const opens = (shifts || [])
-    .filter(s => (s.branch || "main") === branch && s.openedAt && new Date(s.openedAt).getTime() <= now)
-    .map(s => new Date(s.openedAt).getTime())
-    .sort((a, b) => b - a);
-  return opens.length ? new Date(opens[0]) : businessDayStart(ref);
+export const businessDayEnd = (ref = new Date()) => new Date(businessDayStart(ref).getTime() + DAY_MS);
+
+// مفتاح اليوم المحاسبي "YYYY-MM-DD" (UTC) — صالح للفرز والتجميع والمقارنة النصية
+export const businessDayKey = (ref = new Date()) => {
+  const s = businessDayStart(ref);
+  return `${s.getUTCFullYear()}-${String(s.getUTCMonth() + 1).padStart(2, "0")}-${String(s.getUTCDate()).padStart(2, "0")}`;
 };
+
+// v41: أُلغي تعريف «اليوم = منذ فتح آخر وردية» (كان يجعل اليوم = الوردية الحالية).
+// يبقى الاسم كغلاف متوافق حتى لا تنكسر الاستدعاءات القائمة — النتيجة الآن يوم UTC ثابت.
+export const workDayStart = (_shifts, _branch = "main", ref = new Date()) => businessDayStart(ref);
+
 export const businessDayLabel = (ref = new Date()) =>
-  businessDayStart(ref).toLocaleDateString("ar-SY", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  businessDayStart(ref).toLocaleDateString("ar-SY", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 
-// v31.1: بداية الأسبوع = أحدث يوم خميس (الأسبوع من الخميس إلى الخميس) عند ساعة القطع
+// تنسيق مفتاح يوم "YYYY-MM-DD" إلى نص عربي
+export const formatDayKey = (key) => {
+  if (!key) return "";
+  const [y, m, d] = String(key).split("-").map(Number);
+  if (!y || !m || !d) return String(key);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("ar-SY", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+};
+
+// v31.1: بداية الأسبوع = أحدث يوم خميس (الأسبوع من الخميس إلى الخميس) — بتوقيت UTC
 export const weekStartThursday = (ref = new Date()) => {
   const d = businessDayStart(ref);
-  const diff = (d.getDay() - 4 + 7) % 7; // 4 = الخميس
-  d.setDate(d.getDate() - diff);
-  return d;
+  const diff = (d.getUTCDay() - 4 + 7) % 7; // 4 = الخميس
+  return new Date(d.getTime() - diff * DAY_MS);
+};
+
+// ══════════════════════════════════════════════════════════════
+// v41: الجرد اليومي — تجميع الورديات المقفلة حسب يوم إقفالها (UTC)
+// ──────────────────────────────────────────────────────────────
+// القاعدة المتفق عليها:
+//  • الوردية تُنسب لليوم المحاسبي الذي أُقفلت فيه (closedAt) لا الذي فُتحت فيه.
+//  • الوردية المفتوحة لا تدخل الجرد إطلاقاً — تدخل جرد اليوم الذي ستُقفل فيه.
+//    (مثال: الليلية تُفتح 22:00 وتُقفل فجر الغد ⇒ تدخل جرد الغد.)
+//  • الأرقام تُقرأ من لقطة الوردية المحفوظة عند الإقفال (سجل ثابت لا يُعاد حسابه).
+// ══════════════════════════════════════════════════════════════
+export const shiftDayKey = (s) => (s && s.status === "closed" && s.closedAt) ? businessDayKey(s.closedAt) : null;
+
+export const closedShiftsOfDay = (shifts, dayKeyStr, branch = null) =>
+  (shifts || [])
+    .filter(s => shiftDayKey(s) === dayKeyStr && (branch === null || (s.branch || "main") === branch))
+    .sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+
+export const listBusinessDays = (shifts) => {
+  const set = new Set();
+  (shifts || []).forEach(s => { const k = shiftDayKey(s); if (k) set.add(k); });
+  return Array.from(set).sort((a, b) => b.localeCompare(a)); // الأحدث أولاً
+};
+
+const N = (v) => (+v || 0);
+export const sumShifts = (list) => (list || []).reduce((a, s) => ({
+  shiftsCount:      a.shiftsCount + 1,
+  ordersCount:      a.ordersCount      + N(s.ordersCount),
+  cashSales:        a.cashSales        + N(s.cashSales),
+  cardSales:        a.cardSales        + N(s.cardSales),
+  tronSales:        a.tronSales        + N(s.tronSales),
+  debtTotal:        a.debtTotal        + N(s.debtTotal),
+  compTotal:        a.compTotal        + N(s.compTotal),
+  totalSales:       a.totalSales       + N(s.totalSales),
+  expensesTotal:    a.expensesTotal    + N(s.expensesTotal),
+  secExpensesTotal: a.secExpensesTotal + N(s.secExpensesTotal),
+  openingCash:      a.openingCash      + N(s.openingCash),
+  expectedCash:     a.expectedCash     + N(s.expectedCash),
+  countedCash:      a.countedCash      + N(s.countedCash),
+  difference:       a.difference       + N(s.difference),
+}), {
+  shiftsCount: 0, ordersCount: 0, cashSales: 0, cardSales: 0, tronSales: 0,
+  debtTotal: 0, compTotal: 0, totalSales: 0, expensesTotal: 0, secExpensesTotal: 0,
+  openingCash: 0, expectedCash: 0, countedCash: 0, difference: 0,
+});
+
+// طلبات اليوم المنسوبة لورديات هذا اليوم (لحساب التكلفة/الربح)
+export const ordersOfShifts = (orders, shiftList) => {
+  const ids = new Set((shiftList || []).map(s => s.id));
+  if (!ids.size) return [];
+  return (orders || []).filter(o => o.shiftId && ids.has(o.shiftId));
 };
 
 
@@ -545,7 +614,17 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
   const cardSales = paid.filter(o => o.paymentType === "card").reduce((s, o) => s + orderCash(o), 0);
   // v31.6: نقد سداد الديون يدخل الصندوق فعلياً — يُحتسب في المتوقع
   const debtSettledCash = paid.filter(o => o.paymentType === "debt_settled").reduce((s, o) => s + (o.total || 0), 0);
-  const tronSales = paid.reduce((s, o) => s + orderTron(o), 0); // v36: بند الترون المنفصل
+  // v41: الترون إكرامية قد تُضاف بعد الدفع — ربّما في وردية لاحقة. نقدها يدخل درج
+  // الوردية التي أُضيفت فيها، لذا تُنسب بـ tronShiftId (إن وُجد) لا بـ shiftId الطلب.
+  const tronBelongs = (o) => {
+    if ((o.branch || "main") !== branch) return false;
+    const tsid = o.tronShiftId || o.shiftId;
+    if (shiftId && tsid) return tsid === shiftId;
+    return inWindow(o.tronAt || o.paidAt || o.createdAt);
+  };
+  const tronSales = orders
+    .filter(o => o.status === "paid" && !o.isComplimentary && orderTron(o) > 0 && tronBelongs(o))
+    .reduce((s, o) => s + orderTron(o), 0);
   const debtTotal = shiftOrders.filter(o => o.status === "debt").reduce((s, o) => s + (o.total || 0), 0);
   const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
   const totalSales = paid.reduce((s, o) => s + orderSale(o), 0); // v39: المبيعات الكاملة (تشمل الترون)
