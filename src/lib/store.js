@@ -20,10 +20,14 @@ import {
   subscribeShifts, subscribeLoyaltyLog, subscribeCashLog,
   sbSaveSettings, sbSavePermOverrides, sbDeleteAll, payOrderAtomic,
   enqueueWrite, enqueueDelete, flushOutbox, outboxPendingIds,
+  adjustStockAtomic, adjustSupplyAtomic, subscribeSupplies, subscribeStockMovements,
 } from "./supabase";
 import {
   rowOfCash, rowOfExpense, rowOfExpenseLegacy, rowOfOrder, mapOrder, mapExpense,
 } from "./rows.js";
+import {
+  rowOfSupply, mapSupply, rowOfMovement, mapMovement, newMoveId, migrateExtraStock,
+} from "./stockLog.js";
 
 // ── v22: أونلاين فقط — لا تخزين محلي للبيانات. السحابة هي مصدر الحقيقة الوحيد. ──
 
@@ -103,6 +107,8 @@ export const DEFAULT_SETTINGS = {
   tableTimerAlert: false,
   tableAlertMinutes: 60,
   mergeTableOrders: false,
+  lastDailySent: "",   // v42: مفتاح آخر يوم أُرسل جرده (يمنع التكرار بين الأجهزة)
+  lastWeeklySent: "",  // v31.2
   requireTableOnOrder: true,
   printOnNewOrder: false,
   telegramTargets: [], // v27: وجهات تليجرام للإدارة [{id,name,token,chatId,events:{}}]
@@ -277,7 +283,7 @@ const sbWrite = {
 
   order: (o) => {
     const row = rowOfOrder(o);
-    const { stock_deducted, ...legacy } = row;
+    const { stock_deducted, tron_shift_id, ...legacy } = row;
     return sbUpsert("orders", row, "id", legacy); // fallback لقاعدة لم تُرقَّ بعد
   },
   deleteOrder: (id) => sbDelete("orders", id),
@@ -520,6 +526,11 @@ export const useStore = () => {
   const [permOverrides, setPermOverridesRaw] = useState({});
   const [shifts,        setShiftsRaw]        = useState([]);
   const [loyaltyLog,    setLoyaltyLogRaw]    = useState([]);
+  const [supplies,      setSuppliesRaw]      = useState([]);   // v42
+  const [stockMoves,    setStockMovesRaw]    = useState([]);   // v42
+  // v42: مراجع حيّة — تُقرأ داخل الدوال اللاتزامنية دون إعادة إنشائها
+  const menuRef     = useRef([]);
+  const suppliesRef = useRef([]);
   const [syncing,       setSyncing]          = useState(false);
   const [cloudReady,    setCloudReady]       = useState(false);
 
@@ -558,29 +569,39 @@ export const useStore = () => {
   const setOrders = useCallback((v) => {
     setOrdersRaw(p => {
       const raw = typeof v === "function" ? v(p) : v;
+      // ══════════════════════════════════════════════════════════════
+      // v41 — إصلاح جذري: كشف التغيير على الصف المُسلسَل كاملاً
+      // ──────────────────────────────────────────────────────────────
+      // كان الكشف يقارن قائمة حقول مكتوبة يدوياً (status/total/paymentType/
+      // discount/tronAmount/items) ويُسقط كل ما عداها. النتيجة: أي تعديل يمسّ
+      // حقلاً خارج القائمة لا يُرسَل إلى Supabase إطلاقاً — يظهر محلياً ويختفي
+      // بعد التحديث. أصاب ذلك: table (نقل الطاولات) و notes و customerName و
+      // workerName و shiftId و compAmount و isComplimentary و partialPaid و
+      // paidAt و stockDeducted و originalTotal.
+      // الآن نقارن ناتج rowOfOrder نفسه (بلا updated_at لأنه يُولَّد لحظياً)،
+      // فيستحيل أن يُنسى عمود جديد مستقبلاً.
+      // ══════════════════════════════════════════════════════════════
+      const sigOf = (o) => {
+        if (!o) return null;
+        const { updated_at, ...r } = rowOfOrder(o);
+        return JSON.stringify(r);
+      };
+      const oldSig = new Map();
+      p.forEach(o => oldSig.set(o.id, sigOf(o)));
+      const isChangedOrder = (o) => {
+        if (!oldSig.has(o.id)) return true;
+        return oldSig.get(o.id) !== sigOf(o);
+      };
+
       // وسم updatedAt على الطلبات المتغيّرة → حلّ التعارض بالطابع الزمني (mesh/محلي).
-      // ملاحظة: sbWrite.order يرسل أعمدة محددة فقط، فلا يصل updatedAt لقاعدة البيانات.
-      const next = raw.map(o => {
-        const old = p.find(x => x.id === o.id);
-        const isChanged = !old || old.status !== o.status || old.total !== o.total ||
-               old.paymentType !== o.paymentType || old.discount !== o.discount ||
-               (old.tronAmount || 0) !== (o.tronAmount || 0) ||
-               JSON.stringify(old.items) !== JSON.stringify(o.items);
-        return isChanged ? { ...o, updatedAt: new Date().toISOString() } : o;
-      });
+      const next = raw.map(o => isChangedOrder(o) ? { ...o, updatedAt: new Date().toISOString() } : o);
       broadcast("nc_orders", next);
       if (SUPABASE_READY) {
-        const changed = next.filter(o => {
-          const old = p.find(x => x.id === o.id);
-          return !old || old.status !== o.status || old.total !== o.total ||
-                 old.paymentType !== o.paymentType || old.discount !== o.discount ||
-                 (old.tronAmount || 0) !== (o.tronAmount || 0) ||
-                 JSON.stringify(old.items) !== JSON.stringify(o.items);
-        });
+        const changed = next.filter(isChangedOrder);
         // v4.7.0: عبر الطابور الدائم — يضمن إعادة المحاولة ولا يُفقد التغيير عند الفشل
         changed.forEach(o => {
           const row = rowOfOrder(o);
-          const { stock_deducted, updated_at, ...legacy } = row; // fallback لقاعدة لم تُرقَّ
+          const { stock_deducted, updated_at, tron_shift_id, ...legacy } = row; // fallback لقاعدة لم تُرقَّ
           enqueueWrite("orders", row, "id", legacy);
         });
         const nextIds = new Set(next.map(o => o.id));
@@ -618,8 +639,8 @@ export const useStore = () => {
       if (SUPABASE_READY) {
         next.forEach(t => {
           const old = p.find(x => x.id === t.id);
-          if (!old || old.status !== t.status || old.orderId !== t.orderId || old.note !== t.note)
-            sbWrite.table(t);
+          // v41: مقارنة كاملة — كانت تُسقط label/seats/number/openedAt فلا تُزامَن
+          if (!old || JSON.stringify(old) !== JSON.stringify(t)) sbWrite.table(t);
         });
       }
       return next;
@@ -633,7 +654,9 @@ export const useStore = () => {
       if (SUPABASE_READY) {
         next.forEach(d => {
           const old = p.find(x => x.id === d.id);
-          if (!old || old.remaining !== d.remaining || old.settled !== d.settled) sbWrite.debt(d);
+          // v41: مقارنة كاملة — كانت تُسقط amount/customerName/notes/settledAt،
+          // فتعديل مبلغ دين أو اسم صاحبه لا يصل القاعدة إطلاقاً (خطأ مالي صامت).
+          if (!old || JSON.stringify(old) !== JSON.stringify(d)) sbWrite.debt(d);
         });
       }
       return next;
@@ -747,6 +770,113 @@ export const useStore = () => {
     });
   }, []);
 
+  // ══════════════════════════════════════════════════════════════
+  // v42 — المواد الإضافية + سجل حركات المخزون
+  // ──────────────────────────────────────────────────────────────
+  // المبدأ: كل تغيّر في الرصيد يمرّ عبر adjustStock/adjustSupply، وهما
+  // يرسلان **الفارق** إلى القاعدة (qty = qty + delta) لا القيمة المطلقة،
+  // فيستحيل فقدان تحديث عند تزامن جهازين. وكل حركة تُسجَّل في
+  // stock_movements داخل نفس المعاملة، فلا يتغيّر رصيد بلا أثر.
+  // ══════════════════════════════════════════════════════════════
+  const setSupplies = useCallback((v) => {
+    setSuppliesRaw(p => {
+      const next = typeof v === "function" ? v(p) : v;
+      broadcast("nc_supplies", next);
+      if (SUPABASE_READY) {
+        next.forEach(sup => {
+          const old = p.find(x => x.id === sup.id);
+          if (!old || JSON.stringify(old) !== JSON.stringify(sup)) enqueueWrite("supplies", rowOfSupply(sup), "id");
+        });
+        const ids = new Set(next.map(x => x.id));
+        p.forEach(sup => { if (!ids.has(sup.id)) enqueueDelete("supplies", sup.id); });
+        flushOutbox();
+      }
+      return next;
+    });
+  }, []);
+
+  // تسجيل حركة محلياً (تُستعمل عند الارتداد أو للتسجيل المحض بلا تعديل رصيد)
+  const logStockMove = useCallback((move) => {
+    const m = { ...move, id: move.id || newMoveId(), at: move.at || new Date().toISOString() };
+    setStockMovesRaw(p => (p.some(x => x.id === m.id) ? p : [m, ...p].slice(0, 500)));
+    if (SUPABASE_READY) { enqueueWrite("stock_movements", rowOfMovement(m), "id"); flushOutbox(); }
+    return m;
+  }, []);
+
+  // تعديل مخزون صنف من المنيو بفارق نسبي — المسار الذرّي أولاً
+  const adjustStock = useCallback(async (itemId, delta, meta = {}) => {
+    const d = +delta || 0;
+    if (!itemId || !d) return { ok: false, reason: "noop" };
+    const moveId = meta.moveId || newMoveId();
+    const item = menuRef.current.find(m => m.id === itemId);
+    const move = {
+      id: moveId, kind: "menu", itemId, itemName: item?.name || "",
+      delta: d, qtyAfter: null, reason: meta.reason || "restock",
+      orderId: meta.orderId || null, orderNum: meta.orderNum || "",
+      userId: meta.userId || null, userName: meta.userName || "", userRole: meta.userRole || "",
+      shiftId: meta.shiftId || null, branch: meta.branch || "main", note: meta.note || "",
+      at: new Date().toISOString(),
+    };
+
+    if (SUPABASE_READY) {
+      const res = await adjustStockAtomic({ id: itemId, delta: d, moveId, ...meta });
+      if (res.ok) {
+        // القاعدة أعادت الرصيد الحقيقي بعد التعديل — نعتمده مرجعاً
+        setMenuRaw(p => { const n = p.map(m => m.id === itemId ? { ...m, stock: res.qtyAfter } : m); broadcast("nc_menu", n); return n; });
+        setStockMovesRaw(p => (p.some(x => x.id === moveId) ? p : [{ ...move, qtyAfter: res.qtyAfter }, ...p].slice(0, 500)));
+        return { ok: true, qtyAfter: res.qtyAfter, atomic: true };
+      }
+      // لا RPC (قبل هجرة v42) أو انقطاع — ارتداد محلي + طابور
+    }
+    let after = null;
+    setMenuRaw(p => {
+      const n = p.map(m => { if (m.id !== itemId) return m; after = Math.max(0, (+m.stock || 0) + d); return { ...m, stock: after }; });
+      broadcast("nc_menu", n);
+      if (SUPABASE_READY) { const m = n.find(x => x.id === itemId); if (m) enqueueWrite("menu_items", { id: m.id, stock: m.stock }, "id"); }
+      return n;
+    });
+    logStockMove({ ...move, qtyAfter: after });
+    if (SUPABASE_READY) flushOutbox();
+    return { ok: true, qtyAfter: after, atomic: false };
+  }, [logStockMove]);
+
+  // تعديل مادة إضافية بفارق نسبي — المسار الذرّي أولاً
+  const adjustSupply = useCallback(async (supplyId, delta, meta = {}) => {
+    const d = +delta || 0;
+    if (!supplyId || !d) return { ok: false, reason: "noop" };
+    const moveId = meta.moveId || newMoveId();
+    const sup = suppliesRef.current.find(x => x.id === supplyId);
+    const move = {
+      id: moveId, kind: "supply", itemId: supplyId, itemName: sup?.name || "",
+      delta: d, qtyAfter: null, reason: meta.reason || "restock",
+      userId: meta.userId || null, userName: meta.userName || "", userRole: meta.userRole || "",
+      shiftId: meta.shiftId || null, branch: meta.branch || "main", note: meta.note || "",
+      at: new Date().toISOString(),
+    };
+
+    if (SUPABASE_READY) {
+      const res = await adjustSupplyAtomic({ id: supplyId, delta: d, moveId, ...meta });
+      if (res.ok) {
+        setSuppliesRaw(p => { const n = p.map(x => x.id === supplyId ? { ...x, qty: res.qtyAfter } : x); broadcast("nc_supplies", n); return n; });
+        setStockMovesRaw(p => (p.some(x => x.id === moveId) ? p : [{ ...move, qtyAfter: res.qtyAfter }, ...p].slice(0, 500)));
+        return { ok: true, qtyAfter: res.qtyAfter, atomic: true };
+      }
+    }
+    let after = null;
+    setSuppliesRaw(p => {
+      const n = p.map(x => { if (x.id !== supplyId) return x; after = Math.max(0, (+x.qty || 0) + d); return { ...x, qty: after }; });
+      broadcast("nc_supplies", n);
+      if (SUPABASE_READY) { const x = n.find(y => y.id === supplyId); if (x) enqueueWrite("supplies", rowOfSupply(x), "id"); }
+      return n;
+    });
+    logStockMove({ ...move, qtyAfter: after });
+    if (SUPABASE_READY) flushOutbox();
+    return { ok: true, qtyAfter: after, atomic: false };
+  }, [logStockMove]);
+
+  useEffect(() => { menuRef.current = menu; }, [menu]);
+  useEffect(() => { suppliesRef.current = supplies; }, [supplies]);
+
   const addTable = useCallback(() => {
     setTablesRaw(p => {
       const maxNum = p.length > 0 ? Math.max(...p.map(t => t.number)) : 0;
@@ -803,8 +933,8 @@ export const useStore = () => {
       if (SUPABASE_READY) {
         next.forEach(t => {
           const old = p.find(x => x.id === t.id);
-          if (!old || old.status !== t.status || old.orderId !== t.orderId || old.note !== t.note)
-            sbWrite.table(t);
+          // v41: مقارنة كاملة — كانت تُسقط label/seats/number/openedAt فلا تُزامَن
+          if (!old || JSON.stringify(old) !== JSON.stringify(t)) sbWrite.table(t);
         });
       }
       return next;
@@ -842,7 +972,7 @@ export const useStore = () => {
 
     const enqueuePay = () => {
       const row = rowOfOrder(stamped);
-      const { stock_deducted, updated_at, ...legacy } = row; // fallback لقاعدة لم تُرقَّ
+      const { stock_deducted, updated_at, tron_shift_id, ...legacy } = row; // fallback لقاعدة لم تُرقَّ
       enqueueWrite("orders", row, "id", legacy);
       enqueueWrite("cash_log", rowOfCash(cashEntry));
       flushOutbox();
@@ -879,6 +1009,7 @@ export const useStore = () => {
         case "nc_notifs":         setNotificationsRaw(data); break;
         case "nc_cash":           setCashLogRaw(data);       break;
         case "nc_tables":         setTablesRaw(data);        break;
+        case "nc_supplies":       setSuppliesRaw(data);      break;   // v42
         case "nc_outdoor_tables": setOutdoorTablesRaw(data); break;
         case "nc_debts":          setDebtsRaw(data);         break;
         case "nc_expenses":       setExpensesRaw(data);      break;
@@ -933,10 +1064,12 @@ export const useStore = () => {
       withTimeout(supabase.from("perm_overrides").select("*").eq("id", "main").single(), "perm_overrides"),
       withTimeout(supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(200), "shifts"),
       withTimeout(supabase.from("loyalty_log").select("*").order("created_at", { ascending: false }).limit(300), "loyalty_log"),
+      withTimeout(supabase.from("supplies").select("*").order("name"), "supplies"),                                        // v42
+      withTimeout(supabase.from("stock_movements").select("*").order("at", { ascending: false }).limit(400), "stock_movements"), // v42
     ]).then((results) => {
       // allSettled: كل نتيجة إما { status:"fulfilled", value } أو { status:"rejected", reason }
       // withTimeout يُحوّل الأخطاء لـ { data: null } — لذا كلها fulfilled هنا
-      const [ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy] =
+      const [ord, men, prof, dbt, exp, cash, tbl, outdoorTbl, rct, cmp, cust, sett, perms, shf, loy, sup, smv] =
         results.map(r => r.status === "fulfilled" ? r.value : { data: null, error: r.reason });
 
       if (ord.data)  {
@@ -997,6 +1130,26 @@ export const useStore = () => {
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); }
       if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   }
       if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);}
+
+      // ══ v42: المواد الإضافية + سجل الحركات ══
+      if (smv?.data) { setStockMovesRaw(smv.data.map(mapMovement)); }
+      if (sup?.data) {
+        const cloud = sup.data.map(mapSupply);
+        if (cloud.length) {
+          setSuppliesRaw(cloud);
+        } else {
+          // ترحيل لمرة واحدة: الجدول فارغ والحقل القديم عامر ⇒ ننقله ونرفعه.
+          // settings.extraStock يبقى كما هو (نسخة احتياطية قابلة للمراجعة).
+          const legacy = migrateExtraStock(sett.data?.data?.extraStock);
+          if (legacy.length) {
+            setSuppliesRaw(legacy);
+            legacy.forEach(x => enqueueWrite("supplies", rowOfSupply(x), "id"));
+            flushOutbox();
+          } else {
+            setSuppliesRaw([]);
+          }
+        }
+      }
 
       setCloudReady(true);
     }).finally(() => { setSyncing(false); flushOutbox(); }); // v4.7.0: فرّغ الطابور بعد السحب
@@ -1061,6 +1214,26 @@ export const useStore = () => {
           setTablesRaw(p => { const n = [t, ...p.filter(x => x.id !== t.id)].sort((a,b)=>a.number-b.number); broadcast("nc_tables", n); return n; });
         }
       }
+    });
+  }, []);
+
+  // v42: مزامنة حيّة للمواد وسجل الحركات
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeSupplies((newRow, deletedId) => {
+      if (deletedId) setSuppliesRaw(p => { const n = p.filter(x => x.id !== deletedId); broadcast("nc_supplies", n); return n; });
+      else if (newRow) {
+        const sup = mapSupply(newRow);
+        setSuppliesRaw(p => { const n = [sup, ...p.filter(x => x.id !== sup.id)].sort((a, b) => (a.name || "").localeCompare(b.name || "", "ar")); broadcast("nc_supplies", n); return n; });
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!SUPABASE_READY) return;
+    return subscribeStockMovements((r) => {
+      const m = mapMovement(r);
+      setStockMovesRaw(p => (p.some(x => x.id === m.id) ? p : [m, ...p].slice(0, 500)));
     });
   }, []);
 
@@ -1193,6 +1366,9 @@ export const useStore = () => {
     permOverrides, setPermOverrides,
     shifts, setShifts,
     loyaltyLog, setLoyaltyLog,
+    supplies, setSupplies,                       // v42
+    stockMoves, logStockMove,                    // v42
+    adjustStock, adjustSupply,                   // v42: تعديل ذرّي بفارق نسبي
     payOrder,
     syncing, cloudReady,
   };
