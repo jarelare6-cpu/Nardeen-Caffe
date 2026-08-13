@@ -9,6 +9,9 @@ import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
 import { NardeenLogoIcon } from "./NardeenIcons.jsx";
 import ActivityLog from "./ActivityLog.jsx";
+// v42: شبكة أمان الجرد اليومي عند تدوير منتصف ليل غرينتش
+import { notifyTelegram, buildDailySummary } from "./lib/telegram.js";
+import { buildDailyPacket, previousDayKey, shouldSendDaily } from "./lib/dailyReport.js";
 
 import { BarTab, HookahTab } from "./StationScreens.jsx";
 import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./OperationScreens.jsx";
@@ -19,6 +22,8 @@ const InventoryTab    = lazyAdmin("InventoryTab");
 const StockImportTab  = lazyAdmin("StockImportTab");
 const MenuTab         = lazyAdmin("MenuTab");
 const TablesTab       = lazyAdmin("TablesTab");
+const ShiftLogTab     = lazyAdmin("ShiftLogTab"); // v41: سجل الورديات / الجرد اليومي
+const StockLogTab     = lazyAdmin("StockLogTab"); // v42: سجل حركات المخزون
 const CompLogTab      = lazyAdmin("CompLogTab");
 const CustomerFileTab = lazyAdmin("CustomerFileTab");
 const ReceiptsTab     = lazyAdmin("ReceiptsTab");
@@ -98,6 +103,36 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     n.targetRoles.includes(user.role)&&!n.read.includes(user.id)?{...n,read:[...n.read,user.id]}:n
   ));
 
+  // ══════════════════════════════════════════════════════════════
+  // v42 — تدوير اليوم المحاسبي عند 00:00 غرينتش (شبكة أمان)
+  // ──────────────────────────────────────────────────────────────
+  // لا يُقفِل ورديةً ولا يغيّر بياناً. وظيفته الوحيدة: إن انقضى يومٌ ولم
+  // يُرسَل جرده على تلغرام (نُسي إقفال المسائية، أو أُقفلت بعد منتصف ليل
+  // غرينتش، أو كانت كل الأجهزة مغلقة) يُرسله عند أول فرصة. فلا يضيع جرد يوم.
+  // يعمل على أجهزة الأدمن/الكاشير فقط، ويُختم بـ lastDailySent المشترك في
+  // app_settings فلا يتكرّر الإرسال بين الأجهزة.
+  // ══════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!user || !["admin", "cashier"].includes(user.role)) return;
+    const tick = () => {
+      try {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+        const prev = previousDayKey();
+        if (!shouldSendDaily(store, settings, prev)) return;
+        const targets = settings?.telegramTargets || [];
+        const packet = buildDailyPacket(store, prev);
+        if (targets.length) {
+          notifyTelegram(targets, "daily",
+            buildDailySummary(packet, settings?.cafeName || "ناردين كافيه", settings?.currency || "ل.س"));
+        }
+        store.setSettings(p => ({ ...p, lastDailySent: prev }));
+      } catch (e) { console.warn("daily rollover:", e); }
+    };
+    const t0 = setTimeout(tick, 15000);          // بعد استقرار التحميل والمزامنة
+    const iv = setInterval(tick, 10 * 60 * 1000); // ثم كل 10 دقائق
+    return () => { clearTimeout(t0); clearInterval(iv); };
+  }, [user, store.shifts, store.orders, settings?.lastDailySent]);
+
   const navDef=[
     ["dashboard","📊","لوحة التحكم"],
     ["order","➕","طلب جديد"],
@@ -114,6 +149,8 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     ["stockimport","📦","جرد المخزون"],
     ["tables","🪑","الطاولات"],
     ["shift","🔐","تقفيل الوردية"],
+    ["shiftlog","🕐","سجل الورديات"],
+    ["stocklog","📦","سجل المخزون"],
     ["staff","👨‍💼","الموظفون"],
     ["reports","📈","التقارير"],
     ["receipts","🧾","الفواتير"],
@@ -235,6 +272,8 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="stockimport"&&canAccess(user.role,"stockimport")&&<StockImportTab store={store} user={user} showToast={showToast} settings={settings}/>}
         {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="shiftlog"   &&canAccess(user.role,"shiftlog")  &&<ShiftLogTab    store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="stocklog"   &&canAccess(user.role,"stocklog")  &&<StockLogTab    store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="staff"      &&canAccess(user.role,"staff")     &&<StaffTab       store={store} showToast={showToast} dm={dm}/>}
         {tab==="reports"    &&canAccess(user.role,"reports")   &&<ReportsTab     store={store} dm={dm} settings={settings}/>}
         {tab==="receipts"   &&canAccess(user.role,"receipts")  &&<ReceiptsTab    store={store} showToast={showToast} dm={dm} settings={settings}/>}
