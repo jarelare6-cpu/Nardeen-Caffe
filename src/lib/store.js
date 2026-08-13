@@ -350,7 +350,7 @@ const sbWrite = {
   deleteCustomer: (id) => sbDelete("customers", id),
 
   // v7: تقفيل الوردية
-  shift: (s) => sbUpsert("shifts", {
+  shift: (s) => { const row = {
     id: s.id, user_id: s.userId || null, user_name: s.userName || "",
     branch: s.branch || "main",
     opened_at: s.openedAt || new Date().toISOString(),
@@ -368,10 +368,17 @@ const sbWrite = {
     orders_count: s.ordersCount || 0,
     expenses_total: s.expensesTotal || 0,
     status: s.status || "open",
+    // v44: مَن أقفل الوردية فعلاً — قد يختلف عن مَن فتحها
+    closed_by_id: s.closedById || null,
+    closed_by_name: s.closedByName || "",
     notes: s.notes || "",
     shift_type: s.shiftType || "", // v31.6: حفظ نوع الوردية
     created_at: s.createdAt || new Date().toISOString(),
-  }),
+    };
+    // v44: fallback لقاعدة لم تُرقَّ بعد (بلا أعمدة closed_by_*)
+    const { closed_by_id, closed_by_name, ...legacy } = row;
+    return sbUpsert("shifts", row, "id", legacy);
+  },
 
   // v7: محفظة الولاء
   loyaltyLog: (l) => sbUpsert("loyalty_log", {
@@ -492,6 +499,8 @@ const mapShift = s => ({
   ordersCount:   s.orders_count  ?? s.ordersCount  ?? 0,
   expensesTotal: s.expenses_total ?? s.expensesTotal ?? 0,
   status:        s.status        ?? "open",
+  closedById:    s.closed_by_id   ?? s.closedById   ?? null, // v44
+  closedByName:  s.closed_by_name ?? s.closedByName ?? "",   // v44
   notes:         s.notes         ?? "",
   shiftType:     s.shift_type    ?? s.shiftType    ?? "", // v31.6
   createdAt:     s.created_at    ?? s.createdAt    ?? new Date().toISOString(),

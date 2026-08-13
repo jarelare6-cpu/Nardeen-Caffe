@@ -248,6 +248,46 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     (store.shifts || []).find(s => s.status === "open" && s.branch === branch),
     [store.shifts, branch]
   );
+  // v44: ورديات مفتوحة على فروع أخرى — كانت غير مرئية من هنا
+  const otherOpen = useMemo(() =>
+    (store.shifts || []).filter(s => s.status === "open" && (s.branch || "main") !== branch),
+    [store.shifts, branch]
+  );
+  const shiftTypeLabel = (t) => t === "night" ? "ليلية" : t === "evening" ? "مسائية" : t === "morning" ? "صباحية" : "—";
+  const [forceClose, setForceClose] = useState(null);
+  const summaryCash = (sum) => (sum.cashSales || 0) + (sum.tronSales || 0) + (sum.debtSettledCash || 0) - (sum.expensesTotal || 0);
+
+  // ══════════════════════════════════════════════════════════════
+  // v44: إغلاق إداري لوردية عالقة (أدمن فقط)
+  // للورديات المتروكة أو التجريبية التي لا جرد صندوق لها. لا نختلق
+  // أرقاماً: المعدود = المتوقع فيصبح الفارق صفراً، ويُوسَم في الملاحظات
+  // وسجل النشاط بأنه إغلاق إداري بلا جرد — فلا يُقرأ كإقفال حقيقي.
+  // ══════════════════════════════════════════════════════════════
+  const doForceClose = () => {
+    const sh = forceClose;
+    if (!sh) return;
+    const sum = calcShiftSummary(store.orders, store.expenses, sh.id, sh.openedAt, sh.branch || "main");
+    const expected = (sh.openingCash || 0) + summaryCash(sum);
+    const closedRow = {
+      ...sh,
+      closedAt: new Date().toISOString(),
+      closedById: user.id, closedByName: user.name,
+      countedCash: expected, expectedCash: expected, difference: 0,
+      cashSales: sum.cashSales, cardSales: sum.cardSales, tronSales: sum.tronSales,
+      debtTotal: sum.debtTotal, compTotal: sum.compTotal, totalSales: sum.totalSales,
+      ordersCount: sum.ordersCount, expensesTotal: sum.expensesTotal,
+      secExpensesTotal: sum.secExpensesTotal,
+      status: "closed",
+      notes: [(sh.notes || "").trim(), "⚠ إغلاق إداري بلا جرد صندوق"].filter(Boolean).join(" — "),
+    };
+    store.setShifts(p => p.map(x => x.id === sh.id ? closedRow : x));
+    try {
+      logActivity({ action: "إغلاق إداري لوردية", details: `${sh.branch === "outdoor" ? "الحديقة" : "الكافيه"} — ${shiftTypeLabel(sh.shiftType)} — بلا جرد صندوق`,
+        userName: user.name, userRole: user.role, amount: expected, branch: sh.branch || "main" });
+    } catch {}
+    showToast("🔒 أُغلقت الوردية إدارياً — بلا جرد صندوق", "warn");
+    setForceClose(null);
+  };
 
   // ملخص لحظي للوردية الحالية
   const summary = useMemo(() => {
@@ -294,6 +334,10 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     const closed = {
       ...openShift,
       closedAt: new Date().toISOString(),
+      // v44: مَن أقفلها فعلاً — قد يختلف عن مَن فتحها، والتقرير يجب أن
+      // ينسب العملية لصاحب الحساب الذي نفّذها لا لمن فتح الوردية.
+      closedById: user.id,
+      closedByName: user.name,
       countedCash: counted,
       expectedCash,
       difference,
@@ -438,6 +482,66 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           </button>
         ))}
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          v44: وردية مفتوحة على فرع آخر
+          شاشة التقفيل تعرض وردية الفرع المختار فقط، بينما لوحة التحكم
+          تعرض المفتوحة من كل الفروع. فوردية عالقة على الحديقة تبقى حمراء
+          في اللوحة وغير مرئية هنا مهما أقفلت ورديات الكافيه.
+          ══════════════════════════════════════════════════════════════ */}
+      {otherOpen.length > 0 && (
+        <div style={{ background: "rgba(230,81,0,.1)", border: "1.5px solid rgba(230,81,0,.35)", borderRadius: 10, padding: "11px 14px", marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#e65100", marginBottom: 8 }}>
+            ⚠ توجد وردية مفتوحة على فرع آخر
+          </div>
+          {otherOpen.map(sh => (
+            <div key={sh.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>
+                {sh.branch === "outdoor" ? "🌿 الحديقة" : "☕ الكافيه"} — {shiftTypeLabel(sh.shiftType)}
+                <span style={{ color: "var(--sub)", fontWeight: 600, marginRight: 6 }}>
+                  (مفتوحة منذ {Math.floor((Date.now() - new Date(sh.openedAt).getTime()) / 3600000)} ساعة)
+                </span>
+              </span>
+              <span style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => setBranch(sh.branch || "main")}
+                  style={{ background: "#e65100", color: "#fff", border: "none", borderRadius: 8, padding: "6px 14px", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>
+                  انتقل لإقفالها
+                </button>
+                {isAdmin && (
+                  <button onClick={() => setForceClose(sh)}
+                    style={{ background: "transparent", color: "#c62828", border: "1.5px solid rgba(198,40,40,.4)", borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>
+                    إغلاق إداري
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {forceClose && (
+        <div onClick={e => { if (e.target === e.currentTarget) setForceClose(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 1200, display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 360, textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🔒</div>
+            <h3 style={{ fontWeight: 900, fontSize: 16, marginBottom: 8 }}>إغلاق إداري</h3>
+            <p style={{ fontSize: 12.5, color: "var(--sub)", marginBottom: 6, lineHeight: 1.8 }}>
+              {forceClose.branch === "outdoor" ? "🌿 الحديقة" : "☕ الكافيه"} — {shiftTypeLabel(forceClose.shiftType)}
+            </p>
+            <p style={{ fontSize: 11.5, color: "#e65100", marginBottom: 16, lineHeight: 1.8 }}>
+              تُغلَق <b>بلا جرد صندوق</b>: المعدود = المتوقع والفارق صفر، وتُوسَم في
+              الملاحظات وسجل النشاط. استعملها للورديات المتروكة أو التجريبية فقط —
+              لا للإقفال اليومي.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setForceClose(null)}
+                style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid var(--border)", background: "var(--card2)", color: "var(--text)", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>تراجع</button>
+              <button onClick={doForceClose}
+                style={{ flex: 1, padding: 11, borderRadius: 10, border: "none", background: "#c62828", color: "#fff", fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>تأكيد</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!openShift ? (
         // ── فتح وردية جديدة ──
@@ -609,7 +713,15 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
             <div key={s.id} className="card" style={{ marginBottom: 10, borderRight: `4px solid ${Math.abs(s.difference) < 1 ? "#2e7d32" : s.difference > 0 ? "#e65100" : "#c62828"}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div>
-                  <div style={{ fontWeight: 800, fontSize: 14 }}>{s.userName}</div>
+                  {/* v44: يُعرَض مَن أقفلها فعلاً — لا مَن فتحها */}
+                  <div style={{ fontWeight: 800, fontSize: 14 }}>
+                    {s.closedByName || s.userName || "—"}
+                    {s.closedByName && s.userName && s.closedByName !== s.userName && (
+                      <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--sub)", marginRight: 6 }}>
+                        (فتحها {s.userName})
+                      </span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 11, color: "var(--sub)" }}>
                     {new Date(s.openedAt).toLocaleString("ar-SY", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })}
                     {" ← "}

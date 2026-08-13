@@ -104,7 +104,11 @@ export const buildShiftReport = (shift, cafeName, cur) => {
   return [
     `💰 <b>تقرير إغلاق وردية — ${cafeName}</b>`,
     `الفرع: ${shift.branch === "outdoor" ? "🌳 الحديقة" : "☕ الكافيه"}`,
-    `الكاشير: <b>${shift.userName || shift.openedByName || "—"}</b>`,
+    // v44: التقرير يُنسب لصاحب الحساب الذي نفّذ الإقفال. مَن يفتح الوردية
+    // قد لا يكون مَن يُقفلها، وكان التقرير ينسبها للفاتح دائماً.
+    `أقفلها: <b>${shift.closedByName || shift.userName || "—"}</b>`,
+    (shift.closedByName && shift.userName && shift.closedByName !== shift.userName)
+      ? `فتحها: ${shift.userName}` : null,
     `الإغلاق: ${now()}`,
     `━━━━━━━━━━━━━━`,
     `💵 نقدي: ${fmt(shift.cashSales)} ${cur}`,

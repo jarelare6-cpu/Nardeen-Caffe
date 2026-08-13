@@ -221,22 +221,36 @@ export function DashboardTab({store,dm,settings,user}){
           {shiftState.closed.length===0&&shiftState.open.length===0&&(
             <span style={{fontSize:12,color:"var(--sub)"}}>لا ورديات بعد في هذا اليوم</span>
           )}
+          {/* v44: بلا أسماء موظفين — الموظف يتغيّر والاسم يصير قديماً.
+              اللوحة تُظهر حالة الوردية لا مَن يشغّلها. أسماء المنفّذين
+              في «الورديات ▸ الموظفون» وفي سجل النشاط حيث تُدقَّق. */}
           {shiftState.closed.map(s=>(
             <span key={s.id} style={{background:"rgba(46,125,50,.15)",color:"#2e7d32",borderRadius:20,padding:"4px 12px",fontSize:11.5,fontWeight:800}}>
-              ✓ {typeLbl(s.shiftType)} — {n(s.totalSales)}
+              ✓ {typeLbl(s.shiftType)}{(s.branch||"main")==="outdoor"?" · حديقة":""} — {n(s.totalSales)}
             </span>
           ))}
-          {shiftState.open.map(s=>(
-            <span key={s.id} style={{background:"rgba(230,81,0,.15)",color:"#e65100",borderRadius:20,padding:"4px 12px",fontSize:11.5,fontWeight:800}}>
-              ● {typeLbl(s.shiftType)} مفتوحة — {s.userName||"—"}
-            </span>
-          ))}
+          {shiftState.open.map(s=>{
+            const hrs=s.openedAt?Math.floor((Date.now()-new Date(s.openedAt).getTime())/3600000):0;
+            const stale=hrs>=(settings?.shiftMaxHours||12);
+            return(
+              <span key={s.id} style={{background:stale?"rgba(198,40,40,.15)":"rgba(230,81,0,.15)",color:stale?"#c62828":"#e65100",borderRadius:20,padding:"4px 12px",fontSize:11.5,fontWeight:800}}>
+                ● {typeLbl(s.shiftType)} — {(s.branch||"main")==="outdoor"?"🌿 الحديقة":"☕ الكافيه"} مفتوحة منذ {hrs} ساعة
+              </span>
+            );
+          })}
         </div>
-        {shiftState.open.length>0&&(
-          <div style={{fontSize:10.5,color:"var(--sub)",marginTop:9,lineHeight:1.7}}>
-            الوردية المفتوحة لا تدخل الجرد اليومي — تدخل جرد اليوم الذي تُقفَل فيه.
-          </div>
-        )}
+        {shiftState.open.length>0&&(()=>{
+          const stale=shiftState.open.filter(s=>s.openedAt&&(Date.now()-new Date(s.openedAt).getTime())/3600000>=(settings?.shiftMaxHours||12));
+          return(
+            <div style={{fontSize:10.5,color:stale.length?"#c62828":"var(--sub)",marginTop:9,lineHeight:1.7}}>
+              الوردية المفتوحة لا تدخل الجرد اليومي — تدخل جرد اليوم الذي تُقفَل فيه.
+              {stale.length>0&&(
+                <><br/><strong>⚠ وردية متجاوزة للمدة المعتادة — رُبّما تُركت مفتوحة سهواً.
+                افتح «الورديات ▸ تقفيل» وستجد زر الانتقال إليها حتى لو كانت على فرع آخر.</strong></>
+              )}
+            </div>
+          );
+        })()}
       </Section>
 
       {/* ══ ٢) الإيراد ══ */}
@@ -277,7 +291,8 @@ export function DashboardTab({store,dm,settings,user}){
             <div style={{fontSize:11.5,fontWeight:800,color:"var(--sub)",marginBottom:7}}>آخر حركات المخزون</div>
             {recentActivity.map(m=>(
               <div key={m.id} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",color:"var(--sub)"}}>
-                <span>{m.delta>0?"➕":"➖"} {m.itemName} · {m.userName||"—"}</span>
+                {/* v44: بلا أسماء في اللوحة — الأسماء في «سجل المخزون» حيث تُدقَّق */}
+                <span>{m.delta>0?"➕":"➖"} {m.itemName}</span>
                 <span style={{fontWeight:800,color:m.delta>0?"#2e7d32":"#c62828"}}>
                   {m.delta>0?"+":""}{m.delta} · {reasonLabel(m.reason)}
                 </span>
