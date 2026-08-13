@@ -187,8 +187,8 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
       if(hasDrinks) addNotification(`🍹 طلب #${orderNum} للبار${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.BAR],newOrder.id);
       if(hasHookah) addNotification(`💨 طلب نرجيلة #${orderNum}${tableNum?` • طاولة ${tableNum}`:""}`, [ROLES.HOOKAH],newOrder.id);
       addNotification(`📋 طلب جديد #${orderNum} من ${newOrder.customerName}`,[ROLES.CASHIER,ROLES.ADMIN],newOrder.id);
-      // تحديث حالة الطاولة
-      store.setTables(p=>p.map(t=>String(t.number)===String(tableNum.trim())?{...t,status:"occupied",openedAt:t.openedAt||new Date().toISOString()}:t));
+      // v41: لا حاجة لكتابة حالة الطاولة — الإشغال مُشتقّ من الطلبات النشطة.
+      // (كانت حالة مُكرّرة تُكتب ولا تُقرأ، فتتناقض مع الواقع عند أي مسار لا يحدّثها.)
       setCart([]);setTableNum("");setNotes("");setCustomerName("");setDiscount(0);setSheetOpen(false);
       setSubmitting(false);
       // ✅ الفاتورة تُحفظ فقط عند الدفع في CashierTab — لا تُحفظ هنا
@@ -488,14 +488,24 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   // فقط الأدمن والكاشير يرون الطلبات المنتهية
   const canSeeHistory=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
 
+  // ══════════════════════════════════════════════════════════════
+  // v41 — العطل 4: الضيافة كانت تبقى في «الطلبات النشطة»
+  // الحالة "complimentary" لم تكن مستثناة من مرشّح active ولا من رؤية
+  // الموظفين، فالطلب يُسجَّل في سجل الضيافة ويبقى معروضاً كطلب نشط.
+  // الحالات المُغلقة كلها في مكان واحد الآن — لا قوائم متفرّقة تُنسى.
+  // ملاحظة: الضيافة الجزئية تُبقي الحالة "ready" عمداً لأن فيها رصيداً
+  // غير مُقدَّم ضيافةً، فتظلّ نشطة بحقّ إلى أن تُدفَع أو تُستكمل ضيافةً.
+  // ══════════════════════════════════════════════════════════════
+  const CLOSED_ST=["paid","cancelled","debt","complimentary"];
   const filtered=store.orders.filter(o=>{
     // الموظفون (بار، أراكيل، عامل) يرون الطلبات النشطة فقط
-    if(!canSeeHistory && ["paid","cancelled"].includes(o.status)) return false;
-    if(filter==="active") return!["paid","cancelled","debt"].includes(o.status);
+    if(!canSeeHistory && CLOSED_ST.includes(o.status)) return false;
+    if(filter==="active") return !CLOSED_ST.includes(o.status);
     if(filter==="debt") return o.status==="debt";
+    if(filter==="comp") return canSeeHistory && o.status==="complimentary";
     if(filter==="paid") return canSeeHistory && o.status==="paid";
     if(filter==="cancelled") return canSeeHistory && o.status==="cancelled";
-    if(filter==="all") return canSeeHistory || !["paid","cancelled"].includes(o.status);
+    if(filter==="all") return canSeeHistory || !CLOSED_ST.includes(o.status);
     return true;
   }).filter(o=>{
     if(!search) return true;
@@ -581,7 +591,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
         <input className="input" placeholder="🔍 بحث..." value={search} onChange={e=>setSearch(e.target.value)} style={{maxWidth:200,fontSize:13}}/>
       </div>
       <div style={{display:"flex",gap:8,marginBottom:14,overflowX:"auto"}} className="scroll-hide">
-        {[["active","نشطة"],["debt","💳 ديون"],["paid","مدفوعة"],["cancelled","ملغاة"],["all","الكل"]].map(([v,l])=>(
+        {[["active","نشطة"],["debt","💳 ديون"],["comp","🎁 ضيافة"],["paid","مدفوعة"],["cancelled","ملغاة"],["all","الكل"]].map(([v,l])=>(
           <button key={v} onClick={()=>setFilter(v)} style={{padding:"7px 14px",borderRadius:20,border:"none",
             background:filter===v?"#c62828":"var(--card2)",color:filter===v?"#fff":"var(--sub)",
             fontWeight:700,fontSize:12,whiteSpace:"nowrap"}}>
@@ -642,7 +652,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                     بدء التحضير
                   </button>
                 )}
-                {canManage&&!["paid","cancelled"].includes(order.status)&&(
+                {canManage&&!["paid","cancelled","complimentary","debt"].includes(order.status)&&(
                   <>
                     <button onClick={()=>setEditOrder(order)}
                       style={{background:"rgba(25,118,210,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#1565c0"}}>
@@ -715,7 +725,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const [discInput, setDiscInput] = useState({});      // v31.5: المبلغ المُدخَل قبل التثبيت
   const [discConfirm, setDiscConfirm] = useState(null); // {orderId, amount} نافذة تأكيد التثبيت
   const [cashConfirm, setCashConfirm] = useState(null); // v31.6: تأكيد الدفع النقدي
-  const [tronAmounts, setTronAmounts] = useState({});
+  // v41: الترون لم يعد يُدخَل قبل الدفع — يُضاف بعدها على الطلب مباشرةً
   const [debtModal, setDebtModal] = useState(null);
   const [debtNameInput, setDebtNameInput] = useState("");
   const [debtNameError, setDebtNameError] = useState("");
@@ -725,28 +735,85 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
   const [compItems, setCompItems] = useState([]);
   const [workerModal, setWorkerModal] = useState(null); // v31.4: مشروب عامل
   const [workerName, setWorkerName] = useState("");
-  const [tronModal, setTronModal] = useState(null);
-  const [tronInput, setTronInput] = useState("");
   const [partialModal, setPartialModal] = useState(null);
   const [partialInput, setPartialInput] = useState("");
   const [payingId, setPayingId] = useState(null); // v22: قفل الدفع المزدوج + حالة التحميل
+  // v41: ترون بعد الدفع (إكرامية فوق الفاتورة)
+  const [tipModal, setTipModal] = useState(null);   // الطلب المدفوع الجاري تعديل إكراميته
+  const [tipInput, setTipInput] = useState("");
+  const [showTips, setShowTips] = useState(false);
 
   const filteredReady = readyOrders.filter(o =>
     !customerFilter || (o.customerName || "").includes(customerFilter)
   );
 
-  const autoFreeTable = (tableNum, updatedOrders) => {
-    if (!tableNum) return;
-    const remaining = updatedOrders.filter(o =>
-      String(o.table) === String(tableNum) &&
-      !["paid", "cancelled", "debt", "complimentary"].includes(o.status)
-    );
-    if (remaining.length === 0) {
-      store.setTables(p => p.map(t =>
-        String(t.number) === String(tableNum) ? { ...t, status: "free", openedAt: null } : t
-      ));
-    }
+  // ══════════════════════════════════════════════════════════════
+  // v41 — العطل 1: خريطة الطاولات في الكاشير
+  // الطاولة تُحجز لحظة إرسال الطلب لا عند جهوزيّته. الإشغال مُشتقّ من
+  // الطلبات النشطة (pending/preparing/ready) فلا توجد حالة مُكرّرة تُنسى.
+  // ══════════════════════════════════════════════════════════════
+  const ACTIVE_ST_CASH = ["pending", "preparing", "ready"];
+  const tableGroups = useMemo(() => {
+    const map = new Map();
+    (store.orders || []).forEach(o => {
+      if (!ACTIVE_ST_CASH.includes(o.status)) return;
+      if ((o.branch || "main") !== "main") return;
+      const key = String(o.table || "").trim();
+      if (!key) return;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(o);
+    });
+    return Array.from(map.entries()).map(([num, list]) => ({
+      num,
+      orders: list,
+      total: list.reduce((a, o) => a + (o.total || 0), 0),
+      notReady: list.filter(o => o.status !== "ready").length,
+      readyCount: list.filter(o => o.status === "ready").length,
+      since: list.reduce((m, o) => (!m || new Date(o.createdAt) < new Date(m)) ? o.createdAt : m, null),
+    })).sort((a, b) => (parseInt(a.num, 10) || 0) - (parseInt(b.num, 10) || 0));
+  }, [store.orders]);
+
+  // فواتير اليوم المدفوعة — لإضافة/تعديل الترون بعد الدفع
+  const paidToday = useMemo(() =>
+    (store.orders || [])
+      .filter(o => o.status === "paid" && !o.isComplimentary && new Date(o.paidAt || o.createdAt) >= today)
+      .sort((a, b) => new Date(b.paidAt || b.createdAt) - new Date(a.paidAt || a.createdAt))
+  , [store.orders, today]);
+
+  // ══════════════════════════════════════════════════════════════
+  // v41 — العطل 3: الترون يُضاف بعد دفع الفاتورة
+  // الفاتورة تبقى كما هي (الترون ليس في أساسها)، والإكرامية تُكتب على
+  // الطلب وتُنسب للوردية المفتوحة لحظة الإضافة لأن نقدها دخل درجها.
+  // ══════════════════════════════════════════════════════════════
+  const openTip = (order) => { setTipInput(String(orderTron(order) || "")); setTipModal(order); };
+  const applyTip = () => {
+    const order = tipModal;
+    if (!order) return;
+    const amt = Math.max(0, Math.round(+tipInput || 0));
+    const prev = orderTron(order);
+    if (amt === prev) { setTipModal(null); return; }
+    const openShift = (store.shifts || []).find(sh => sh.status === "open" && sh.branch === (order.branch || "main"));
+    store.setOrders(p => p.map(o => o.id === order.id ? {
+      ...o,
+      tronAmount: amt,
+      tronShiftId: amt > 0 ? (openShift?.id || o.tronShiftId || o.shiftId || null) : null,
+      tronAt: amt > 0 ? new Date().toISOString() : null,
+    } : o));
+    logActivity({
+      action: prev > 0 ? (amt > 0 ? "تعديل ترون" : "حذف ترون") : "إضافة ترون",
+      details: `فاتورة #${order.orderNum}${prev > 0 ? ` — من ${prev.toLocaleString()} إلى ${amt.toLocaleString()}` : ""}${openShift ? "" : " — بلا وردية مفتوحة"}`,
+      userName: user.name, userRole: user.role, orderNum: order.orderNum,
+      amount: amt, branch: order.branch || "main",
+    });
+    if (!openShift) showToast("⚠ لا توجد وردية مفتوحة — سُجّل الترون زمنياً", "warn");
+    else showToast(amt > 0 ? `💠 ترون ${amt.toLocaleString()} ${CUR} على فاتورة #${order.orderNum}` : `أُزيل الترون من #${order.orderNum}`, "success");
+    setTipModal(null); setTipInput("");
   };
+
+  // v41: تحرير الطاولة صار تلقائياً بالكامل — الإشغال مُشتقّ من الطلبات النشطة،
+  // فحين يصبح آخر طلب مدفوعاً/ملغى/ديناً/ضيافةً تتحرر الطاولة من نفسها بلا كتابة حالة.
+  // تُبقى الدالة كـ no-op حفاظاً على مواضع الاستدعاء القائمة.
+  const autoFreeTable = (_tableNum, _updatedOrders) => {};
 
   const markPaid = async (order, payType = "cash") => {
     // v22: حمايات الدفع — منع النقر المزدوج + رفض الدفع دون اتصال
@@ -763,7 +830,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     const disc = discounts[order.id] || 0;
     const discAmt = Math.min(Math.max(0, disc), baseTotal); // v31.5: مبلغ ثابت
     const finalTotal = baseTotal - discAmt;
-    const tronAmtRaw = tronAmounts[order.id] || 0;
+    const tronAmtRaw = orderTron(order); // v41: الإكرامية تُضاف بعد الدفع؛ نحافظ على أي قيمة قديمة
     // v40: الترون إكرامية «فوق الفاتورة» — لا تُقيَّد بقيمة الفاتورة، ولا تُطرح من نقد الصندوق.
     // نقدها موجود فعلياً بالصندوق ويُتتبَّع كبند منفصل (انظر orderTron + احتساب المتوقع).
     const tronAmt = Math.max(0, tronAmtRaw);
@@ -851,8 +918,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     autoFreeTable(order.table, updated);
     setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setDiscInput(p => { const n = { ...p }; delete n[order.id]; return n; });
-    setTronAmounts(p => { const n = { ...p }; delete n[order.id]; return n; });
-    setTronModal(null);
     setPayingId(null);
   };
 
@@ -965,7 +1030,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     // v36: تصفير الفاتورة وإزالتها من الشاشة — تنظيف أي حالة عالقة للطلب
     setDiscounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setDiscInput(p => { const n = { ...p }; delete n[order.id]; return n; });
-    setTronAmounts(p => { const n = { ...p }; delete n[order.id]; return n; });
     setCustomerFilter("");
     showToast(`☕ سُجّل مشروب العامل — ${costTotal.toLocaleString()} ${CUR} تكلفة`, "success");
     setWorkerModal(null);
@@ -1019,10 +1083,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
     setCompModal(null);
   };
 
-  const openTron = (order) => {
-    setTronInput(String(tronAmounts[order.id] || ""));
-    setTronModal(order);
-  };
 
   return (
     <div className="fade-in">
@@ -1057,6 +1117,70 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         )}
       </div>
 
+      {/* ══ v41: خريطة الطاولات — محجوزة لحظة الطلب ══ */}
+      <div style={{ marginBottom: 18 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 800, marginBottom: 10, color: "#1565c0" }}>
+          🪑 الطاولات المشغولة ({tableGroups.length})
+          <span style={{ fontWeight: 600, fontSize: 11, color: "var(--sub)", marginRight: 8 }}>
+            تُحجز فور إرسال الطلب
+          </span>
+        </h3>
+        {!tableGroups.length ? (
+          <div className="card" style={{ textAlign: "center", padding: 18, color: "var(--sub)", fontSize: 13 }}>
+            🪑 كل الطاولات شاغرة
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(165px,1fr))", gap: 10 }}>
+            {tableGroups.map(g => {
+              const allReady = g.notReady === 0;
+              const edge = allReady ? "#2e7d32" : "#e65100";
+              return (
+                <div key={g.num} className="card" style={{ padding: 10, borderTop: `4px solid ${edge}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 900, fontSize: 14 }}>🪑 طاولة {g.num}</span>
+                    <OrderTimer createdAt={g.since} dm={dm} />
+                  </div>
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 7 }}>
+                    {g.notReady > 0 && (
+                      <span style={{ background: "rgba(230,81,0,.15)", color: "#e65100", borderRadius: 20, padding: "2px 9px", fontSize: 10, fontWeight: 800 }}>
+                        ⏱ {g.notReady} قيد التحضير
+                      </span>
+                    )}
+                    {g.readyCount > 0 && (
+                      <span style={{ background: "rgba(46,125,50,.15)", color: "#2e7d32", borderRadius: 20, padding: "2px 9px", fontSize: 10, fontWeight: 800 }}>
+                        ✓ {g.readyCount} جاهز
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ background: "var(--card2)", borderRadius: 8, padding: "6px 8px" }}>
+                    {g.orders.slice(0, 3).map(o => (
+                      <div key={o.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, padding: "2px 0" }}>
+                        <span style={{ color: "var(--sub)", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {o.status === "ready" ? "✓" : o.status === "preparing" ? "🔥" : "🕐"} #{o.orderNum} · {o.customerName || "زبون"}
+                        </span>
+                        <span style={{ fontWeight: 800, color: "#c62828", whiteSpace: "nowrap" }}>{(o.total || 0).toLocaleString()}</span>
+                      </div>
+                    ))}
+                    {g.orders.length > 3 && (
+                      <div style={{ fontSize: 9, color: "var(--sub)", textAlign: "center", paddingTop: 2 }}>+{g.orders.length - 3} طلب آخر</div>
+                    )}
+                    <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 900 }}>
+                      <span style={{ color: "var(--sub)" }}>{g.orders.length} طلب</span>
+                      <span style={{ color: "#c62828" }}>{g.total.toLocaleString()} {CUR}</span>
+                    </div>
+                  </div>
+                  {!allReady && (
+                    <div style={{ fontSize: 9, color: "#e65100", textAlign: "center", marginTop: 6, fontWeight: 700 }}>
+                      محجوزة — بانتظار المحطات
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <h3 style={{ fontSize: 16, fontWeight: 800, marginBottom: 12, color: "#c62828" }}>
         ⏳ طلبات جاهزة للدفع ({filteredReady.length})
         <button onClick={() => { generateZReportPDF(store, settings, user); logActivity({ action: "تقرير إقفال", details: "تقرير اليوم", userName: user.name, userRole: user.role }); }}
@@ -1074,7 +1198,6 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         const disc = discounts[order.id] || 0;
         const discAmt = Math.min(Math.max(0, disc), order.total); // v31.5: مبلغ ثابت
         const finalTotal = order.total - discAmt;
-        const tronAmt = tronAmounts[order.id] || 0;
 
         return (
           <div key={order.id} className="card" style={{ marginBottom: 14, borderRight: "4px solid #2e7d32" }}>
@@ -1115,10 +1238,8 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                   ✕ إلغاء الخصم
                 </button>
               )}
-              <button onClick={() => openTron(order)}
-                style={{ background: tronAmt > 0 ? "rgba(106,27,154,.2)" : "rgba(106,27,154,.1)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.3)", borderRadius: 8, padding: "5px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
-                💠 {tronAmt > 0 ? `ترون: ${tronAmt.toLocaleString()} ${CUR}` : "إضافة ترون"}
-              </button>
+              {/* v41: أُزيل زر الترون من شاشة الدفع — الإكرامية تُضاف بعد دفع
+                  الفاتورة من قسم «إضافة ترون على فاتورة مدفوعة» أسفل الصفحة. */}
             </div>
 
             <div style={{ marginTop: 10, padding: "8px 0", borderTop: "2px solid var(--border)" }}>
@@ -1132,11 +1253,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
                   </div>
                 </>
               )}
-              {tronAmt > 0 && (
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6a1b9a", marginBottom: 4 }}>
-                  <span>💠 الترون</span><span>{tronAmt.toLocaleString()} {CUR}</span>
-                </div>
-              )}
+
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900 }}>
                 <span>الإجمالي</span>
                 <span style={{ color: "#c62828" }}>{finalTotal.toLocaleString()} {CUR}</span>
@@ -1168,6 +1285,93 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
           </div>
         );
       })}
+
+      {/* ══ v41: إضافة الترون بعد دفع الفاتورة (إكرامية فوق الفاتورة) ══ */}
+      <div style={{ marginTop: 22 }}>
+        <div onClick={() => setShowTips(v => !v)}
+          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", background: "rgba(106,27,154,.08)", border: "1.5px solid rgba(106,27,154,.25)", borderRadius: 10, padding: "10px 14px" }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#6a1b9a" }}>
+            💠 إضافة ترون على فاتورة مدفوعة ({paidToday.length})
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 900, color: "#6a1b9a" }}>{showTips ? "▲" : "▼"}</span>
+        </div>
+        {showTips && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, color: "var(--sub)", marginBottom: 8, lineHeight: 1.7 }}>
+              الترون إكرامية فوق الفاتورة — لا يدخل أساسها ولا يغيّر إجماليها.
+              يُنسب لدرج <strong>الوردية المفتوحة الآن</strong> لأن نقده دخلها فعلياً.
+            </div>
+            {!paidToday.length ? (
+              <div className="card" style={{ textAlign: "center", padding: 20, color: "var(--sub)", fontSize: 13 }}>
+                لا توجد فواتير مدفوعة اليوم بعد
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(240px,1fr))", gap: 8 }}>
+                {paidToday.slice(0, 40).map(o => {
+                  const tip = orderTron(o);
+                  return (
+                    <div key={o.id} className="card" style={{ padding: 10, borderRight: `4px solid ${tip > 0 ? "#6a1b9a" : "var(--border)"}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontWeight: 900, fontSize: 12 }}>#{o.orderNum}</span>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#2e7d32" }}>{(o.total || 0).toLocaleString()} {CUR}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: "var(--sub)", marginBottom: 8 }}>
+                        👤 {o.customerName || "زبون"}{o.table ? ` • 🪑 ${o.table}` : ""}
+                      </div>
+                      <button onClick={() => openTip(o)}
+                        style={{ width: "100%", background: tip > 0 ? "rgba(106,27,154,.22)" : "rgba(106,27,154,.1)", color: "#6a1b9a", border: "1.5px solid rgba(106,27,154,.3)", borderRadius: 8, padding: "7px 6px", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                        💠 {tip > 0 ? `ترون: ${tip.toLocaleString()} ${CUR} — تعديل` : "إضافة ترون"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Tip (Tron after payment) Modal */}
+      {tipModal && (
+        <div onClick={e => { if (e.target === e.currentTarget) setTipModal(null); }}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 600, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", fontSize: 42, marginBottom: 8 }}>💠</div>
+            <h3 style={{ textAlign: "center", fontWeight: 900, marginBottom: 4 }}>ترون على فاتورة مدفوعة</h3>
+            <p style={{ textAlign: "center", fontSize: 12, color: "var(--sub)", marginBottom: 12 }}>
+              فاتورة #{tipModal.orderNum} — {(tipModal.total || 0).toLocaleString()} {CUR}
+              <br />
+              <span style={{ fontSize: 11 }}>الإكرامية تُضاف فوق الفاتورة ولا تُعدّل إجماليها</span>
+            </p>
+            <input className="input" type="number" min="0" placeholder="0" value={tipInput} autoFocus
+              onChange={e => setTipInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") applyTip(); }}
+              style={{ fontSize: 22, fontWeight: 900, textAlign: "center", marginBottom: 10 }} />
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 12 }}>
+              {[1000, 2000, 5000, 10000].map(v => (
+                <button key={v} onClick={() => setTipInput(String((+tipInput || 0) + v))}
+                  style={{ background: "rgba(106,27,154,.12)", color: "#6a1b9a", border: "none", borderRadius: 8, padding: "5px 10px", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                  +{v.toLocaleString()}
+                </button>
+              ))}
+              <button onClick={() => setTipInput("0")}
+                style={{ background: "rgba(198,40,40,.12)", color: "#c62828", border: "none", borderRadius: 8, padding: "5px 10px", fontWeight: 800, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                تصفير
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setTipModal(null); setTipInput(""); }}
+                style={{ flex: 1, background: "var(--card2)", border: "none", borderRadius: 10, padding: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                إلغاء
+              </button>
+              <button onClick={applyTip}
+                style={{ flex: 2, background: "#6a1b9a", color: "#fff", border: "none", borderRadius: 10, padding: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                ✓ حفظ الترون
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Partial Payment Modal */}
       {partialModal && (
@@ -1225,38 +1429,7 @@ export function CashierTab({ store, user, showToast, dm, settings }) {
         </div>
       )}
 
-      {/* Tron Modal */}
-      {tronModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div className="card fade-in" style={{ width: "100%", maxWidth: 360 }}>
-            <div style={{ textAlign: "center", fontSize: 44, marginBottom: 10 }}>💠</div>
-            <h3 style={{ textAlign: "center", fontWeight: 900, marginBottom: 4 }}>دفع بالترون</h3>
-            <p style={{ textAlign: "center", fontSize: 13, color: "var(--sub)", marginBottom: 14 }}>
-              طلب #{tronModal.orderNum} — إجمالي: {tronModal.total.toLocaleString()} {CUR}
-            </p>
-            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
-              مبلغ الترون ({CUR})
-            </label>
-            <input className="input" type="number" min="0" placeholder="0" value={tronInput}
-              autoFocus onChange={e => setTronInput(e.target.value)}
-              style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 14 }} />
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => {
-                const amt = Math.max(0, +tronInput || 0);
-                setTronAmounts(p => ({ ...p, [tronModal.id]: amt }));
-                setTronModal(null);
-                showToast(`💠 تم تسجيل الترون: ${amt.toLocaleString()} ${CUR}`);
-              }} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: "#6a1b9a", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                ✓ تأكيد
-              </button>
-              <button onClick={() => setTronModal(null)}
-                style={{ flex: 1, padding: 12, borderRadius: 12, border: "1.5px solid var(--border)", background: "none", color: "var(--text)", fontWeight: 700, cursor: "pointer" }}>
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* v41: أُزيل مودال الترون القديم (ما قبل الدفع) — استُبدل بـ Tip Modal أعلاه */}
 
       {/* Debt Modal */}
       {debtModal && (
