@@ -39,6 +39,7 @@ export const rowOfOrder = (o) => ({
   is_complimentary: o.isComplimentary || false,
   worker_name: o.workerName || "",
   tron_amount: o.tronAmount || 0,
+  tron_shift_id: o.tronShiftId || null, // v41: وردية إضافة الإكرامية (قد تختلف عن وردية الدفع)
   branch: o.branch || "main",
   shift_id: o.shiftId || null,
   preparing_at: o.preparingAt || null,
@@ -46,8 +47,8 @@ export const rowOfOrder = (o) => ({
   stock_deducted: o.stockDeducted !== false, // v23
   updated_at: o.updatedAt || new Date().toISOString(), // v4.7.0: حلّ تعارض المزامنة
 });
-// fallback لقاعدة لم تُرقَّ (لا stock_deducted/updated_at)
-export const rowOfOrderLegacy = (o) => { const { stock_deducted, updated_at, ...r } = rowOfOrder(o); return r; };
+// fallback لقاعدة لم تُرقَّ (لا stock_deducted/updated_at/tron_shift_id)
+export const rowOfOrderLegacy = (o) => { const { stock_deducted, updated_at, tron_shift_id, ...r } = rowOfOrder(o); return r; };
 
 export const mapOrder = o => ({
   ...o,
@@ -68,6 +69,7 @@ export const mapOrder = o => ({
   isComplimentary: o.is_complimentary ?? o.isComplimentary ?? false,
   workerName:   o.worker_name   ?? o.workerName   ?? "",
   tronAmount:   o.tron_amount   ?? o.tronAmount   ?? 0,
+  tronShiftId:  o.tron_shift_id ?? o.tronShiftId  ?? null, // v41
   branch:       o.branch        ?? "main",
   shiftId:      o.shift_id      ?? o.shiftId      ?? null,
   preparingAt:  o.preparing_at  ?? o.preparingAt  ?? null,
