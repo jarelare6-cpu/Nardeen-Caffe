@@ -7,26 +7,70 @@ import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notif
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
+import { newSupplyId } from "./lib/stockLog.js"; // v42
 
 export function BarTab({store,user,showToast,addNotification,dm,settings}){
   const canDecrease=user.role===ROLES.ADMIN||(settings?.workerCanDecreaseStock??false);
-  const supplies = settings?.extraStock || [];
+  // ══════════════════════════════════════════════════════════════
+  // v42: المواد الإضافية من جدول supplies المستقلّ لا من settings.extraStock
+  // كان الحقل القديم JSONB واحداً: جهازان يعدّلان معاً ⇒ آخر كتابة تمحو
+  // الأخرى بصمت. الآن كل مادة صفٌّ مستقلّ، والتعديل بفارق نسبي ذرّي.
+  // ══════════════════════════════════════════════════════════════
+  const supplies = (store.supplies || []).filter(x=>x.active!==false);
   const [showSup,setShowSup]=useState(false);
   const [supForm,setSupForm]=useState({name:"",unit:"",qty:"",minStock:""});
+  const [busy,setBusy]=useState({});
   const lbl={fontSize:11,fontWeight:700,color:"var(--sub)",marginBottom:4,display:"block"};
-  const saveSupplies=(arr)=>store.setSettings(p=>({...p,extraStock:arr}));
-  const addSupply=()=>{ if(!supForm.name.trim()){showToast("أدخل اسم المادة","error");return;} saveSupplies([...supplies,{id:"sup"+Date.now(),name:supForm.name.trim(),unit:supForm.unit.trim(),qty:+supForm.qty||0,minStock:+supForm.minStock||0}]); setSupForm({name:"",unit:"",qty:"",minStock:""}); setShowSup(false); showToast("تمت إضافة المادة"); };
-  const adjustSupply=(id,d)=>saveSupplies(supplies.map(s=>s.id===id?{...s,qty:Math.max(0,(+s.qty||0)+d)}:s));
-  const removeSupply=(id)=>saveSupplies(supplies.filter(s=>s.id!==id));
+  const openShift=(store.shifts||[]).find(sh=>sh.status==="open"&&sh.branch==="main");
+  const moveMeta=(reason,note)=>({reason,note:note||"",userId:user.id,userName:user.name,userRole:user.role,shiftId:openShift?.id||null,branch:"main"});
+  const addSupply=async()=>{
+    if(!supForm.name.trim()){showToast("أدخل اسم المادة","error");return;}
+    const qty=Math.max(0,+supForm.qty||0);
+    const sup={id:newSupplyId(),name:supForm.name.trim(),unit:supForm.unit.trim(),qty:0,minStock:Math.max(0,+supForm.minStock||0),branch:"main",active:true};
+    store.setSupplies(p=>[...p,sup]);
+    if(qty>0) await store.adjustSupply(sup.id,qty,moveMeta("restock","رصيد افتتاحي"));
+    setSupForm({name:"",unit:"",qty:"",minStock:""}); setShowSup(false);
+    showToast("تمت إضافة المادة");
+  };
+  const adjustSupply=async(id,d)=>{
+    if(d<0&&!canDecrease){showToast("غير مسموح بتخفيض المخزون","warn");return}
+    setBusy(m=>({...m,[id]:true}));
+    const r=await store.adjustSupply(id,d,moveMeta(d>0?"restock":"correction"));
+    setBusy(m=>{const n={...m};delete n[id];return n;});
+    if(r&&r.ok===false&&r.reason!=="noop") showToast("⚠ تعذّر تعديل المخزون — أعد المحاولة","error");
+  };
+  const removeSupply=(id)=>store.setSupplies(p=>p.filter(s=>s.id!==id));
+  // v41: إضافة بكميّة — البار يزيد فقط (لا تخفيض) بقيم أكبر من 1
+  const [addQty,setAddQty]=useState({});          // itemId -> نص الكمية لأصناف المنيو
+  const [supQty,setSupQty]=useState({});          // supplyId -> نص الكمية للمواد الإضافية
+  const readQty=(map,id)=>{ const n=Math.floor(+map[id]); return (isNaN(n)||n<1)?1:Math.min(n,9999); };
+  const bumpStock=async(id,map,setMap)=>{
+    const q=readQty(map,id);
+    setMap(m=>({...m,[id]:""}));
+    const r=await updateStock(id,q);
+    if(r!==false) showToast(`➕ أُضيف ${q} إلى المخزون`,"success");
+  };
+  const bumpSupply=async(id,name)=>{
+    const q=readQty(supQty,id);
+    setSupQty(m=>({...m,[id]:""}));
+    await adjustSupply(id,q);
+    showToast(`➕ أُضيف ${q}${name?` إلى ${name}`:""}`,"success");
+  };
+  const qtyBox={width:56,height:30,textAlign:"center",fontWeight:800,fontSize:13,borderRadius:8,border:"1.5px solid var(--border)",background:"var(--card2)",color:"inherit",fontFamily:"inherit"};
+  const chip=(active)=>({minWidth:30,height:26,padding:"0 7px",borderRadius:7,border:"none",cursor:"pointer",fontWeight:800,fontSize:11,background:active?"rgba(46,125,50,.3)":"rgba(46,125,50,.12)",color:"#2e7d32"});
   const barOrders=store.orders.filter(o=>
     ["pending","preparing"].includes(o.status)&&
     o.items.some(i=>BAR_CATS.includes(store.menu.find(m=>m.id===i.itemId)?.category)&&!i.prepared)
   ).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   const barItems=store.menu.filter(m=>["hot_drinks","cold_drinks"].includes(m.category));
 
-  const updateStock=(id,delta)=>{
+  // v42: تعديل بفارق نسبي ذرّي + تسجيل الحركة (من/كم/متى/لماذا)
+  const updateStock=async(id,delta)=>{
     if(delta<0&&!canDecrease){showToast("غير مسموح بتخفيض المخزون","warn");return}
-    store.setMenu(p=>p.map(m=>m.id===id?{...m,stock:Math.max(0,m.stock+delta)}:m));
+    setBusy(m=>({...m,[id]:true}));
+    const r=await store.adjustStock(id,delta,moveMeta(delta>0?"restock":"correction"));
+    setBusy(m=>{const n={...m};delete n[id];return n;});
+    if(r&&r.ok===false&&r.reason!=="noop") showToast("⚠ تعذّر تعديل المخزون — أعد المحاولة","error");
   };
   const markReady=(order)=>{
     store.setOrders(p=>p.map(o=>{
@@ -104,7 +148,7 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
               <div style={{height:"100%",width:`${Math.min(100,(item.stock/Math.max(item.minStock*2,1))*100)}%`,
                 background:(item.stock||0)<1?"#c62828":"#2e7d32",borderRadius:4}}/>
             </div>
-            <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center",marginBottom:6}}>
               {canDecrease&&(
                 <button onClick={()=>updateStock(item.id,-1)}
                   style={{width:30,height:30,background:"rgba(198,40,40,.15)",color:"#c62828",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>
@@ -112,9 +156,20 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
                 </button>
               )}
               <span style={{fontWeight:900,fontSize:15,minWidth:30,textAlign:"center"}}>{item.stock}</span>
-              <button onClick={()=>updateStock(item.id,1)}
-                style={{width:30,height:30,background:"rgba(46,125,50,.15)",color:"#2e7d32",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>
-                +
+            </div>
+            {/* v41: إضافة بكميّة حرّة — زيادة فقط */}
+            <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
+              {[1,5,10,24].map(q=>(
+                <button key={q} onClick={()=>setAddQty(m=>({...m,[item.id]:String(q)}))}
+                  style={chip(readQty(addQty,item.id)===q&&(addQty[item.id]||"")!=="")}>+{q}</button>
+              ))}
+              <input type="number" min="1" inputMode="numeric" style={qtyBox}
+                value={addQty[item.id]??""} placeholder="1"
+                onChange={e=>setAddQty(m=>({...m,[item.id]:e.target.value}))}
+                onKeyDown={e=>{ if(e.key==="Enter") bumpStock(item.id,addQty,setAddQty); }}/>
+              <button onClick={()=>bumpStock(item.id,addQty,setAddQty)}
+                style={{height:30,padding:"0 12px",background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,fontWeight:900,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                ＋ إضافة
               </button>
             </div>
             </>)}
@@ -150,10 +205,26 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
                 </div>
                 <button onClick={()=>removeSupply(s.id)} style={{background:"rgba(198,40,40,.12)",color:"#c62828",border:"none",borderRadius:8,padding:"4px 8px",fontSize:12}}>🗑</button>
               </div>
-              <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
-                <button onClick={()=>adjustSupply(s.id,-1)} style={{width:30,height:30,background:"rgba(198,40,40,.15)",color:"#c62828",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>−</button>
-                <span style={{fontWeight:900,fontSize:14,minWidth:44,textAlign:"center",color:low?"#c62828":"inherit"}}>{s.qty}{s.unit?` ${s.unit}`:""}</span>
-                <button onClick={()=>adjustSupply(s.id,1)} style={{width:30,height:30,background:"rgba(46,125,50,.15)",color:"#2e7d32",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>+</button>
+              <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center",marginBottom:6}}>
+                {canDecrease&&(
+                  <button onClick={()=>adjustSupply(s.id,-1)} style={{width:30,height:30,background:"rgba(198,40,40,.15)",color:"#c62828",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>−</button>
+                )}
+                <span style={{fontWeight:900,fontSize:14,minWidth:44,textAlign:"center",color:low?"#c62828":"inherit"}}>{(+s.qty||0).toLocaleString()}{s.unit?` ${s.unit}`:""}</span>
+              </div>
+              {/* v41: إضافة بكميّة حرّة — زيادة فقط */}
+              <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
+                {[1,5,10].map(q=>(
+                  <button key={q} onClick={()=>setSupQty(m=>({...m,[s.id]:String(q)}))}
+                    style={chip(readQty(supQty,s.id)===q&&(supQty[s.id]||"")!=="")}>+{q}</button>
+                ))}
+                <input type="number" min="1" inputMode="numeric" style={qtyBox}
+                  value={supQty[s.id]??""} placeholder="1"
+                  onChange={e=>setSupQty(m=>({...m,[s.id]:e.target.value}))}
+                  onKeyDown={e=>{ if(e.key==="Enter") bumpSupply(s.id,s.name); }}/>
+                <button onClick={()=>bumpSupply(s.id,s.name)}
+                  style={{height:30,padding:"0 12px",background:"#2e7d32",color:"#fff",border:"none",borderRadius:8,fontWeight:900,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                  ＋ إضافة
+                </button>
               </div>
             </div>
           );})}
@@ -175,10 +246,19 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
   ).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   const hookahItems=store.menu.filter(m=>m.category==="hookah");
 
-  const updateStock=(id,delta)=>{
+  // v42: تعديل بفارق نسبي ذرّي + تسجيل الحركة
+  const openShiftH=(store.shifts||[]).find(sh=>sh.status==="open"&&sh.branch==="main");
+  const updateStock=async(id,delta)=>{
     if(delta<0&&!canDecrease){showToast("غير مسموح بتخفيض المخزون","warn");return}
-    store.setMenu(p=>p.map(m=>m.id===id?{...m,stock:Math.max(0,m.stock+delta)}:m));
+    const r=await store.adjustStock(id,delta,{reason:delta>0?"restock":"correction",userId:user.id,userName:user.name,userRole:user.role,shiftId:openShiftH?.id||null,branch:"main"});
+    if(r&&r.ok===false&&r.reason!=="noop") showToast("⚠ تعذّر تعديل المخزون — أعد المحاولة","error");
   };
+  // v41: إضافة بكميّة — زيادة فقط
+  const [addQty,setAddQty]=useState({});
+  const readQty=(map,id)=>{ const n=Math.floor(+map[id]); return (isNaN(n)||n<1)?1:Math.min(n,9999); };
+  const bumpStock=async(id)=>{ const q=readQty(addQty,id); setAddQty(m=>({...m,[id]:""})); await updateStock(id,q); showToast(`➕ أُضيف ${q} إلى المخزون`,"success"); };
+  const qtyBox={width:56,height:30,textAlign:"center",fontWeight:800,fontSize:13,borderRadius:8,border:"1.5px solid var(--border)",background:"var(--card2)",color:"inherit",fontFamily:"inherit"};
+  const chip=(active)=>({minWidth:30,height:26,padding:"0 7px",borderRadius:7,border:"none",cursor:"pointer",fontWeight:800,fontSize:11,background:active?"rgba(106,27,154,.3)":"rgba(106,27,154,.12)",color:"#6a1b9a"});
   const markReady=(order)=>{
     store.setOrders(p=>p.map(o=>{
       if(o.id!==order.id) return o;
@@ -256,9 +336,20 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
                 </button>
               )}
               <span style={{fontWeight:900,fontSize:15,minWidth:30,textAlign:"center"}}>{item.stock}</span>
-              <button onClick={()=>updateStock(item.id,1)}
-                style={{width:30,height:30,background:"rgba(106,27,154,.15)",color:"#6a1b9a",border:"none",borderRadius:8,fontWeight:900,fontSize:16}}>
-                +
+            </div>
+            {/* v41: إضافة بكميّة حرّة — زيادة فقط */}
+            <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"center",flexWrap:"wrap",marginTop:6}}>
+              {[1,5,10,24].map(q=>(
+                <button key={q} onClick={()=>setAddQty(m=>({...m,[item.id]:String(q)}))}
+                  style={chip(readQty(addQty,item.id)===q&&(addQty[item.id]||"")!=="")}>+{q}</button>
+              ))}
+              <input type="number" min="1" inputMode="numeric" style={qtyBox}
+                value={addQty[item.id]??""} placeholder="1"
+                onChange={e=>setAddQty(m=>({...m,[item.id]:e.target.value}))}
+                onKeyDown={e=>{ if(e.key==="Enter") bumpStock(item.id); }}/>
+              <button onClick={()=>bumpStock(item.id)}
+                style={{height:30,padding:"0 12px",background:"#6a1b9a",color:"#fff",border:"none",borderRadius:8,fontWeight:900,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                ＋ إضافة
               </button>
             </div>
             </>)}
