@@ -375,6 +375,67 @@ export const subscribeShifts = (onInsert, onUpdate, onDelete) => {
 // ══════════════════════════════════════════════════════════════
 // v7: Real-time لسجل الولاء (loyalty_log)
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// v42: تعديل المخزون بفارق نسبي ذرّي + سجل الحركة في معاملة واحدة
+// ──────────────────────────────────────────────────────────────
+// نرسل الفارق (+5) لا القيمة المطلقة (30). القاعدة تُجريه على الصف
+// المقفول ⇒ جهازان يضيفان 5 معاً ينتج 35 لا 30. هذا هو الحلّ الفعلي
+// لفقدان التحديث الصامت. عند تعذّر الاتصال يُعاد { ok:false } ويتولّى
+// المُستدعي التطبيق المحلي وإعادة المحاولة.
+//
+// p_move_id حتمي ⇒ إعادة الإرسال لا تُضاعف الحركة (idempotent).
+// ══════════════════════════════════════════════════════════════
+const adjustRpc = async (fn, idParam, args) => {
+  if (!supabase) return { ok: false, reason: "offline" };
+  try {
+    const { data, error } = await withNet(`rpc:${fn}`, () => supabase.rpc(fn, { [idParam]: args.id,
+      p_delta: args.delta,
+      p_reason: args.reason || "restock",
+      p_user_id: args.userId || null,
+      p_user_name: args.userName || "",
+      p_user_role: args.userRole || "",
+      p_shift_id: args.shiftId || null,
+      p_note: args.note || "",
+      p_move_id: args.moveId || null,
+      p_branch: args.branch || "main",
+    }));
+    if (error) {
+      // الدالة غير منشأة بعد (قبل هجرة v42) → المُستدعي يرتدّ للمسار القديم
+      if (/(function|does not exist|PGRST202|schema cache)/i.test(error.message || "")) {
+        return { ok: false, reason: "no_rpc" };
+      }
+      reportSyncError("rpc", fn, error.message);
+      return { ok: false, reason: "error", message: error.message };
+    }
+    return { ok: true, qtyAfter: data == null ? null : +data };
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (/(function|does not exist|PGRST202|schema cache)/i.test(msg)) return { ok: false, reason: "no_rpc" };
+    return { ok: false, reason: "offline", message: msg };
+  }
+};
+
+export const adjustStockAtomic  = (args) => adjustRpc("adjust_stock",  "p_item_id",   args);
+export const adjustSupplyAtomic = (args) => adjustRpc("adjust_supply", "p_supply_id", args);
+
+export const subscribeSupplies = (onChange) => {
+  if (!supabase) return () => {};
+  const ch = supabase.channel("supplies-rt-v42")
+    .on("postgres_changes", { event: "*", schema: "public", table: "supplies" }, p => {
+      if (p.eventType === "DELETE") onChange(null, p.old.id);
+      else onChange(p.new, null);
+    }).subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
+export const subscribeStockMovements = (onInsert) => {
+  if (!supabase) return () => {};
+  const ch = supabase.channel("stockmoves-rt-v42")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "stock_movements" }, p => onInsert(p.new))
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+};
+
 export const subscribeLoyaltyLog = (onInsert) => {
   if (!supabase) return () => {};
   const ch = supabase.channel("loyalty-rt-v7")
