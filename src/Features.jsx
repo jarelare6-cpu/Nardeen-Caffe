@@ -8,8 +8,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
 import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
+import { buildDailyPacket } from "./lib/dailyReport.js"; // v42
 import {
-  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, workDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac, orderSale } from "./lib/utils.js";
+  getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, workDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac, orderSale,
+  businessDayKey, businessDayEnd, formatDayKey, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // 1. KITCHEN DISPLAY SYSTEM (KDS)
@@ -305,27 +307,24 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       // v31.2: ملخص اليوم يُرسل عند إغلاق الوردية المسائية فقط (لا بالساعة)
       const isEveningClose = openShift.shiftType === "evening"; // v31.6: صريح فقط
       if (isEveningClose) {
-        const today = workDayStart(store.shifts); // v37
-        const inToday = (iso) => iso && new Date(iso) >= today;
-        const paidToday = (store.orders || []).filter(o => o.status === "paid" && inToday(o.paidAt || o.createdAt));
-        const sum = (a, f = o => o.total || 0) => a.reduce((s, o) => s + f(o), 0);
-        const expToday = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inToday(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
-        const secExpToday = (store.expenses || []).filter(e => e.isSecondary && inToday(e.date)).reduce((s, e) => s + (e.amount || 0), 0); // v40: منفصل
-        const costToday = paidToday.reduce((s, o) => s + orderCogs(o, store.menu), 0); // v39: التكلفة الكاملة
-        const revenue = sum(paidToday, orderSale); // v39: مبيعات كاملة (تشمل الترون)
-        const daily = {
-          revenue, cash: sum(paidToday.filter(o => o.paymentType === "cash"), orderCash),
-          card: sum(paidToday.filter(o => o.paymentType === "card"), orderCash),
-          tron: sum(paidToday, orderTron), // v36: بند الترون المنفصل
-          expenses: expToday,
-          secExpenses: secExpToday, // v40: بند منفصل — لا يُطرح من الربح
-          debts: sum((store.orders || []).filter(o => o.status === "debt" && inToday(o.createdAt))),
-          comp: (store.orders || []).filter(o => inToday(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6: كل طلبات اليوم
-          profit: revenue - costToday - expToday,
-          orders: paidToday.length,
-          dayLabel: businessDayLabel(),
-        };
+        // ══════════════════════════════════════════════════════════════
+        // v41 — الجرد اليومي يُبنى من الورديات المقفلة لهذا اليوم المحاسبي
+        // ──────────────────────────────────────────────────────────────
+        // كان يُبنى من نافذة زمنية (كل ما دُفع منذ بداية اليوم). المشكلة:
+        // الوردية الليلية تُفتح ~22:30 UTC وتُقفل 06:00 UTC من اليوم التالي،
+        // فطلباتها المدفوعة قبل 00:00 UTC كانت تسقط من الجرد كلياً — نقص
+        // صامت في الإيراد اليومي المُرسَل على تلغرام كل ليلة.
+        //
+        // الآن: يوم UTC = مجموع الورديات التي أُقفلت فيه:
+        //   ليلية (أُقفلت 06:00 UTC) + صباحية (14:00) + مسائية (~22:30 الآن).
+        // وإقفال المسائية هو آخر إقفال في اليوم، فهو التوقيت الصحيح للإرسال.
+        // ══════════════════════════════════════════════════════════════
+        // store.shifts لم يُحدَّث بعد في هذه الإغلاقة — نُمرّر الوردية المُقفلة يدوياً
+        const dayKey = businessDayKey(closed.closedAt);
+        const daily = buildDailyPacket(store, dayKey, [closed]);
         notifyTelegram(targets, "daily", buildDailySummary(daily, cafeName, CUR));
+        // v42: نختم اليوم كمُرسَل — شبكة الأمان لن تُعيد إرساله
+        try { store.setSettings(p => ({ ...p, lastDailySent: dayKey })); } catch {}
 
         // v31.2: التقرير الأسبوعي — بعد اليومي، يوم الخميس فقط، مرة واحدة لكل أسبوع
         if (new Date().getDay() === 4) { // 4 = الخميس
@@ -376,6 +375,22 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     ? (openShift.openingCash || 0) + summary.cashSales + (summary.tronSales || 0) + (summary.debtSettledCash || 0) - summary.expensesTotal // v40: + الترون (نقده في الصندوق)
     : 0;
   const liveDiff = (+countedCash || 0) - expectedCash;
+
+  // ══════════════════════════════════════════════════════════════
+  // v41 — حارس حدّ اليوم المحاسبي
+  // ──────────────────────────────────────────────────────────────
+  // اليوم ينتهي الساعة DAY_START_UTC_HOUR بتوقيت غرينتش (0 UTC = 3:00 فجراً
+  // بتوقيت دمشق). جدول العمل يترك هامشاً مريحاً لكل الورديات عدا المسائية:
+  // تُقفَل عادةً 1:00–2:00 فجراً محلياً، أي على بُعد ساعة إلى ساعتين من الحدّ.
+  // إن تأخّر إقفالها بعد 3:00 فجراً انتقل إيرادها كاملاً إلى جرد الغد،
+  // ولم يعد جرد اليوم يشمل الورديات الثلاث. نُنبّه قبل وقوع ذلك.
+  // ══════════════════════════════════════════════════════════════
+  const dayGuard = useMemo(() => {
+    const now = new Date();
+    const key = businessDayKey(now);
+    const minsLeft = Math.round((businessDayEnd(now).getTime() - now.getTime()) / 60000);
+    return { key, minsLeft, near: minsLeft <= 90 };
+  }, [countedCash, openShift]);
 
   // سجل الورديات المقفلة
   const closedShifts = useMemo(() =>
@@ -520,6 +535,22 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
               style={{ resize: "none", height: 60, marginBottom: 14 }} />
 
             {!confirmClose ? (
+              <div style={{
+                background: dayGuard.near ? "rgba(230,81,0,.12)" : "rgba(21,101,192,.08)",
+                border: `1.5px solid ${dayGuard.near ? "rgba(230,81,0,.4)" : "rgba(21,101,192,.25)"}`,
+                borderRadius: 10, padding: "9px 13px", marginBottom: 10,
+                fontSize: 11.5, lineHeight: 1.8, fontWeight: 700,
+                color: dayGuard.near ? "#e65100" : "var(--sub)",
+              }}>
+                🗓 ستُحتسب هذه الوردية في جرد: <strong>{formatDayKey(dayGuard.key)}</strong>
+                {dayGuard.near && (
+                  <>
+                    <br />
+                    ⚠ يتبقّى {dayGuard.minsLeft} دقيقة على نهاية اليوم المحاسبي.
+                    إن أقفلتَ بعدها انتقل إيراد هذه الوردية إلى جرد الغد.
+                  </>
+                )}
+              </div>
               <button onClick={() => { if (countedCash === "") { showToast("أدخل النقد المعدود أولاً", "error"); return; } setConfirmClose(true); }}
                 style={{ width: "100%", background: "#e65100", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
                 🔐 تقفيل الوردية
