@@ -477,6 +477,62 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
 // ORDERS TAB — with edit order feature
 // ═══════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+// v44 — العطل الجذري: «تعديل الطلب» كانت تُعاد تهيئتها كل ثانية
+// ──────────────────────────────────────────────────────────────
+// كان EditModal مُعرَّفاً *داخل* جسم OrdersTab. في React، هوية الدالة
+// هي نوع المكوّن؛ وبما أن الدالة تُنشأ من جديد في كل رندر، يرى React
+// نوعاً مختلفاً في نفس الموضع فيهدم الشجرة القديمة ويبني أخرى جديدة
+// (unmount + mount) بدل التحديث. ولأن HomeScreen تحدّث الساعة كل
+// ثانية، كانت النافذة تُهدَم وتُبنى 60 مرة في الدقيقة: تصفير items
+// و tbl و note، فقدان تركيز الحقول، وإعادة تحميل الصور — أي «تحديث
+// وتعليق مستمر وكأن شيئاً يمنع التعديل».
+// الحلّ: المكوّن في نطاق الوحدة (هوية ثابتة) وكل ما يحتاجه عبر props.
+// ══════════════════════════════════════════════════════════════
+function OrderEditModal({order,onClose,store,showToast,CUR}){
+  const [items,setItems]=useState(()=>order.items.map(i=>({...i})));
+  const [tbl,setTbl]=useState(order.table||"");
+  const [note,setNote]=useState(order.notes||"");
+  const total=items.reduce((s,i)=>s+i.price*i.qty,0);
+  const save=()=>{
+    if(!items.length){ showToast("لا يمكن حفظ طلب بلا أصناف — استخدم «إلغاء الطلب»","error"); return; }
+    store.setOrders(p=>p.map(o=>o.id===order.id?{...o,items,table:tbl,notes:note,total}:o));
+    showToast("تم تعديل الطلب");onClose();
+  };
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:600,padding:20}}>
+      <div className="card fade-in" style={{width:"100%",maxWidth:400,maxHeight:"88vh",overflowY:"auto"}}>
+        <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>✏ تعديل الطلب #{order.orderNum}</div>
+        <input className="input" value={tbl} onChange={e=>setTbl(e.target.value)} placeholder="رقم الطاولة" style={{marginBottom:10}}/>
+        <textarea className="input" value={note} onChange={e=>setNote(e.target.value)} style={{height:60,resize:"none",marginBottom:14}} placeholder="ملاحظات"/>
+        {items.map((item,idx)=>(
+          <div key={item.itemId?`${item.itemId}-${idx}`:idx} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"6px 10px",background:"var(--card2)",borderRadius:10}}>
+            <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={30} round={8}/>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:600}}>{item.itemName}</div>
+              {item.note&&<div style={{fontSize:10,color:"#c62828",fontWeight:700}}>📝 {item.note}</div>}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:Math.max(1,it.qty-1)}:it))}
+                style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>−</button>
+              <span style={{minWidth:24,textAlign:"center",fontWeight:900}}>{item.qty}</span>
+              <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:it.qty+1}:it))}
+                style={{background:"#e8f5e9",color:"#2e7d32",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>+</button>
+              <button onClick={()=>setItems(p=>p.filter((_,i)=>i!==idx))}
+                style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontSize:13}}>🗑</button>
+            </div>
+          </div>
+        ))}
+        <div style={{fontWeight:900,fontSize:15,margin:"10px 0"}}>الإجمالي: {total.toLocaleString()} {CUR}</div>
+        <div style={{display:"flex",gap:10}}>
+          <button className="btn btn-red" style={{flex:1}} onClick={save}>حفظ</button>
+          <button className="btn btn-ghost" style={{flex:1}} onClick={onClose}>إلغاء</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   const [filter,setFilter]=useState("active");
   const [search,setSearch]=useState("");
@@ -536,53 +592,9 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
     preparing:["ready","✅ تعيين جاهز"],
   };
 
-  // Edit order modal
-  const EditModal=({order,onClose})=>{
-    const [items,setItems]=useState(order.items.map(i=>({...i})));
-    const [tbl,setTbl]=useState(order.table||"");
-    const [note,setNote]=useState(order.notes||"");
-    const total=items.reduce((s,i)=>s+i.price*i.qty,0);
-    const save=()=>{
-      store.setOrders(p=>p.map(o=>o.id===order.id?{...o,items,table:tbl,notes:note,total}:o));
-      showToast("تم تعديل الطلب");onClose();
-    };
-    return(
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:600,padding:20}}>
-        <div className="card fade-in" style={{width:"100%",maxWidth:400,maxHeight:"88vh",overflowY:"auto"}}>
-          <div style={{fontWeight:900,fontSize:16,marginBottom:16}}>✏ تعديل الطلب #{order.orderNum}</div>
-          <input className="input" value={tbl} onChange={e=>setTbl(e.target.value)} placeholder="رقم الطاولة" style={{marginBottom:10}}/>
-          <textarea className="input" value={note} onChange={e=>setNote(e.target.value)} style={{height:60,resize:"none",marginBottom:14}} placeholder="ملاحظات"/>
-          {items.map((item,idx)=>(
-            <div key={idx} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,padding:"6px 10px",background:"var(--card2)",borderRadius:10}}>
-              <ItemVisual item={store.menu.find(m=>m.id===item.itemId)||item} size={30} round={8}/>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13,fontWeight:600}}>{item.itemName}</div>
-                {item.note&&<div style={{fontSize:10,color:"#c62828",fontWeight:700}}>📝 {item.note}</div>}
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:Math.max(1,it.qty-1)}:it))}
-                  style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>−</button>
-                <span style={{minWidth:24,textAlign:"center",fontWeight:900}}>{item.qty}</span>
-                <button onClick={()=>setItems(p=>p.map((it,i)=>i===idx?{...it,qty:it.qty+1}:it))}
-                  style={{background:"#e8f5e9",color:"#2e7d32",border:"none",borderRadius:8,width:28,height:28,fontWeight:900,fontSize:15}}>+</button>
-                <button onClick={()=>setItems(p=>p.filter((_,i)=>i!==idx))}
-                  style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:28,height:28,fontSize:13}}>🗑</button>
-              </div>
-            </div>
-          ))}
-          <div style={{fontWeight:900,fontSize:15,margin:"10px 0"}}>الإجمالي: {total.toLocaleString()} {CUR}</div>
-          <div style={{display:"flex",gap:10}}>
-            <button className="btn btn-red" style={{flex:1}} onClick={save}>حفظ</button>
-            <button className="btn btn-ghost" style={{flex:1}} onClick={onClose}>إلغاء</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return(
     <div className="fade-in">
-      {editOrder&&<EditModal order={editOrder} onClose={()=>setEditOrder(null)}/>}
+      {editOrder&&<OrderEditModal key={editOrder.id} order={editOrder} onClose={()=>setEditOrder(null)} store={store} showToast={showToast} CUR={CUR}/>}
       {cancelModal&&<CancelOrderModal order={cancelModal.order} cur={settings?.currency||"ل.س"}
         onConfirm={(reason)=>{cancelOrder(cancelModal.order,reason);setCancelModal(null);}}
         onClose={()=>setCancelModal(null)}/>}
