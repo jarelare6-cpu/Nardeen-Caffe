@@ -1264,6 +1264,11 @@ export const useStore = () => {
         // v33: الحالة النهائية من الخادم مرجعية (تقارب الأجهزة)؛ غير النهائية: الأحدث يفوز
         const TERM = ["paid", "debt", "complimentary", "cancelled"];
         if (!TERM.includes(m.status) && local.updatedAt && m.updatedAt && Date.parse(local.updatedAt) > Date.parse(m.updatedAt)) return p;
+        // v44: صدى Realtime لتغييرٍ نحن مصدره — لا شيء تغيّر فعلاً.
+        // كان يُعيد مصفوفة جديدة دائماً، فيُرندَر التطبيق كله بلا سبب مع
+        // كل كتابة (وأثناء نافذة التعديل: وميض وإعادة بناء). المقارنة
+        // البنيوية تُسكت هذا الصدى وتُبقي المرجع كما هو.
+        if (JSON.stringify(local) === JSON.stringify(m)) return p;
       }
       const n = [m, ...p.filter(o => o.id !== m.id)];
       broadcast("nc_orders", n); return n;
