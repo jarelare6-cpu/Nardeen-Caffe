@@ -14,6 +14,9 @@ export function CancelOrderModal({ order, cur = "ل.س", onConfirm, onClose }) {
   const [custom, setCustom] = useState("");
   if (!order) return null;
   const finalReason = reason === "أخرى" ? (custom.trim() || "أخرى") : reason;
+  // v45: السبب إجباري. إلغاء بلا سبب هو الثغرة التي تجعل السجل بلا معنى —
+  // «بلا سبب» في السجل لا يُخبر أحداً بشيء، ولا يمكن مراجعته لاحقاً.
+  const ready = reason === "أخرى" ? custom.trim().length >= 2 : !!reason;
   const items = (order.items || []).reduce((s, i) => s + (i.qty || 0), 0);
   return (
     <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
@@ -25,7 +28,7 @@ export function CancelOrderModal({ order, cur = "ل.س", onConfirm, onClose }) {
           {items} صنف — <b style={{ color: "#c62828" }}>{Number(order.total || 0).toLocaleString()} {cur}</b>
           {order.stockDeducted !== false ? <><br /><span style={{ fontSize: 11, color: "#f9a825" }}>↩ سيُرجَع المخزون للبار</span></> : null}
         </div>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>سبب الإلغاء (اختياري):</div>
+        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>سبب الإلغاء <span style={{ color: "#ff5252" }}>(إجباري)</span>:</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
           {CANCEL_REASONS.map(r => (
             <button key={r} onClick={() => setReason(r)}
@@ -38,7 +41,9 @@ export function CancelOrderModal({ order, cur = "ل.س", onConfirm, onClose }) {
         )}
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
           <button onClick={onClose} style={{ flex: 1, padding: 12, borderRadius: 10, border: "1px solid var(--border,#33365a)", background: "var(--card2,#23253a)", color: "var(--text,#fff)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>تراجع</button>
-          <button onClick={() => onConfirm(finalReason)} style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: "#c62828", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>🚫 تأكيد الإلغاء</button>
+          <button onClick={() => ready && onConfirm(finalReason)} disabled={!ready}
+            title={ready ? "" : "اختر سبب الإلغاء أولاً"}
+            style={{ flex: 2, padding: 12, borderRadius: 10, border: "none", background: ready ? "#c62828" : "var(--card2,#23253a)", color: ready ? "#fff" : "var(--sub,#888)", fontWeight: 900, fontSize: 14, cursor: ready ? "pointer" : "not-allowed", fontFamily: "inherit", opacity: ready ? 1 : .7 }}>🚫 تأكيد الإلغاء</button>
         </div>
       </div>
     </div>

@@ -16,6 +16,7 @@ export const TELEGRAM_EVENTS = {
   comp:   "🎁 ضيافة كاملة",
   debt:   "💳 سداد دين",
   reset:  "🗑 تصفير بيانات",
+  backup: "🗄 نسخة احتياطية أسبوعية",   // v45
 };
 
 // v27.1: تنظيف عميق — يزيل المحارف الخفية (RTL marks, zero-width) والمسافات
@@ -62,6 +63,32 @@ export const notifyTelegram = (targets, eventKey, text) => {
       sendToTarget(tg.token, tg.chatId, text).catch(() => {});
     }
   });
+};
+
+// ══════════════════════════════════════════════════════════════
+// v45: إرسال ملف (sendDocument) — للنسخة الاحتياطية
+// ──────────────────────────────────────────────────────────────
+// sendMessage يرسل نصاً فقط. النسخة الاحتياطية ملفّ، فتحتاج
+// endpoint آخر و multipart/form-data. صامت الفشل كبقية الوحدة.
+// ══════════════════════════════════════════════════════════════
+export const sendTelegramDocument = async (targets, eventKey, blob, filename, caption = "") => {
+  if (!Array.isArray(targets) || !targets.length) return 0;
+  let sent = 0;
+  for (const tg of targets) {
+    if (!(tg && tg.token && tg.chatId && tg.events && tg.events[eventKey])) continue;
+    const tk = cleanField(tg.token);
+    const cid = normChatId(tg.chatId);
+    if (!tk || cid === "" || cid == null) continue;
+    try {
+      const fd = new FormData();
+      fd.append("chat_id", String(cid));
+      fd.append("document", blob, filename);
+      if (caption) fd.append("caption", caption.slice(0, 1000));
+      const res = await fetch(`https://api.telegram.org/bot${tk}/sendDocument`, { method: "POST", body: fd });
+      if (res.ok) sent++;
+    } catch { /* صامت */ }
+  }
+  return sent;
 };
 
 // اختبار وجهة (يُستخدم بزر "اختبار" في الإعدادات فقط — للأدمن)

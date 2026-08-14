@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./lib/store.js";
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
+import { sendBackupNow, lastBackupAt } from "./lib/backup.js";  // v45
 import { MOVE_REASONS, reasonLabel, summarizeMovements } from "./lib/stockLog.js"; // v42
 import { newMoveId } from "./lib/stockLog.js"; // v43
 import { fetchSalesTotals, fetchCogs, fetchExpenseTotals, fetchStaffPerformance, approxMark, approxNote } from "./lib/aggregates.js"; // v43
@@ -605,7 +606,7 @@ export function InventoryTab({store,settings}){
 }
 
 
-export function MenuTab({store,showToast,dm,settings}){
+export function MenuTab({store,showToast,dm,settings,user}){
   const [showForm,setShowForm]=useState(false);
   const [showLib,setShowLib]=useState(false);
   const [libG,setLibG]=useState(0);
@@ -623,6 +624,20 @@ export function MenuTab({store,showToast,dm,settings}){
     if(!form.name||!form.price){showToast("يرجى ملء الحقول الأساسية","error");return}
     if(editItem){
       store.setMenu(p=>p.map(m=>m.id===editItem.id?{...m,...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,cost:+form.cost||0}:m));
+      // ══════════════════════════════════════════════════════════════
+      // v45 — تغيير السعر يُسجَّل (قبل→بعد)
+      // الحيلة الأخطر في أي مقهى ليست الإلغاء: خفّض السعر، بِع، أعِد
+      // السعر، اقبض الفارق. كانت تمرّ بلا أي أثر. التبويب للأدمن فقط
+      // أصلاً، لكن السجل يجعل الفعل مرئياً حتى من الأدمن نفسه.
+      // ══════════════════════════════════════════════════════════════
+      try{
+        const chg=[];
+        if(+editItem.price!==+form.price) chg.push(`السعر ${(+editItem.price||0).toLocaleString()}→${(+form.price||0).toLocaleString()}`);
+        if(+(editItem.cost||0)!==(+form.cost||0)) chg.push(`التكلفة ${(+editItem.cost||0).toLocaleString()}→${(+form.cost||0).toLocaleString()}`);
+        if((editItem.name||"")!==form.name) chg.push(`الاسم ${editItem.name}→${form.name}`);
+        if(chg.length) logActivity({action:"تغيير سعر صنف",details:`${editItem.name} — ${chg.join(" • ")}`,
+          userName:user?.name||"أدمن",userRole:user?.role||"admin",amount:+form.price||0,branch:"main"});
+      }catch{}
       showToast("تم تعديل الصنف");
     } else {
       store.setMenu(p=>[...p,{id:"m"+Date.now(),...form,price:+form.price,stock:+form.stock,minStock:+form.minStock,cost:+form.cost||0,totalSold:0}]);
@@ -689,7 +704,11 @@ export function MenuTab({store,showToast,dm,settings}){
             </div>
             <div style={{display:"flex",gap:8,marginTop:10}}>
               <button onClick={()=>openEdit(item)} style={{flex:1,background:"rgba(46,125,50,.15)",color:"#2e7d32",border:"none",borderRadius:8,padding:"7px",fontSize:12,fontWeight:700}}>✏ تعديل</button>
-              <button onClick={()=>{store.setMenu(p=>p.filter(m=>m.id!==item.id));showToast("تم حذف الصنف")}}
+              <button onClick={()=>{
+                store.setMenu(p=>p.filter(m=>m.id!==item.id));
+                try{ logActivity({action:"حذف صنف",details:`${item.name} — ${(+item.price||0).toLocaleString()} • مخزون ${item.stock??0}`,userName:user?.name||"أدمن",userRole:user?.role||"admin",amount:+item.price||0,branch:"main"}); }catch{}
+                showToast("تم حذف الصنف");
+              }}
                 style={{background:"rgba(198,40,40,.15)",color:"#c62828",border:"none",borderRadius:8,padding:"7px 10px"}}>🗑</button>
             </div>
           </div>
@@ -2459,7 +2478,7 @@ export function SettingsTab({store,showToast,dm,user}){
     debts:"الديون",expenses:"المصاريف",bar:"البار",
     hookah:"الأراكيل",menu:"المنيو",tables:"الطاولات",
     staff:"الموظفون",reports:"التقارير",receipts:"الفواتير",
-    settings:"الإعدادات",
+    settings:"الإعدادات",activity:"سجل النشاط",replay:"إعادة تشغيل الوردية",
   };
 
   return(
@@ -2489,6 +2508,22 @@ export function SettingsTab({store,showToast,dm,user}){
           }} className="btn btn-red" style={{width:"100%"}}>تنزيل نسخة احتياطية كاملة (JSON)</button>
           <div style={{fontSize:11,color:"var(--sub)",marginTop:8}}>
             آخر نسخة: {(()=>{try{const t=localStorage.getItem("nc_last_backup");return t?new Date(t).toLocaleString("ar"):"—";}catch{return "—";}})()}
+          </div>
+
+          {/* v45: نسخة إلى تليجرام — التنزيل اليدوي يعتمد على أن تتذكّره.
+              الإرسال التلقائي الأسبوعي لا يعتمد على ذاكرة أحد. */}
+          <div style={{borderTop:"1px dashed var(--border)",marginTop:14,paddingTop:12}}>
+            <button onClick={async()=>{
+              const targets=store.settings?.telegramTargets||[];
+              if(!targets.some(t=>t?.events?.backup)){ showToast?.("فعّل حدث «نسخة احتياطية» في إحدى وجهات تليجرام أولاً","error"); return; }
+              showToast?.("جارٍ الإرسال...");
+              const {sent}=await sendBackupNow(store,targets);
+              showToast?.(sent>0?`✓ أُرسلت النسخة إلى ${sent} وجهة`:"تعذّر الإرسال — راجع التوكن",sent>0?"success":"error");
+            }} className="btn btn-ghost" style={{width:"100%"}}>🗄 إرسال نسخة إلى تليجرام الآن</button>
+            <div style={{fontSize:11,color:"var(--sub)",marginTop:8,lineHeight:1.7}}>
+              تُرسَل تلقائياً كل أسبوع من جهاز الأدمن عند تفعيل حدث «نسخة احتياطية».
+              <br/>آخر إرسال: {(()=>{const t=lastBackupAt();return t?new Date(t).toLocaleString("ar"):"—";})()}
+            </div>
           </div>
         </div>
 

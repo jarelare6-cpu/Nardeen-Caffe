@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useStore, checkSessionExpiry, touchSession } from "./lib/store.js";
 import { SUPABASE_READY, sbHeartbeat, logActivity, supabase } from "./lib/supabase.js";
+import { maybeWeeklyBackup } from "./lib/backup.js";   // v45
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { Toast, PWABanner, GlobalStyle, ImageStyleContext } from "./uikit.jsx";
 import { ROLES } from "./constants.js";
@@ -29,6 +30,7 @@ export default function NardeenCaffe(){
   const [slowMsg,setSlowMsg]=useState(null);           // تنبيه بطء الاستجابة (>3 ثوانٍ)
   const [syncErr,setSyncErr]=useState(null);           // آخر خطأ مزامنة
   const [updateUrl,setUpdateUrl]=useState(null);
+  const [staleMsg,setStaleMsg]=useState(null);          // v45: طلبات منسية
   const bannerRef=useRef(null);
   const [bannerH,setBannerH]=useState(0);
   const prevLen=useRef(store.orders.length);
@@ -130,6 +132,40 @@ export default function NardeenCaffe(){
     prevLen.current=store.orders.length;
   },[store.orders.length,user]);
 
+  // ══════════════════════════════════════════════════════════════
+  // v45 — نسخة احتياطية أسبوعية صامتة (جهاز الأدمن فقط)
+  // احتمال فقدان البيانات أعلى من احتمال السرقة: ضغطة تصفير خاطئة،
+  // أو خطأ في المشروع. التنزيل اليدوي يعتمد على أن تتذكّره؛ هذه لا.
+  // ══════════════════════════════════════════════════════════════
+  useEffect(()=>{
+    if(!user||user.role!=="admin") return;
+    const t=setTimeout(()=>{ maybeWeeklyBackup(store,user).catch(()=>{}); },30000);
+    return()=>clearTimeout(t);
+  },[user]);
+
+  // ══════════════════════════════════════════════════════════════
+  // v45 — تنبيه الطلبات المنسية
+  // طلب يبقى pending/preparing ساعتين يعني غالباً أن أحداً نسيه؛
+  // ويُفسد التقارير لأنه يظلّ محسوباً نشطاً. تنبيه واحد كل نصف ساعة
+  // وبمعرّفات مذكورة حتى لا يتكرّر الإزعاج لنفس الطلب.
+  // ══════════════════════════════════════════════════════════════
+  const warnedRef=useRef(new Set());
+  useEffect(()=>{
+    if(!user||!["admin","cashier"].includes(user.role)) return;
+    const check=()=>{
+      const cutoff=Date.now()-2*3600000;
+      const stale=(store.orders||[]).filter(o=>
+        ["pending","preparing"].includes(o.status)&&new Date(o.createdAt).getTime()<cutoff&&!warnedRef.current.has(o.id));
+      if(!stale.length) return;
+      stale.forEach(o=>warnedRef.current.add(o.id));
+      const nums=stale.slice(0,4).map(o=>"#"+o.orderNum).join("، ");
+      setStaleMsg(`⏰ ${stale.length} طلب منسيّ منذ أكثر من ساعتين: ${nums}${stale.length>4?"...":""}`);
+    };
+    const t0=setTimeout(check,20000);
+    const iv=setInterval(check,30*60*1000);
+    return()=>{clearTimeout(t0);clearInterval(iv);};
+  },[user,store.orders]);
+
   const showToast=useCallback((msg,type="success")=>{
     setToast({msg,type,id:Date.now()});
     setTimeout(()=>setToast(null),3500);
@@ -141,6 +177,8 @@ export default function NardeenCaffe(){
     logActivity({action:"تسجيل دخول",details:"",userName:u.name||u.username||"",userRole:u.role||"",branch:"main"});
   };
   const logout=()=>{
+    // v45: الدخول كان مسجّلاً والخروج لا — فلا نعرف متى تُرك الجهاز.
+    try{ if(user) logActivity({action:"تسجيل خروج",details:"",userName:user.name||user.username||"",userRole:user.role||"",branch:"main"}); }catch{}
     setUser(null);setScreen("login");
     try{sessionStorage.removeItem("nc_session");}catch{}
   };
@@ -201,6 +239,14 @@ export default function NardeenCaffe(){
             : store.syncing
             ? "🔄 جارٍ المزامنة مع السحابة..."
             : "📡 جارٍ إعادة الاتصال بالمزامنة الفورية..."}
+        </div>
+      )}
+      {staleMsg&&(
+        <div onClick={()=>setStaleMsg(null)} title="اضغط للإخفاء"
+          style={{position:"sticky",top:0,zIndex:9997,cursor:"pointer",background:"#e65100",color:"#fff",
+          textAlign:"center",padding:"7px 10px",fontSize:13,fontWeight:800,fontFamily:"'Tajawal',sans-serif",
+          boxShadow:"0 2px 6px rgba(0,0,0,.3)"}}>
+          {staleMsg}
         </div>
       )}
       {updateUrl&&(

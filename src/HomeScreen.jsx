@@ -9,6 +9,7 @@ import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer } from
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt } from "./receipts.js";
 import { NardeenLogoIcon } from "./NardeenIcons.jsx";
 import ActivityLog from "./ActivityLog.jsx";
+import ShiftReplay from "./ShiftReplay.jsx";   // v45
 // v42: شبكة أمان الجرد اليومي عند تدوير منتصف ليل غرينتش
 import { notifyTelegram, buildDailySummary } from "./lib/telegram.js";
 import { buildDailyPacket, previousDayKey, shouldSendDaily } from "./lib/dailyReport.js";
@@ -206,6 +207,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     ["receipts","🧾","الفواتير"],
     ["settings","⚙","الإعدادات"],
     ["activity","📋","سجل النشاط"],
+    ["replay","🔁","إعادة تشغيل الوردية"],
     ["outdoor_admin","🌿","الحديقة — أدمن"],
   ];
   const navItems=navDef.filter(([t])=>canAccess(user.role,t));
@@ -318,7 +320,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="hookah"     &&canAccess(user.role,"hookah")    &&<HookahTab      store={store} user={user} showToast={showToast} addNotification={addNotification} dm={dm} settings={settings}/>}
         {tab==="kds"        &&canAccess(user.role,"kds")       &&<KitchenDisplayTab store={store} user={user} showToast={showToast} addNotification={addNotification} settings={settings}/>}
         {tab==="shifts"     &&canAccess(user.role,"shifts")    &&<ShiftsPage     store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
-        {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings}/>}
+        {tab==="menu"       &&canAccess(user.role,"menu")      &&<MenuTab        store={store} showToast={showToast} dm={dm} settings={settings} user={user}/>}
         {tab==="stockimport"&&canAccess(user.role,"stockimport")&&<StockImportTab store={store} user={user} showToast={showToast} settings={settings}/>}
         {tab==="tables"     &&canAccess(user.role,"tables")    &&<TablesTab      store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="stocklog"   &&canAccess(user.role,"stocklog")  &&<StockLogTab    store={store} user={user} showToast={showToast} dm={dm} settings={settings}/>}
@@ -329,6 +331,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="customers"  &&canAccess(user.role,"customers") &&<CustomerFileTab store={store} showToast={showToast} dm={dm} settings={settings}/>}
         {tab==="settings"   &&canAccess(user.role,"settings")      &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
         {tab==="activity"   &&canAccess(user.role,"activity")      &&<div className="fade-in" style={{padding:16,maxWidth:720,margin:"0 auto"}}><ActivityLog/></div>}
+        {tab==="replay"     &&canAccess(user.role,"replay")        &&<ShiftReplay    store={store} settings={settings}/>}
         {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings} user={user}/>}
         </React.Suspense>
         </ErrorBoundary>

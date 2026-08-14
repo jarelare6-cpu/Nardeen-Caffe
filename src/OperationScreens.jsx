@@ -489,7 +489,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
 // وتعليق مستمر وكأن شيئاً يمنع التعديل».
 // الحلّ: المكوّن في نطاق الوحدة (هوية ثابتة) وكل ما يحتاجه عبر props.
 // ══════════════════════════════════════════════════════════════
-function OrderEditModal({order,onClose,store,showToast,CUR}){
+function OrderEditModal({order,onClose,store,showToast,CUR,user}){
   const [items,setItems]=useState(()=>order.items.map(i=>({...i})));
   const [tbl,setTbl]=useState(order.table||"");
   const [note,setNote]=useState(order.notes||"");
@@ -497,6 +497,18 @@ function OrderEditModal({order,onClose,store,showToast,CUR}){
   const save=()=>{
     if(!items.length){ showToast("لا يمكن حفظ طلب بلا أصناف — استخدم «إلغاء الطلب»","error"); return; }
     store.setOrders(p=>p.map(o=>o.id===order.id?{...o,items,table:tbl,notes:note,total}:o));
+    // v45: تعديل الطلب كان يمرّ بلا أثر إطلاقاً — الكميات والإجمالي يتغيّران
+    // ولا يعرف أحد. نسجّل الفارق (قبل→بعد) لا الحالة النهائية فقط.
+    try{
+      const before=(order.items||[]).reduce((a,i)=>a+(i.qty||0),0);
+      const after=items.reduce((a,i)=>a+(i.qty||0),0);
+      const parts=[];
+      if(before!==after) parts.push(`أصناف ${before}→${after}`);
+      if(+order.total!==+total) parts.push(`إجمالي ${(+order.total||0).toLocaleString()}→${total.toLocaleString()}`);
+      if((order.table||"")!==tbl) parts.push(`طاولة ${order.table||"—"}→${tbl||"—"}`);
+      if(parts.length) logActivity({action:"تعديل طلب",details:parts.join(" • "),
+        userName:user?.name||"",userRole:user?.role||"",orderNum:order.orderNum,amount:total,branch:order.branch||"main"});
+    }catch{}
     showToast("تم تعديل الطلب");onClose();
   };
   return(
@@ -540,6 +552,15 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   const [cancelModal,setCancelModal]=useState(null); // v26: {order} تأكيد إلغاء الطلب
   const CUR=settings?.currency||"ل.س";
   const canManage=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
+  // ══════════════════════════════════════════════════════════════
+  // v45 — قفلان يمنعان الحيلة بدل أن يلاحقاها
+  // ──────────────────────────────────────────────────────────────
+  // الطلب الموسوم «جاهز» بضاعةٌ حُضِّرت وخرجت من البار. تعديله أو إلغاؤه
+  // بعد ذلك هو المسار الوحيد لحيلة «قدِّمه ثم ألغه واقبض ثمنه». الوقاية
+  // هنا أبسط من الكشف: الأدمن وحده يملك هذا الباب، والباقي يمرّ عليه.
+  // ══════════════════════════════════════════════════════════════
+  const isAdmin=user.role===ROLES.ADMIN;
+  const lockedAfterReady=(o)=>o.status==="ready"&&!isAdmin;
   const isBarOrHookah=[ROLES.BAR,ROLES.HOOKAH].includes(user.role);
   // فقط الأدمن والكاشير يرون الطلبات المنتهية
   const canSeeHistory=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
@@ -594,7 +615,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
 
   return(
     <div className="fade-in">
-      {editOrder&&<OrderEditModal key={editOrder.id} order={editOrder} onClose={()=>setEditOrder(null)} store={store} showToast={showToast} CUR={CUR}/>}
+      {editOrder&&<OrderEditModal key={editOrder.id} order={editOrder} onClose={()=>setEditOrder(null)} store={store} showToast={showToast} CUR={CUR} user={user}/>}
       {cancelModal&&<CancelOrderModal order={cancelModal.order} cur={settings?.currency||"ل.س"}
         onConfirm={(reason)=>{cancelOrder(cancelModal.order,reason);setCancelModal(null);}}
         onClose={()=>setCancelModal(null)}/>}
@@ -666,17 +687,23 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                 )}
                 {canManage&&!["paid","cancelled","complimentary","debt"].includes(order.status)&&(
                   <>
-                    <button onClick={()=>setEditOrder(order)}
-                      style={{background:"rgba(25,118,210,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#1565c0"}}>
-                      ✏
+                    <button onClick={()=>lockedAfterReady(order)?showToast("🔒 الطلب جاهز — التعديل بعد الجاهزية للأدمن فقط","error"):setEditOrder(order)}
+                      title={lockedAfterReady(order)?"مقفل — الأدمن فقط":"تعديل الطلب"}
+                      style={{background:lockedAfterReady(order)?"var(--card2)":"rgba(25,118,210,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:lockedAfterReady(order)?"var(--sub)":"#1565c0",cursor:"pointer"}}>
+                      {lockedAfterReady(order)?"🔒":"✏"}
                     </button>
-                    <button onClick={()=>setCancelModal({order})}
-                      style={{background:"rgba(198,40,40,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#c62828"}}>
-                      🚫
+                    <button onClick={()=>lockedAfterReady(order)?showToast("🔒 الطلب جاهز — الإلغاء بعد الجاهزية للأدمن فقط","error"):setCancelModal({order})}
+                      title={lockedAfterReady(order)?"مقفل — الأدمن فقط":"إلغاء الطلب"}
+                      style={{background:lockedAfterReady(order)?"var(--card2)":"rgba(198,40,40,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:lockedAfterReady(order)?"var(--sub)":"#c62828",cursor:"pointer"}}>
+                      {lockedAfterReady(order)?"🔒":"🚫"}
                     </button>
                   </>
                 )}
-                <button onClick={()=>printOrder(order,store.menu,2,settings)}
+                <button onClick={()=>{
+                  printOrder(order,store.menu,2,settings);
+                  // v45: إعادة الطباعة تُسجَّل — فاتورة واحدة تُقدَّم مرتين حيلة معروفة
+                  try{ logActivity({action:"طباعة فاتورة",details:`#${order.orderNum} — ${order.customerName||""}`,userName:user.name,userRole:user.role,orderNum:order.orderNum,amount:order.total,branch:order.branch||"main"}); }catch{}
+                }}
                   style={{background:"var(--card2)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:14}}>
                   🖨
                 </button>

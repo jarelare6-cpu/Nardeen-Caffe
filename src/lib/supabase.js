@@ -564,6 +564,34 @@ export const fetchActivity = async (limit = 200) => {
   } catch { return []; }
 };
 
+// ══════════════════════════════════════════════════════════════
+// v45: جلب السجل بنطاق زمني — لا «آخر 200»
+// ──────────────────────────────────────────────────────────────
+// fetchActivity تجلب أحدث 200 حركة، وهي عند 400 حركة يومياً تغطّي
+// بضع ساعات فقط — فلا تصلح لإعادة تشغيل وردية أمس. هذه تجلب نافذة
+// محدّدة بالفرع والوقت (والفهرس المركّب في هجرة v45 يجعلها فورية).
+//
+// server_at قد لا يكون موجوداً إن لم تُشغَّل الهجرة بعد، لذا نحاول
+// عليه أولاً ونرتدّ إلى created_at بصمت — التطبيق يعمل في الحالتين.
+// ══════════════════════════════════════════════════════════════
+export const fetchActivityRange = async (fromISO, toISO, branch = "main", limit = 1500) => {
+  if (!supabase) return [];
+  const run = (col) => supabase.from("activity_log").select("*")
+    .eq("branch", branch)
+    .gte(col, fromISO).lte(col, toISO)
+    .order(col, { ascending: true })
+    .limit(limit);
+  try {
+    let { data, error } = await withNet("fetch:activityRange", () => run("server_at"));
+    if (error) {
+      // العمود غير موجود (هجرة v45 لم تُشغَّل) — ارتدّ لساعة الجهاز
+      ({ data, error } = await withNet("fetch:activityRange:legacy", () => run("created_at")));
+    }
+    if (error) { console.warn("fetchActivityRange:", error.message); return []; }
+    return data || [];
+  } catch (e) { console.warn("fetchActivityRange:", e?.message); return []; }
+};
+
 export const subscribeActivity = (onInsert) => {
   if (!supabase) return () => {};
   const ch = supabase.channel("activity-rt-v22")

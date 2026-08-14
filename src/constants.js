@@ -84,6 +84,7 @@ export const PERMISSIONS = {
   complog:      ["admin","cashier"],
   customers:    ["admin","cashier"],
   activity:     ["admin"],
+  replay:       ["admin"],            // v45: إعادة تشغيل الوردية + كاشف الفاقد
   customer_home:["customer"],
   myorders:     ["customer"],
 };
