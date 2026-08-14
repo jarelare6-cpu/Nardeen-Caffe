@@ -4,6 +4,7 @@ import { useStore, checkSessionExpiry, touchSession, DEFAULT_SETTINGS } from "./
 import { SUPABASE_READY, sbDeleteAll, sbDelete, sbUpsert, sbFetch, sbFetchDevices, logActivity } from "./lib/supabase.js";
 import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stock.js";
 import { sendBackupNow, lastBackupAt } from "./lib/backup.js";  // v45
+import RestoreBackup from "./RestoreBackup.jsx";                // v46
 import { MOVE_REASONS, reasonLabel, summarizeMovements } from "./lib/stockLog.js"; // v42
 import { newMoveId } from "./lib/stockLog.js"; // v43
 import { fetchSalesTotals, fetchCogs, fetchExpenseTotals, fetchStaffPerformance, approxMark, approxNote } from "./lib/aggregates.js"; // v43
@@ -53,6 +54,39 @@ function useDangerConfirm() {
   );
   return { trigger, modal };
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// v46 — التصفير يتطلّب نسخة احتياطية حديثة
+// ──────────────────────────────────────────────────────────────────────
+// أزرار التصفير تمحو نهائياً بلا رجعة، وحارسها نافذة تأكيد واحدة. وهذه
+// هي الكارثة الوحيدة في المشروع التي لا تُصلَح: السرقة تأخذ جزءاً،
+// وفقدان البيانات يأخذ التاريخ كله.
+//
+// القفل لا يمنع التصفير — يمنع التصفير *الأعمى*. نقبل أي نسخة: إرسال
+// تليجرام أو تنزيل يدوي، أيّهما أحدث.
+// ══════════════════════════════════════════════════════════════════════
+const BACKUP_MAX_AGE = 7 * 86400000;
+
+export const freshestBackupAt = () => {
+  const a = lastBackupAt();
+  let b = null; try { b = localStorage.getItem("nc_last_backup"); } catch {}
+  const times = [a, b].map(v => (v ? new Date(v).getTime() : NaN)).filter(t => !isNaN(t));
+  return times.length ? Math.max(...times) : null;
+};
+
+const guardedReset = (rawTrigger, showToast) => (label, action) => {
+  const t = freshestBackupAt();
+  if (t == null) {
+    showToast?.("🔒 لا توجد نسخة احتياطية — خُذ نسخة أولاً قبل أي تصفير", "error");
+    return;
+  }
+  if (Date.now() - t > BACKUP_MAX_AGE) {
+    const days = Math.floor((Date.now() - t) / 86400000);
+    showToast?.(`🔒 آخر نسخة احتياطية منذ ${days} يوماً — خُذ نسخة حديثة قبل التصفير`, "error");
+    return;
+  }
+  rawTrigger(label, action);
+};
 import OutdoorScreen from "./OutdoorScreen.jsx";
 import { playOrderAlert, exportToExcel, generateTableQR, checkStockAlerts, notifyLowStock, sendReceiptWhatsApp, printKitchenTicket, getLoyaltyStatus, calcLoyaltyDiscount, getPartialPaymentStatus, getStaffReport, getPeakHoursData, getSalesComparison, calcShiftSummary, getOrderUrgency, getAvgPrepTime, calcEarnedPoints, getCustomerTier, pointsToValue, SOUND_TONES, calcNetProfit, businessDayStart, workDayStart, weekStartThursday, orderCash, orderTron, orderSale, orderCogs, businessDayKey, businessDayEnd, formatDayKey, listBusinessDays, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR } from "./lib/utils.js";
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ORDER_STATUS, STATUS_LABELS, STATUS_COLORS, CAT_LABELS, CAT_ORDER, BAR_CATS, HOOKAH_CATS, STATION_CATS, PERMISSIONS, THEMES, catOf, orderFullyPrepared, canAccess } from "./constants.js";
@@ -1946,15 +1980,52 @@ export function ReportsTab({store,dm,settings}){
   };
 
   const start=getStart();
+  // للفترة "الكل" نمرّر null إلى القاعدة كي تشمل الأرشيف كاملاً بلا حدّ سفلي
+  const fromArg=period==="all"?null:start;
+
   const pOrders=store.orders.filter(o=>new Date(o.createdAt)>=start);
   const paidOrders=pOrders.filter(o=>o.status==="paid"&&new Date(o.paidAt||o.createdAt)>=start);
-  const revenue=paidOrders.reduce((s,o)=>s+orderSale(o),0); // v39: مبيعات كاملة
-  const expenses=(store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0); // v36: المصاريف الثانوية منفصلة
-  const netProfit=revenue-expenses;
+
+  // ══════════════════════════════════════════════════════════════════
+  // v46 — نهاية البتر الصامت في التقارير
+  // ──────────────────────────────────────────────────────────────────
+  // التطبيق يجلب آخر 500 طلب فقط. كانت هذه الشاشة تحسب كل شيء من
+  // store.orders مباشرة، فكافيه يبيع 50 طلباً يومياً يستنفدها في عشرة
+  // أيام: تضغط «الشهر» فترى عشرة أيام مكتوباً فوقها «الشهر»، و«الكل»
+  // ليس كل شيء. لا خطأ ولا تحذير — الرقم يبدو سليماً وهو ناقص.
+  //
+  // طبقة aggregates (v43) كُتبت لهذا بالضبط وكانت مربوطة بلوحة التحكم
+  // وأداء الموظفين فقط. الآن التقارير عليها أيضاً.
+  //
+  // القاعدة: **رقم صحيح، أو رقم موسوم بأنه جزئي. لا رقم كاذب.**
+  // ══════════════════════════════════════════════════════════════════
+  const [agg,setAgg]=useState(null);
+  const [expAgg,setExpAgg]=useState(null);
+
+  useEffect(()=>{
+    let alive=true;
+    Promise.all([
+      fetchSalesTotals(store.orders,{from:fromArg}),
+      fetchExpenseTotals(store.expenses,{from:fromArg}),
+    ]).then(([a,e])=>{ if(alive){ setAgg(a); setExpAgg(e); } }).catch(()=>{});
+    return()=>{alive=false;};
+  },[period,store.orders,store.expenses]);
+
+  // exact=true ⇒ الرقم من القاعدة ويشمل الأرشيف. false ⇒ من المحمَّل فقط.
+  const exact=!!(agg?.exact&&expAgg?.exact);
+  const mk=approxMark(exact);
+
+  const revenue    = agg?.revenue    ?? paidOrders.reduce((s,o)=>s+orderSale(o),0);
+  const paidCount  = agg?.ordersCount ?? paidOrders.length;
+  const debtsTotal = agg?.debtTotal  ?? pOrders.filter(o=>o.status==="debt").reduce((s,o)=>s+o.total,0);
+  const tronRevenue= agg?.tronTotal  ?? (store.receipts||[]).filter(r=>r.tronAmount>0&&new Date(r.createdAt)>=start).reduce((s,r)=>s+r.tronAmount,0);
+  const expenses   = expAgg?.primary ?? (store.expenses||[]).filter(e=>!e.isSecondary&&!e.isComplimentary&&new Date(e.date)>=start).reduce((s,e)=>s+e.amount,0);
+  const netProfit  = revenue-expenses;
+  const avgOrder   = paidCount>0?Math.round(revenue/paidCount):0;
+
+  // هذان يُحسبان من الصفوف المحمَّلة حصراً (لا تجميعة لهما في القاعدة)،
+  // فيبقيان تقريبيين دائماً ويُوسمان بذلك صراحةً بدل أن يُعرضا كأنهما كاملان.
   const cancelled=pOrders.filter(o=>o.status==="cancelled").length;
-  const debtsTotal=pOrders.filter(o=>o.status==="debt").reduce((s,o)=>s+o.total,0);
-  const avgOrder=paidOrders.length>0?Math.round(revenue/paidOrders.length):0;
-  const tronRevenue=(store.receipts||[]).filter(r=>r.tronAmount>0&&new Date(r.createdAt)>=start).reduce((s,r)=>s+r.tronAmount,0);
   const receiptCount=(store.receipts||[]).filter(r=>new Date(r.createdAt)>=start).length;
 
   // v29: الاستهلاك الداخلي — منفصل تماماً عن البيع (لا ربح ولا مصروف)
@@ -1984,14 +2055,15 @@ export function ReportsTab({store,dm,settings}){
     <h1>☕ ${settings?.cafeName||"Nardeen Caffe"} — تقرير المبيعات</h1>
     <p>${settings?.signature||"بإدارة يحيى داؤود"} | ${new Date().toLocaleDateString("ar-SY")}</p>
     <h3>الفترة: ${periodLabel}</h3>
+    ${exact?"":'<p style="color:#e65100;font-weight:700">≈ أرقام تقريبية — محسوبة من الطلبات المحمَّلة فقط، لا من كامل السجل.</p>'}
     <table><tr><th>البند</th><th>القيمة</th></tr>
-    <tr><td>إجمالي الإيرادات</td><td class="pos">${revenue.toLocaleString()} ${CUR}</td></tr>
-    <tr><td>إجمالي المصاريف</td><td class="neg">${expenses.toLocaleString()} ${CUR}</td></tr>
-    <tr><td>صافي الربح</td><td class="${netProfit>=0?"pos":"neg"}">${netProfit.toLocaleString()} ${CUR}</td></tr>
-    <tr><td>طلبات مدفوعة</td><td>${paidOrders.length}</td></tr>
-    <tr><td>متوسط قيمة الطلب</td><td>${avgOrder.toLocaleString()} ${CUR}</td></tr>
-    <tr><td>ملغاة</td><td>${cancelled}</td></tr>
-    <tr><td>ديون</td><td>${debtsTotal.toLocaleString()} ${CUR}</td></tr>
+    <tr><td>إجمالي الإيرادات</td><td class="pos">${mk}${revenue.toLocaleString()} ${CUR}</td></tr>
+    <tr><td>إجمالي المصاريف</td><td class="neg">${mk}${expenses.toLocaleString()} ${CUR}</td></tr>
+    <tr><td>صافي الربح</td><td class="${netProfit>=0?"pos":"neg"}">${mk}${netProfit.toLocaleString()} ${CUR}</td></tr>
+    <tr><td>طلبات مدفوعة</td><td>${mk}${paidCount}</td></tr>
+    <tr><td>متوسط قيمة الطلب</td><td>${mk}${avgOrder.toLocaleString()} ${CUR}</td></tr>
+    <tr><td>ملغاة</td><td>≈ ${cancelled}</td></tr>
+    <tr><td>ديون</td><td>${mk}${debtsTotal.toLocaleString()} ${CUR}</td></tr>
     ${Object.entries(catRevenue).map(([c,r])=>`<tr><td>${CAT_LABELS[c]}</td><td>${r.toLocaleString()} ${CUR}</td></tr>`).join("")}
     </table>
     <h3>🎁 الاستهلاك الداخلي (منفصل عن البيع)</h3>
@@ -2024,15 +2096,30 @@ export function ReportsTab({store,dm,settings}){
           </button>
         ))}
       </div>
+
+      {/* v46: لا رقم مجهول المصدر — نقول للمستخدم من أين جاء الرقم */}
+      <div style={{fontSize:11.5,lineHeight:1.7,marginBottom:14,padding:"8px 12px",borderRadius:10,
+        background:exact?"rgba(46,125,50,.10)":"rgba(230,81,0,.10)",
+        color:exact?"#2e7d32":"#e65100",fontWeight:700}}>
+        {agg===null
+          ? "⏳ جارٍ حساب الإجماليات..."
+          : exact
+          ? "✅ الإجماليات محسوبة في القاعدة — تشمل الأرشيف كاملاً"
+          : "≈ أرقام تقريبية — محسوبة من الطلبات المحمَّلة (آخر 500) فقط. نفّذ هجرة v43 في Supabase للحصول على الإجمالي الكامل."}
+        <div style={{fontWeight:400,marginTop:4,opacity:.85}}>
+          «الفواتير» و«الملغاة» وتفصيل الأصناف تُحسب دائماً من المحمَّل فقط.
+        </div>
+      </div>
+
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:18}}>
-        {[["💰","الإيرادات",`${revenue.toLocaleString()} ${CUR}`,"#c62828"],
-          ["📒","المصاريف",`${expenses.toLocaleString()} ${CUR}`,"#e65100"],
-          ["💹","صافي الربح",`${netProfit.toLocaleString()} ${CUR}`,netProfit>=0?"#2e7d32":"#c62828"],
-          ["✅","طلبات مدفوعة",paidOrders.length,"#2e7d32"],
-          ["📊","متوسط الطلب",`${avgOrder.toLocaleString()} ${CUR}`,"#1976d2"],
-          ["💳","ديون",`${debtsTotal.toLocaleString()} ${CUR}`,"#6a1b9a"],
-          ["💠","الترون",`${tronRevenue.toLocaleString()} ${CUR}`,"#1565c0"],
-          ["🧾","الفواتير",receiptCount,"#00897b"],
+        {[["💰","الإيرادات",`${mk}${revenue.toLocaleString()} ${CUR}`,"#c62828"],
+          ["📒","المصاريف",`${mk}${expenses.toLocaleString()} ${CUR}`,"#e65100"],
+          ["💹","صافي الربح",`${mk}${netProfit.toLocaleString()} ${CUR}`,netProfit>=0?"#2e7d32":"#c62828"],
+          ["✅","طلبات مدفوعة",`${mk}${paidCount}`,"#2e7d32"],
+          ["📊","متوسط الطلب",`${mk}${avgOrder.toLocaleString()} ${CUR}`,"#1976d2"],
+          ["💳","ديون",`${mk}${debtsTotal.toLocaleString()} ${CUR}`,"#6a1b9a"],
+          ["💠","الترون",`${mk}${tronRevenue.toLocaleString()} ${CUR}`,"#1565c0"],
+          ["🧾","الفواتير","≈ "+receiptCount,"#00897b"],
         ].map(([icon,label,val,color])=>(
           <div key={label} className="card" style={{textAlign:"center",borderTop:`3px solid ${color}`}}>
             <div style={{fontSize:22,marginBottom:4}}>{icon}</div>
@@ -2420,7 +2507,20 @@ function TelegramSettings({ settings, setForm, showToast }) {
 
 export function SettingsTab({store,showToast,dm,user}){
   const isAdmin=user?.role==="admin";
-  const { trigger: dangerConfirm, modal: dangerModal } = useDangerConfirm();
+  const { trigger: rawDangerConfirm, modal: dangerModal } = useDangerConfirm();
+
+  // ══════════════════════════════════════════════════════════════════
+  // v46 — التصفير يتطلّب نسخة احتياطية حديثة
+  // ──────────────────────────────────────────────────────────────────
+  // ثلاثة عشر زرّ تصفير هنا تمحو نهائياً بلا رجعة، وحارسها نافذة تأكيد
+  // واحدة. هذه هي الكارثة الوحيدة في المشروع التي لا تُصلَح: السرقة
+  // تأخذ جزءاً، وفقدان البيانات يأخذ التاريخ كله.
+  //
+  // القفل: لا تصفير ما لم توجد نسخة (تليجرام أو تنزيل يدوي) أحدث من
+  // سبعة أيام. لا يمنع التصفير — يمنع التصفير *الأعمى*.
+  // ══════════════════════════════════════════════════════════════════
+  const dangerConfirm = guardedReset(rawDangerConfirm, showToast);
+
   const notifyReset=(what)=>notifyTelegram(store.settings?.telegramTargets||[], "reset", buildEventMsg("reset", { details: "تم تصفير: "+what, by: user?.name||"الأدمن" }, store.settings?.cafeName||"ناردين كافيه", store.settings?.currency||"ل.س"));
   const [_formRaw,_setFormRaw]=useState({...store.settings});
   const _dirty=useRef(false);
@@ -2525,6 +2625,8 @@ export function SettingsTab({store,showToast,dm,user}){
               <br/>آخر إرسال: {(()=>{const t=lastBackupAt();return t?new Date(t).toLocaleString("ar"):"—";})()}
             </div>
           </div>
+
+          <RestoreBackup store={store} showToast={showToast} user={user}/>
         </div>
 
         {/* General */}
@@ -2849,7 +2951,8 @@ export function SettingsTab({store,showToast,dm,user}){
 // ═══════════════════════════════════════════════════════════════
 
 export function OutdoorAdminTab({ store, showToast, dm, settings, user }) {
-  const { trigger: dangerConfirm, modal: dangerModal } = useDangerConfirm();
+  const { trigger: rawDangerConfirm, modal: dangerModal } = useDangerConfirm();
+  const dangerConfirm = guardedReset(rawDangerConfirm, showToast);   // v46
   const CUR = settings?.currency || "ل.س";
   const [adminTab, setAdminTab] = React.useState("overview"); // overview | orders | receipts | tables | reset
 

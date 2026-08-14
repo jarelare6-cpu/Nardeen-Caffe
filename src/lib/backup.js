@@ -87,3 +87,69 @@ export const maybeWeeklyBackup = async (store, user) => {
     return sent > 0;
   } catch { return false; }
 };
+
+// ══════════════════════════════════════════════════════════════════════
+// v46 — مسار الاسترجاع
+// ──────────────────────────────────────────────────────────────────────
+// نسخة احتياطية بلا مسار استرجاع ليست نسخة احتياطية — هي شعور بالأمان.
+// كانت الملفات تصل إلى تليجرام ولا يوجد زرّ يعيدها، فتُستعاد يدوياً في
+// لحظة ذعر. هنا: قراءة، ثم **معاينة** (كم صنفاً، أي تاريخ)، ثم كتابة
+// بعد تأكيد صريح. المعاينة قبل الكتابة هي الفرق بين أداة وفخّ.
+// ══════════════════════════════════════════════════════════════════════
+
+// الجداول القابلة للاستعادة → اسم الدالة في store
+const RESTORE_MAP = [
+  ["menu",      "setMenu",      "الأصناف"],
+  ["orders",    "setOrders",    "الطلبات"],
+  ["debts",     "setDebts",     "الديون"],
+  ["expenses",  "setExpenses",  "المصاريف"],
+  ["customers", "setCustomers", "الزبائن"],
+  ["compLog",   "setCompLog",   "سجل الضيافة"],
+  ["settings",  "setSettings",  "الإعدادات"],
+];
+
+// يقرأ الملف ويتحقّق من شكله. لا يكتب شيئاً.
+export const readBackupFile = async (file) => {
+  if (!file) throw new Error("لم يُختَر ملف");
+  let data;
+  try { data = JSON.parse(await file.text()); }
+  catch { throw new Error("الملف ليس JSON صالحاً — تأكد أنه ملف نسخة احتياطية"); }
+
+  if (!data || typeof data !== "object") throw new Error("محتوى الملف غير صالح");
+  const looksOurs = data._meta?.app === "nardeen-caffe" || Array.isArray(data.menu) || Array.isArray(data.orders);
+  if (!looksOurs) throw new Error("هذا ليس ملف نسخة احتياطية لناردين كافيه");
+
+  // معاينة: ماذا سيُكتب بالضبط، وكم صفاً في كل جدول
+  const preview = RESTORE_MAP
+    .map(([key, , label]) => {
+      const v = data[key];
+      if (key === "settings") return v && typeof v === "object" ? { key, label, count: Object.keys(v).length, unit: "حقل" } : null;
+      return Array.isArray(v) ? { key, label, count: v.length, unit: "صف" } : null;
+    })
+    .filter(Boolean);
+
+  return {
+    data,
+    takenAt: data._meta?.takenAt || null,
+    version: data._meta?.version ?? null,
+    preview,
+  };
+};
+
+// يكتب فعلياً. يُستدعى بعد تأكيد المستخدم على المعاينة.
+// selected: مصفوفة مفاتيح مختارة (مثل ["menu","orders"]) — أو null لكل شيء.
+export const applyBackup = (store, data, selected = null) => {
+  const done = [];
+  RESTORE_MAP.forEach(([key, setter, label]) => {
+    if (selected && !selected.includes(key)) return;
+    const v = data[key];
+    if (key === "settings") {
+      if (v && typeof v === "object") { store.setSettings(p => ({ ...p, ...v })); done.push(label); }
+      return;
+    }
+    if (Array.isArray(v)) { store[setter]?.(v); done.push(`${label} (${v.length})`); }
+  });
+  // المستخدمون لا يُستعادون: النسخة لا تحوي كلمات المرور، فاستعادتها
+  // تعني قفل الجميع خارج النظام. تُدار من تبويب الموظفين.
+  return done;
+};
