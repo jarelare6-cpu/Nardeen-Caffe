@@ -103,6 +103,28 @@ class ErrorBoundary extends React.Component {
 }
 // ──────────────────────────────────────────────────────────────────────────────
 
+// ══════════════════════════════════════════════════════════════
+// v44 — الساعة معزولة في مكوّن مستقلّ
+// ──────────────────────────────────────────────────────────────
+// كانت setClock كل ثانية في جسم HomeScreen، فتُعيد رندر التطبيق كله
+// 3600 مرة في الساعة من أجل عرضٍ لا يتغيّر إلا كل دقيقة. وهذا هو
+// المحرّك الذي كان يهدم نافذة «تعديل الطلب» باستمرار. الآن التحديث
+// محبوس داخل هذا المكوّن، وكل 20 ثانية بدل كل ثانية.
+// ══════════════════════════════════════════════════════════════
+const HeaderClock = React.memo(function HeaderClock(){
+  const [now,setNow]=useState(()=>new Date());
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(new Date()),20000);
+    return()=>clearInterval(t);
+  },[]);
+  return(
+    <span className="hide-mobile" style={{fontSize:12,background:"rgba(255,255,255,.15)",
+      borderRadius:8,padding:"4px 10px",fontWeight:700}}>
+      {now.toLocaleTimeString("ar-SY",{hour:"2-digit",minute:"2-digit"})}
+    </span>
+  );
+});
+
 export function HomeScreen({user,store,onLogout,showToast,addNotification,unreadCount,dm,toggleDark,settings,topOffset=0}){
   const [tab,setTabRaw]=useState(()=>{
     // v31: استعادة آخر تبويب بعد تحديث الصفحة (يبقى في نفس الصفحة)
@@ -116,13 +138,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
   });
   const setTab=(t)=>{ try{ sessionStorage.setItem("nc_active_tab", typeof t==="function"?t(tab):t); }catch{} setTabRaw(t); };
   const [showNotifs,setShowNotifs]=useState(false);
-  const [clock,setClock]=useState(new Date());
   const CUR=settings?.currency||"ل.س";
-
-  useEffect(()=>{
-    const t=setInterval(()=>setClock(new Date()),1000);
-    return()=>clearInterval(t);
-  },[]);
 
   // ── 5. تنبيه نفاد المخزون ─────────────────────────────────
   const lowStockItems = checkStockAlerts(store.menu);
@@ -226,10 +242,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
               borderRadius:8,padding:"3px 8px",color:"#ffcdd2",fontWeight:800,
               animation:"pulse 2s infinite"}} title="غير متصل بالسحابة — لن تتزامن البيانات بين الأجهزة">⚠ محلي</span>
           )}
-          <span className="hide-mobile" style={{fontSize:12,background:"rgba(255,255,255,.15)",
-            borderRadius:8,padding:"4px 10px",fontWeight:700}}>
-            {clock.toLocaleTimeString("ar-SY",{hour:"2-digit",minute:"2-digit"})}
-          </span>
+          <HeaderClock/>
           <button onClick={toggleDark} style={{background:"rgba(255,255,255,.15)",border:"none",
             color:"#fff",borderRadius:10,padding:"6px 10px",fontSize:14}}>
             {dm?"☀":"🌙"}
