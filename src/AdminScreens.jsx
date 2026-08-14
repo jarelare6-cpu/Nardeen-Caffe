@@ -80,6 +80,35 @@ async function compressImage(file, max = 320, quality = 0.72) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// v44 — مؤقّت الطاولة في نطاق الوحدة
+// ──────────────────────────────────────────────────────────────
+// كان معرَّفاً داخل جسم المكوّن الأب، فيُهدم ويُبنى مع كل رندر. ولأن
+// الأب كان يُرندَر كل ثانية، كان setInterval يُلغى قبل أن يُطلق نبضته
+// الأولى: المؤقّت يبدو *واقفاً* عند قيمته الأولى، مع دورة إنشاء/إلغاء
+// مؤقّتات لا تنتهي. الآن هويته ثابتة فيعيش ويعدّ فعلاً.
+// ══════════════════════════════════════════════════════════════
+const TableTimer = React.memo(function TableTimer({ openedAt, alertOn, alertMinutes }) {
+  const startSecs = () => {
+    const t = new Date(openedAt).getTime();
+    return isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / 1000));
+  };
+  const [elapsed, setElapsed] = useState(startSecs);
+  useEffect(() => {
+    setElapsed(startSecs());
+    const t = setInterval(() => setElapsed(startSecs()), 1000); // من الساعة لا بالعدّ — لا انحراف
+    return () => clearInterval(t);
+  }, [openedAt]);
+  const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60);
+  const overLimit = alertOn && m + h * 60 >= alertMinutes;
+  return (
+    <span style={{ fontSize: 11, color: overLimit ? "#c62828" : "#f9a825", fontWeight: 700,
+      background: overLimit ? "rgba(198,40,40,.12)" : "transparent", borderRadius: 6, padding: overLimit ? "2px 6px" : "0" }}>
+      {overLimit ? "⚠ تجاوز الحد! " : "⏱ "}{h > 0 ? `${h}س ` : ""}{m}د
+    </span>
+  );
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // v43 — لوحة التحكم، مُعاد تنظيمها
 // ───────────────────────────────────────────────────────────────────────
@@ -849,27 +878,6 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
     setXferModal(false); setXFrom(""); setXTo(""); setXPicked({});
   };
 
-  const TableTimer = ({ openedAt }) => {
-    const safeStart = () => {
-      const t = new Date(openedAt).getTime();
-      return isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / 1000));
-    };
-    const [elapsed, setElapsed] = useState(safeStart);
-    useEffect(() => {
-      setElapsed(safeStart());
-      const t = setInterval(() => setElapsed(e => e + 1), 1000);
-      return () => clearInterval(t);
-    }, [openedAt]);
-    const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
-    const overLimit = tableTimerAlert && m + h * 60 >= alertMinutes;
-    return (
-      <span style={{ fontSize: 11, color: overLimit ? "#c62828" : "#f9a825", fontWeight: 700,
-        background: overLimit ? "rgba(198,40,40,.12)" : "transparent", borderRadius: 6, padding: overLimit ? "2px 6px" : "0" }}>
-        {overLimit ? "⚠ تجاوز الحد! " : "⏱ "}{h > 0 ? `${h}س ` : ""}{m}د
-      </span>
-    );
-  };
-
   // v31: إشغال الطاولة مشتقّ من الطلبات النشطة فقط — مصدر حقيقة واحد (يستثني الدين أيضاً)
   const activeOrders = (num) => store.orders.filter(o =>
     String(o.table) === String(num) && !["paid", "cancelled", "complimentary", "debt"].includes(o.status)
@@ -1034,7 +1042,7 @@ export function TablesTab({ store, user, showToast, dm, settings }) {
                   </span>
                 </div>
                 {occ && openedAt && (
-                  <div style={{ textAlign: "center", marginTop: 8 }}><TableTimer openedAt={openedAt} /></div>
+                  <div style={{ textAlign: "center", marginTop: 8 }}><TableTimer openedAt={openedAt} alertOn={tableTimerAlert} alertMinutes={alertMinutes} /></div>
                 )}
                 {orders.length > 0 && (
                   <div style={{ marginTop: 8, background: "var(--card2)", borderRadius: 8, padding: "6px 8px" }}>
