@@ -39,15 +39,34 @@ const broadcast = (key, data) => { if (bc) bc.postMessage({ key, data, ts: Date.
 // ══════════════════════════════════════════════════════════════
 // SESSION TIMEOUT — 30 دقيقة خمول
 // ══════════════════════════════════════════════════════════════
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
+// ══════════════════════════════════════════════════════════════
+// v48 — مهلة الخمول حسب الدور
+// ──────────────────────────────────────────────────────────────
+// كانت 30 دقيقة للجميع، فيخرج الكاشير من النظام في ساعات الهدوء
+// وسط ورديته ويعود ليجد «لا وردية مفتوحة» — وهو مصدر ارتباك حقيقي
+// أثناء العمل، لا حماية.
+// الكاشير والأدمن يعملان على جهاز ثابت داخل الكافيه طوال الوردية،
+// فمهلتهما 8 ساعات (تغطّي الوردية كاملة). بقيّة الأدوار تبقى 30 دقيقة.
+// قابلة للضبط: settings.sessionTimeoutMinutes (لكل الأدوار).
+// ══════════════════════════════════════════════════════════════
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;          // الافتراضي العام
+const LONG_SESSION_MS    = 8 * 60 * 60 * 1000;      // الكاشير والأدمن
+const LONG_ROLES = ["admin", "cashier"];
 
-export const checkSessionExpiry = () => {
+export const sessionTimeoutFor = (role, settings) => {
+  const custom = +settings?.sessionTimeoutMinutes;
+  if (custom > 0) return Math.min(custom, 24 * 60) * 60 * 1000;
+  return LONG_ROLES.includes(role) ? LONG_SESSION_MS : SESSION_TIMEOUT_MS;
+};
+
+export const checkSessionExpiry = (settings = null) => {
   try {
     const raw = sessionStorage.getItem("nc_session");
     if (!raw) return null;
     const session = JSON.parse(raw);
     const lastActive = session._lastActive || session.lastLogin;
-    if (lastActive && Date.now() - new Date(lastActive).getTime() > SESSION_TIMEOUT_MS) {
+    const limit = sessionTimeoutFor(session.role, settings);
+    if (lastActive && Date.now() - new Date(lastActive).getTime() > limit) {
       sessionStorage.removeItem("nc_session");
       return null;
     }
@@ -475,6 +494,7 @@ const mapShift = s => ({
   secExpensesTotal: s.sec_expenses_total ?? s.secExpensesTotal ?? 0,
   debtSettledCash:  s.debt_settled_cash  ?? s.debtSettledCash  ?? 0,
   businessDay:      s.business_day       ?? s.businessDay      ?? null,
+  fingerprint:      s.fingerprint        ?? null,   // v48
   status:        s.status        ?? "open",
   closedById:    s.closed_by_id   ?? s.closedById   ?? null, // v44
   closedByName:  s.closed_by_name ?? s.closedByName ?? "",   // v44

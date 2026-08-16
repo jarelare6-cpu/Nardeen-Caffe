@@ -11,13 +11,10 @@ import { NardeenLogoIcon } from "./NardeenIcons.jsx";
 import ActivityLog from "./ActivityLog.jsx";
 import ShiftReplay from "./ShiftReplay.jsx";   // v45
 // v42: شبكة أمان الجرد اليومي عند تدوير منتصف ليل غرينتش
-import { notifyTelegram, buildDailySummary } from "./lib/telegram.js";
-import { buildDailyPacket, previousDayKey, shouldSendDaily } from "./lib/dailyReport.js";
-import { businessDayKey } from "./lib/utils.js"; // v46: مسح آخر 7 أيام في شبكة الأمان
-import { claimReport } from "./lib/supabase.js";  // v47.2: قفل إرسال التقارير
 import { CashDrawerBar } from "./CashierTools.jsx";                       // v47
 import { StaleShiftAlert, OpeningChecklist } from "./OpeningChecklist.jsx"; // v47
 import { SyncHealthPanel, ReconcileTab } from "./AdminTools.jsx";          // v47
+import ShiftAudit from "./ShiftAudit.jsx";                                // v48
 
 import { BarTab, HookahTab } from "./StationScreens.jsx";
 import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./OperationScreens.jsx";
@@ -161,98 +158,20 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
   ));
 
   // ══════════════════════════════════════════════════════════════
-  // v42 — تدوير اليوم المحاسبي عند 00:00 غرينتش (شبكة أمان)
+  // v48 — أُلغيت شبكة أمان الجرد التلقائية بالكامل
   // ──────────────────────────────────────────────────────────────
-  // لا يُقفِل ورديةً ولا يغيّر بياناً. وظيفته الوحيدة: إن انقضى يومٌ ولم
-  // يُرسَل جرده على تلغرام (نُسي إقفال المسائية، أو أُقفلت بعد منتصف ليل
-  // غرينتش، أو كانت كل الأجهزة مغلقة) يُرسله عند أول فرصة. فلا يضيع جرد يوم.
-  // يعمل على أجهزة الأدمن/الكاشير فقط، ويُختم بـ lastDailySent المشترك في
-  // app_settings فلا يتكرّر الإرسال بين الأجهزة.
-  // ══════════════════════════════════════════════════════════════
-  // ══════════════════════════════════════════════════════════════
-  // v47.3 — إصلاح حلقة التكرار
-  // ──────────────────────────────────────────────────────────────
-  // العطل: كانت settings?.lastDailySent و store.shifts ضمن **تبعيات**
-  // هذا الـ effect، وهو نفسه يكتب lastDailySent بعد كل إرسال. فينشأ
-  // دوران مغلق:
-  //     يُرسل ← يختم ← تتغيّر التبعية ← يُعاد بناء الـ effect ←
-  //     مؤقّت جديد 15 ثانية ← يُرسل التالي ← يختم ← …
-  // فبدل نبضة كل عشر دقائق صارت نبضة كل خمس عشرة ثانية، ومع نافذة
-  // تصريف سبعة أيام وأجهزة متعدّدة تتضاعف ⇒ عشرات التقارير.
+  // كان هنا مؤقّت يعمل على كل جهاز أدمن/كاشير ويقرّر إرسال جرد يومٍ
+  // مضى نيابةً عن المستخدم. ومنه خرجت كل أعطال تلغرام:
+  //   • التكرار بين الأجهزة — لا قفل مشترك بين المؤقّتات.
+  //   • حلقة إعادة التسليح — التبعية على lastDailySent وهو ما يكتبه.
+  //   • إعادة أيام قديمة — الختم يتحرّك للخلف فينشأ تناوب لا نهائي.
+  // عولجت الأعراض ثلاث مرات وعادت في كل مرة بشكل جديد، لأن الجذر ليس
+  // عطلاً بعينه بل وجود قرار تلقائي مؤقَّت أصلاً.
   //
-  // القاعدة المخالَفة: لا يجوز أن يعتمد الـ effect على قيمة يكتبها هو.
-  //
-  // الإصلاح — ثلاث طبقات مستقلّة، كلٌّ منها كافية وحدها:
-  //  ١) التبعيات صارت [user?.id] فقط ⇒ المؤقّت يُبنى مرة واحدة لكل
-  //     جلسة ولا يُعاد تسليحه أبداً. أحدث البيانات تُقرأ من refs.
-  //  ٢) قفل تنفيذ (sendingRef) ⇒ لا تتداخل نبضتان.
-  //  ٣) سقف لكل جلسة ⇒ حتى لو انهار كل ما سبق، لا يتجاوز الجهاز
-  //     الواحد MAX_PER_SESSION تقارير قبل إعادة التحميل.
-  // وفوقها الحجز الذرّي في report_log (هجرة v47.2) الذي يمنع التكرار
-  // بين الأجهزة بنيوياً.
+  // البديل: زرّ «أرسل جرد يوم…» في شاشة الورديات (SendDailyPanel).
+  // ما زال الجرد يُرسَل تلقائياً عند إقفال آخر وردية في اليوم — وهو
+  // المسار الأساسي الصحيح، ومحميّ بالحجز الذرّي في report_log.
   // ══════════════════════════════════════════════════════════════
-  const dailyRefs = useRef({ store, settings });
-  dailyRefs.current = { store, settings };
-  const dailySending = useRef(false);
-  const dailySentCount = useRef(0);
-
-  useEffect(() => {
-    if (!user || !["admin", "cashier"].includes(user.role)) return;
-    const MAX_PER_SESSION = 3;
-    let cancelled = false;
-
-    const tick = async () => {
-      if (cancelled || dailySending.current) return;
-      if (dailySentCount.current >= MAX_PER_SESSION) return; // صمام أمان مطلق
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-
-      dailySending.current = true;
-      try {
-        const { store: st, settings: cfg } = dailyRefs.current;
-
-        // نافذة التصريف: 3 أيام افتراضياً. كانت 7 فتُطيل التصريف بلا داع؛
-        // الأيام الأقدم من ذلك تُعالَج بالحجز اليدوي لا بالإرسال التلقائي.
-        const DAY_MS = 86400000;
-        const backfill = Math.max(1, Math.min(14, +cfg?.dailyBackfillDays || 3));
-        const base = new Date();
-        let target = null;
-        for (let back = backfill; back >= 1; back--) {
-          const key = businessDayKey(new Date(base.getTime() - back * DAY_MS));
-          if (shouldSendDaily(st, cfg, key)) { target = key; break; }
-        }
-        if (!target) return;
-
-        // الحجز الذرّي — أول جهاز يفوز، والبقية تصمت (هجرة v47.2)
-        const claim = await claimReport(`daily:${target}`,
-          { kind: "daily", dayKey: target, sentBy: user?.name || "" });
-
-        if (!claim.claimed) {
-          if (claim.reason === "taken" || claim.reason === "local") {
-            st.setSettings(p => ({ ...p, lastDailySent: target }));
-          }
-          return;
-        }
-
-        const targets = cfg?.telegramTargets || [];
-        const packet = buildDailyPacket(st, target);
-        if (targets.length) {
-          notifyTelegram(targets, "daily",
-            buildDailySummary(packet, cfg?.cafeName || "ناردين كافيه", cfg?.currency || "ل.س"));
-        }
-        dailySentCount.current++;
-        st.setSettings(p => ({ ...p, lastDailySent: target }));
-      } catch (e) {
-        console.warn("daily rollover:", e);
-      } finally {
-        dailySending.current = false;
-      }
-    };
-
-    const t0 = setTimeout(tick, 30000);            // بعد استقرار التحميل والمزامنة
-    const iv = setInterval(tick, 10 * 60 * 1000);  // ثم كل 10 دقائق
-    return () => { cancelled = true; clearTimeout(t0); clearInterval(iv); };
-    // ⚠ لا تُضِف settings أو store هنا — ذلك بالضبط ما أنشأ الحلقة.
-  }, [user?.id]);
 
   const navDef=[
     ["dashboard","📊","لوحة التحكم"],
@@ -279,6 +198,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     ["replay","🔁","إعادة تشغيل الوردية"],
     ["reconcile","⚖","المطابقة الثلاثية"],
     ["synchealth","☁","صحة المزامنة"],
+    ["shiftaudit","🔏","تدقيق الورديات"],
     ["outdoor_admin","🌿","الحديقة — أدمن"],
   ];
   const navItems=navDef.filter(([t])=>canAccess(user.role,t));
@@ -419,6 +339,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="replay"     &&canAccess(user.role,"replay")        &&<ShiftReplay    store={store} settings={settings}/>}
         {tab==="reconcile"  &&canAccess(user.role,"reconcile")     &&<ReconcileTab   store={store} settings={settings} dm={dm}/>}
         {tab==="synchealth" &&canAccess(user.role,"synchealth")    &&<div className="fade-in"><SyncHealthPanel store={store} showToast={showToast}/></div>}
+        {tab==="shiftaudit" &&canAccess(user.role,"shiftaudit")    &&<ShiftAudit     store={store} user={user} settings={settings} showToast={showToast}/>}
 
         {/* ══════════════════════════════════════════════════════════
             v47.3: قائمة تحضير الافتتاح — أسفل محتوى الشاشة لا أعلاه.

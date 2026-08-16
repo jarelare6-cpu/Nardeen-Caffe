@@ -165,6 +165,7 @@ export function DashboardTab({store,dm,settings,user}){
   const [showAllDev,setShowAllDev]=useState(false);
   const [totals,setTotals]=useState(null);        // إجماليات الخادم (كل الوقت)
   const [totalCogs,setTotalCogs]=useState(null);
+  const [expTotals,setExpTotals]=useState(null);  // v48: المصاريف التراكمية — لتوحيد صافي الربح
 
   useEffect(()=>{
     let active=true;
@@ -179,9 +180,10 @@ export function DashboardTab({store,dm,settings,user}){
     Promise.all([
       fetchSalesTotals(store.orders,{}),
       fetchCogs(store.orders,store.menu,{}),
-    ]).then(([t,c])=>{ if(alive){ setTotals(t); setTotalCogs(c); } }).catch(()=>{});
+      fetchExpenseTotals(store.expenses,{}), // v48
+    ]).then(([t,c,e])=>{ if(alive){ setTotals(t); setTotalCogs(c); setExpTotals(e); } }).catch(()=>{});
     return ()=>{ alive=false; };
-  },[store.orders.length,store.menu.length]);
+  },[store.orders.length,store.menu.length,store.expenses.length]);
 
   const dayStart=useMemo(()=>businessDayStart(),[]);
   const dayEndTs=useMemo(()=>businessDayEnd().getTime(),[]);
@@ -372,8 +374,12 @@ export function DashboardTab({store,dm,settings,user}){
         <div style={grid}>
           <Cell label="إجمالي المبيعات" value={<Money v={totals?.revenue||0} c="#6a1b9a" approx={totals&&!totals.exact}/>}
                 sub={totals?`${n(totals.ordersCount)} فاتورة`:""}/>
-          <Cell label="صافي الربح"      value={<Money v={(totals?.revenue||0)-(totalCogs?.cogs||0)} c="#00897b" approx={totals&&!totals.exact}/>}
-                sub="المبيعات − التكلفة"/>
+          {/* v48: توحيد تعريف «صافي الربح».
+              كان هنا = المبيعات − التكلفة (بلا مصاريف)، بينما لوحة اليوم
+              تحسبه = المبيعات − التكلفة − المصاريف. نفس التسمية ورقمان
+              مختلفان في التطبيق الواحد، والفرق يساوي كل المصاريف. */}
+          <Cell label="صافي الربح"      value={<Money v={(totals?.revenue||0)-(totalCogs?.cogs||0)-(expTotals?.primary||0)} c="#00897b" approx={totals&&!totals.exact}/>}
+                sub="المبيعات − التكلفة − المصاريف"/>
           <Cell label="إجمالي الترون"   value={<Money v={totals?.tronTotal||0} c="#6a1b9a" approx={totals&&!totals.exact}/>}/>
           <Cell label="إجمالي الضيافة"  value={<Money v={totals?.compTotal||0} c="#00897b" approx={totals&&!totals.exact}/>}/>
         </div>

@@ -103,6 +103,7 @@ export const rowOfShift = (s) => ({
   closed_by_name: s.closedByName || "",         // v44
   notes: s.notes || "",
   shift_type: s.shiftType || "",                // v31.6
+  fingerprint: s.fingerprint || null,           // v48: بصمة الوردية
   created_at: s.createdAt || new Date().toISOString(),
 });
 
@@ -111,7 +112,7 @@ export const rowOfShift = (s) => ({
 // الواجهة تحذيراً يطالب بتنفيذ الهجرة (انظر db/migrations/..._v46_...sql).
 export const rowOfShiftLegacy = (s) => {
   const { sec_expenses_total, debt_settled_cash, business_day,
-          closed_by_id, closed_by_name, shift_type, ...r } = rowOfShift(s);
+          closed_by_id, closed_by_name, shift_type, fingerprint, ...r } = rowOfShift(s);
   return r;
 };
 

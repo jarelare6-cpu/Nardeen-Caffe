@@ -8,7 +8,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity, claimReport } from "./lib/supabase.js"; // v47.2
 import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
-import { buildDailyPacket, shouldSendOnClose } from "./lib/dailyReport.js"; // v46
+import { buildDailyPacket, shouldSendOnClose, advanceStamp } from "./lib/dailyReport.js"; // v46/v48
+import { computeShiftFingerprint } from "./lib/fingerprint.js"; // v48
 import { DenominationCounter, denominationNote, HandoverPanel, handoverNote } from "./CashierTools.jsx"; // v47
 import {
   getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, workDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac, orderSale,
@@ -390,7 +391,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   // أرقاماً: المعدود = المتوقع فيصبح الفارق صفراً، ويُوسَم في الملاحظات
   // وسجل النشاط بأنه إغلاق إداري بلا جرد — فلا يُقرأ كإقفال حقيقي.
   // ══════════════════════════════════════════════════════════════
-  const doForceClose = () => {
+  const doForceClose = async () => {
     const sh = forceClose;
     if (!sh) return;
     const sum = calcShiftSummary(store.orders, store.expenses, sh.id, sh.openedAt, sh.branch || "main");
@@ -409,6 +410,14 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       status: "closed",
       notes: [(sh.notes || "").trim(), "⚠ إغلاق إداري بلا جرد صندوق"].filter(Boolean).join(" — "),
     };
+    // v48: البصمة تُحسب للإغلاق الإداري أيضاً — وإلا بقيت هذه الورديات
+    // خارج التدقيق، وهي الأكثر عرضةً للتعديل اللاحق.
+    try {
+      const fp = await computeShiftFingerprint(closedRow, {
+        orders: store.orders, expenses: store.expenses, stockMoves: store.stockMoves,
+      });
+      if (fp) closedRow.fingerprint = fp;
+    } catch {}
     store.setShifts(p => p.map(x => x.id === sh.id ? closedRow : x));
     try {
       logActivity({ action: "إغلاق إداري لوردية", details: `${sh.branch === "outdoor" ? "الحديقة" : "الكافيه"} — ${shiftTypeLabel(sh.shiftType)} — بلا جرد صندوق`,
@@ -509,6 +518,22 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       // v47: تفصيل عدّ الفئات يُحفَظ مع الوردية — أثر يُراجَع عند وجود فرق
       notes: [notes.trim(), denominationNote(countBreakdown)].filter(Boolean).join(" — "),
     };
+
+    // ══════════════════════════════════════════════════════════════
+    // v48 — بصمة الوردية
+    // تُحسَب على محتواها لحظة الإقفال (الطلبات · الصندوق · المصاريف ·
+    // حركات المخزون) وتُخزَّن معها. أي تعديل لاحق — فتح قفل محاسبي، أو
+    // كتابة من جهاز متأخّر، أو تعديل مباشر في القاعدة — يجعل إعادة
+    // الحساب تُنتج بصمة مختلفة، فيُكشَف التغيير ويُحدَّد أي جزء تغيّر.
+    // فشل الحساب (متصفح بلا crypto.subtle) لا يمنع الإقفال إطلاقاً.
+    // ══════════════════════════════════════════════════════════════
+    try {
+      const fp = await computeShiftFingerprint(closed, {
+        orders: store.orders, expenses: store.expenses, stockMoves: store.stockMoves,
+      });
+      if (fp) closed.fingerprint = fp;
+    } catch (e) { console.warn("fingerprint:", e); }
+
     store.setShifts(p => p.map(s => s.id === openShift.id ? closed : s));
 
     // ── انتظار تأكيد السحابة قبل أي رسالة نجاح ──────────────────
@@ -555,7 +580,8 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
         // setSettings({ ...settings, ... }) باستخدام settings **القديم**،
         // فيمحو الثاني ختمَ الأول ⇒ شبكة الأمان تُعيد إرسال جرد اليوم مكرراً
         // كل خميس. الآن ختم واحد يحمل الاثنين.
-        const stamps = { lastDailySent: dayKey };
+        // v48: الختم أحادي الاتجاه — لا يتراجع أبداً (سبب إعادة الأيام القديمة)
+        const stamps = { lastDailySent: advanceStamp(settings?.lastDailySent, dayKey) };
 
         // v31.2: التقرير الأسبوعي — بعد اليومي، يوم الخميس فقط، مرة لكل أسبوع
         if (new Date().getDay() === 4) { // 4 = الخميس
