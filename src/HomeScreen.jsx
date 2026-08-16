@@ -169,68 +169,90 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
   // يعمل على أجهزة الأدمن/الكاشير فقط، ويُختم بـ lastDailySent المشترك في
   // app_settings فلا يتكرّر الإرسال بين الأجهزة.
   // ══════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
+  // v47.3 — إصلاح حلقة التكرار
+  // ──────────────────────────────────────────────────────────────
+  // العطل: كانت settings?.lastDailySent و store.shifts ضمن **تبعيات**
+  // هذا الـ effect، وهو نفسه يكتب lastDailySent بعد كل إرسال. فينشأ
+  // دوران مغلق:
+  //     يُرسل ← يختم ← تتغيّر التبعية ← يُعاد بناء الـ effect ←
+  //     مؤقّت جديد 15 ثانية ← يُرسل التالي ← يختم ← …
+  // فبدل نبضة كل عشر دقائق صارت نبضة كل خمس عشرة ثانية، ومع نافذة
+  // تصريف سبعة أيام وأجهزة متعدّدة تتضاعف ⇒ عشرات التقارير.
+  //
+  // القاعدة المخالَفة: لا يجوز أن يعتمد الـ effect على قيمة يكتبها هو.
+  //
+  // الإصلاح — ثلاث طبقات مستقلّة، كلٌّ منها كافية وحدها:
+  //  ١) التبعيات صارت [user?.id] فقط ⇒ المؤقّت يُبنى مرة واحدة لكل
+  //     جلسة ولا يُعاد تسليحه أبداً. أحدث البيانات تُقرأ من refs.
+  //  ٢) قفل تنفيذ (sendingRef) ⇒ لا تتداخل نبضتان.
+  //  ٣) سقف لكل جلسة ⇒ حتى لو انهار كل ما سبق، لا يتجاوز الجهاز
+  //     الواحد MAX_PER_SESSION تقارير قبل إعادة التحميل.
+  // وفوقها الحجز الذرّي في report_log (هجرة v47.2) الذي يمنع التكرار
+  // بين الأجهزة بنيوياً.
+  // ══════════════════════════════════════════════════════════════
+  const dailyRefs = useRef({ store, settings });
+  dailyRefs.current = { store, settings };
+  const dailySending = useRef(false);
+  const dailySentCount = useRef(0);
+
   useEffect(() => {
     if (!user || !["admin", "cashier"].includes(user.role)) return;
+    const MAX_PER_SESSION = 3;
+    let cancelled = false;
+
     const tick = async () => {
+      if (cancelled || dailySending.current) return;
+      if (dailySentCount.current >= MAX_PER_SESSION) return; // صمام أمان مطلق
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+
+      dailySending.current = true;
       try {
-        if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-        // ══════════════════════════════════════════════════════════
-        // v46: امسح آخر 7 أيام لا اليوم السابق وحده.
-        // كان الفحص يقتصر على previousDayKey()، فلو انقطع الجهاز يومين
-        // أو أُرسل جرد الأمس فقط، تسقط الأيام الأقدم نهائياً ولا تُرسَل
-        // أبداً. نبدأ من الأقدم فالأحدث ليصل الترتيب صحيحاً على تلغرام،
-        // ونرسل يوماً واحداً في كل نبضة حتى لا نُغرق القناة دفعةً واحدة.
-        // ══════════════════════════════════════════════════════════
-        // v47.1: سقف التصريف قابل للضبط. عند أول نشر بعد إصلاح عطل
-        // shift_type تكون هناك أيام متراكمة لم يصل جردها قط، فتُرسَل
-        // يوماً واحداً كل نبضة حتى اللحاق بالحاضر ثم تتوقف. لتخطّي
-        // المتأخرات كلياً: اضبط settings.lastDailySent على تاريخ اليوم.
+        const { store: st, settings: cfg } = dailyRefs.current;
+
+        // نافذة التصريف: 3 أيام افتراضياً. كانت 7 فتُطيل التصريف بلا داع؛
+        // الأيام الأقدم من ذلك تُعالَج بالحجز اليدوي لا بالإرسال التلقائي.
         const DAY_MS = 86400000;
-        const backfill = Math.max(1, Math.min(30, +settings?.dailyBackfillDays || 7));
+        const backfill = Math.max(1, Math.min(14, +cfg?.dailyBackfillDays || 3));
         const base = new Date();
         let target = null;
         for (let back = backfill; back >= 1; back--) {
           const key = businessDayKey(new Date(base.getTime() - back * DAY_MS));
-          if (shouldSendDaily(store, settings, key)) { target = key; break; }
+          if (shouldSendDaily(st, cfg, key)) { target = key; break; }
         }
         if (!target) return;
 
-        // ══════════════════════════════════════════════════════════
-        // v47.2 — الحجز الذرّي قبل الإرسال
-        // ──────────────────────────────────────────────────────────
-        // هذه الشبكة تعمل على **كل** جهاز أدمن/كاشير. كان الفحص يعتمد
-        // على settings.lastDailySent وحده، وهو ليس قفلاً: أجهزة تنبض
-        // في النافذة نفسها ترى الختم قديماً فترسل جميعها، وأي حفظ
-        // إعدادٍ آخر من جهاز ثالث يمحو الختم فيعود الإرسال.
-        // النتيجة كانت أربع رسائل لجرد اليوم نفسه.
-        // الآن: أول جهاز يحجز الصفّ في report_log يرسل، والبقية تصمت.
-        // ══════════════════════════════════════════════════════════
+        // الحجز الذرّي — أول جهاز يفوز، والبقية تصمت (هجرة v47.2)
         const claim = await claimReport(`daily:${target}`,
           { kind: "daily", dayKey: target, sentBy: user?.name || "" });
+
         if (!claim.claimed) {
-          // جهاز آخر أرسله — نُحدّث ختمنا المحلي فقط ونصمت
           if (claim.reason === "taken" || claim.reason === "local") {
-            store.setSettings(p => ({ ...p, lastDailySent: target }));
+            st.setSettings(p => ({ ...p, lastDailySent: target }));
           }
           return;
         }
 
-        const targets = settings?.telegramTargets || [];
-        const packet = buildDailyPacket(store, target);
+        const targets = cfg?.telegramTargets || [];
+        const packet = buildDailyPacket(st, target);
         if (targets.length) {
           notifyTelegram(targets, "daily",
-            buildDailySummary(packet, settings?.cafeName || "ناردين كافيه", settings?.currency || "ل.س"));
+            buildDailySummary(packet, cfg?.cafeName || "ناردين كافيه", cfg?.currency || "ل.س"));
         }
-        store.setSettings(p => ({ ...p, lastDailySent: target }));
-      } catch (e) { console.warn("daily rollover:", e); }
+        dailySentCount.current++;
+        st.setSettings(p => ({ ...p, lastDailySent: target }));
+      } catch (e) {
+        console.warn("daily rollover:", e);
+      } finally {
+        dailySending.current = false;
+      }
     };
-    const t0 = setTimeout(tick, 15000);          // بعد استقرار التحميل والمزامنة
-    const iv = setInterval(tick, 10 * 60 * 1000); // ثم كل 10 دقائق
-    return () => { clearTimeout(t0); clearInterval(iv); };
-    // v47.2: أُزيل store.orders من التبعيات — كان أي تغيّر في طلب (وهي
-    // تتغيّر عشرات المرات في الساعة) يهدم المؤقّت ويعيد بناءه، فيتحوّل
-    // الفحص الدوري إلى سلوك غير متوقّع مرتبط بحركة الطلبات لا بالوقت.
-  }, [user, store.shifts, settings?.lastDailySent]);
+
+    const t0 = setTimeout(tick, 30000);            // بعد استقرار التحميل والمزامنة
+    const iv = setInterval(tick, 10 * 60 * 1000);  // ثم كل 10 دقائق
+    return () => { cancelled = true; clearTimeout(t0); clearInterval(iv); };
+    // ⚠ لا تُضِف settings أو store هنا — ذلك بالضبط ما أنشأ الحلقة.
+  }, [user?.id]);
 
   const navDef=[
     ["dashboard","📊","لوحة التحكم"],
@@ -368,11 +390,6 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {/* v47: تنبيه الوردية المتروكة — يظهر فوق أي شاشة حتى تُقفَل */}
         <StaleShiftAlert store={store} user={user} onGoToShifts={()=>setTab("shifts")} />
 
-        {/* v47: قائمة تحضير الافتتاح — على لوحة التحكم وشاشة البار */}
-        {["dashboard","bar"].includes(tab) && ["admin","cashier","bar","worker"].includes(user.role) && (
-          <OpeningChecklist store={store} user={user} showToast={showToast} settings={settings} />
-        )}
-
         <ErrorBoundary key={tab}>
         <React.Suspense fallback={<div style={{textAlign:"center",padding:40,color:"var(--sub)",fontSize:14}}>⏳ جارٍ التحميل...</div>}>
         {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} user={user}/>}
@@ -402,6 +419,18 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="replay"     &&canAccess(user.role,"replay")        &&<ShiftReplay    store={store} settings={settings}/>}
         {tab==="reconcile"  &&canAccess(user.role,"reconcile")     &&<ReconcileTab   store={store} settings={settings} dm={dm}/>}
         {tab==="synchealth" &&canAccess(user.role,"synchealth")    &&<div className="fade-in"><SyncHealthPanel store={store} showToast={showToast}/></div>}
+
+        {/* ══════════════════════════════════════════════════════════
+            v47.3: قائمة تحضير الافتتاح — أسفل محتوى الشاشة لا أعلاه.
+            كانت تتصدّر لوحة التحكم فتزيح الأرقام التشغيلية التي يفتح
+            الأدمن اللوحة لأجلها. مكانها الطبيعي بعدها: يراها عامل
+            الصباح حين ينزل، ولا تعترض مَن يريد المبيعات والصندوق.
+            ══════════════════════════════════════════════════════════ */}
+        {["dashboard","bar"].includes(tab) && ["admin","cashier","bar","worker"].includes(user.role) && (
+          <div style={{marginTop:18}}>
+            <OpeningChecklist store={store} user={user} showToast={showToast} settings={settings} />
+          </div>
+        )}
         {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings} user={user}/>}
         </React.Suspense>
         </ErrorBoundary>
