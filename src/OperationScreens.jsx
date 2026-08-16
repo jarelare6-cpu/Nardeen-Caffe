@@ -9,6 +9,9 @@ import { deductOrderStock, restoreOrderStock, isStockDeducted } from "./lib/stoc
 import { ItemVisual, BottomNav, GlobalStyle, Toast, PWABanner, OrderTimer, CancelOrderModal } from "./uikit.jsx";
 import { printOrder, generateReceiptPDF, saveReceiptRecord, saveReceipt, generateZReportPDF } from "./receipts.js";
 import { notifyTelegram, buildEventMsg } from "./lib/telegram.js";
+import { topItemsThisHour } from "./CashierTools.jsx";                    // v47
+import { checkOrderEdit, stampUnlockedEdit, orderBusinessDay } from "./lib/lock.js"; // v47
+import { LockModal } from "./LockModal.jsx";                              // v47
 
 export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   const [cart,setCart]=useState([]);
@@ -83,11 +86,18 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
   };
   const setItemNote=(key,note)=>setCart(p=>p.map(c=>lineKey(c)===key?{...c,note}:c));
 
-  // v27: الطلبات السريعة الذكية — تترتب تلقائياً حسب تراكم المبيعات (totalSold)
-  const quickItems=useMemo(()=>(store.menu||[])
-    .filter(m=>m.active!==false && !m.noStock && (m.noStock||m.stock>0) && (m.totalSold||0)>0)
-    .sort((a,b)=>(b.totalSold||0)-(a.totalSold||0))
-    .slice(0,6),[store.menu]);
+  // ══════════════════════════════════════════════════════════════
+  // v47: الطلبات السريعة حسب **هذه الساعة** لا حسب التراكم الكلّي
+  // الترتيب بـ totalSold كان يعرض نفس الستّة طوال اليوم: الشاي يتصدّر
+  // صباحاً ومساءً معاً، بينما العصائر لا تظهر أبداً رغم أنها الأكثر
+  // طلباً ليلاً. الآن نحسب الأكثر طلباً في نافذة ±1 ساعة حول الساعة
+  // الحالية من تاريخ آخر 21 يوماً — فيقترح ما يُطلب فعلاً الآن.
+  // (نبضة كل 10 دقائق تُبقي القائمة حيّة مع تقدّم الوردية.)
+  // ══════════════════════════════════════════════════════════════
+  const [hourTick,setHourTick]=useState(0);
+  useEffect(()=>{const iv=setInterval(()=>setHourTick(t=>t+1),600000);return()=>clearInterval(iv);},[]);
+  const quickItems=useMemo(()=>topItemsThisHour(store.orders,store.menu,{count:6,branch:"main"})
+    .map(x=>x.item).filter(Boolean),[store.orders,store.menu,hourTick]);
   const cartTotal=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cartCount=cart.reduce((s,c)=>s+c.qty,0);
   // v27.2: يعود الشريط للظهور تلقائياً عند إضافة صنف جديد للسلة
@@ -232,7 +242,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
         {quickItems.length>0 && cat==="all" && !search && (
           <div className="card" style={{padding:"10px 12px"}}>
             <div style={{fontSize:11,fontWeight:800,color:"var(--sub)",marginBottom:8,display:"flex",alignItems:"center",gap:5}}>
-              ⚡ الأكثر طلباً <span style={{fontSize:9,fontWeight:600,opacity:.7}}>(يترتّب تلقائياً)</span>
+              ⚡ الأكثر طلباً في هذه الساعة <span style={{fontSize:9,fontWeight:600,opacity:.7}}>({new Date().toLocaleTimeString("ar-SY",{hour:"2-digit",minute:"2-digit"})})</span>
             </div>
             <div style={{display:"flex",gap:8,overflowX:"auto"}} className="scroll-hide">
               {quickItems.map((item,i)=>(
@@ -242,7 +252,7 @@ export function NewOrderTab({store,user,showToast,addNotification,dm,settings}){
                     fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
                   <span style={{fontSize:16}}>{item.emoji||"🍽"}</span>
                   {item.name}
-                  {i===0&&<span style={{fontSize:9,background:"rgba(255,255,255,.3)",borderRadius:8,padding:"1px 5px"}}>الأعلى</span>}
+                  {i===0&&<span style={{fontSize:9,background:"rgba(255,255,255,.3)",borderRadius:8,padding:"1px 5px"}}>الأعلى الآن</span>}
                 </button>
               ))}
             </div>
@@ -549,6 +559,7 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   const [filter,setFilter]=useState("active");
   const [search,setSearch]=useState("");
   const [editOrder,setEditOrder]=useState(null);
+  const [lockAsk,setLockAsk]=useState(null); // v47: {order,dayKey,action,run}
   const [cancelModal,setCancelModal]=useState(null); // v26: {order} تأكيد إلغاء الطلب
   const CUR=settings?.currency||"ل.س";
   const canManage=[ROLES.ADMIN,ROLES.CASHIER].includes(user.role);
@@ -599,6 +610,35 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
     if(newStatus==="ready") addNotification(`✅ طلب #${order.orderNum} جاهز`,[ROLES.CASHIER,ROLES.ADMIN,ROLES.WORKER],order.id);
     showToast(`تم تحديث الطلب #${order.orderNum}`);
   };
+  // ══════════════════════════════════════════════════════════════
+  // v47 — بوّابة القفل المحاسبي
+  // ──────────────────────────────────────────────────────────────
+  // تُلفّ حول أي إجراء يمسّ طلباً. إن كان يوم الطلب مُقفلاً (أُرسل جرده)
+  // فإمّا يُرفض للمستخدم العادي، أو يُطلب من الأدمن سبب مكتوب قبل التنفيذ.
+  // اليوم غير المقفل يمرّ فوراً بلا أي احتكاك — القفل لا يعيق العمل اليومي.
+  // ══════════════════════════════════════════════════════════════
+  const guardLocked=(order,actionLabel,run)=>{
+    const chk=checkOrderEdit(order,{shifts:store.shifts,settings,user});
+    if(chk.state==="allowed"){ run(); return; }
+    if(chk.state==="denied"){ showToast(chk.message,"error"); return; }
+    setLockAsk({order,dayKey:chk.dayKey,action:actionLabel,run});
+  };
+
+  const runUnlocked=(reason)=>{
+    const {order,dayKey,action,run}=lockAsk||{};
+    if(!run) return;
+    // وسم دائم على الطلب نفسه — يبقى في أي تصدير أو مراجعة لاحقة
+    store.setOrders(p=>p.map(o=>o.id===order.id?stampUnlockedEdit(o,{user,reason,dayKey}):o));
+    try{ logActivity({action:`🔓 فتح قفل محاسبي — ${action}`,
+      details:`يوم ${dayKey} — ${reason}`,userName:user.name,userRole:user.role,
+      orderNum:order.orderNum,amount:order.total,branch:order.branch||"main"}); }catch{}
+    notifyTelegram(settings?.telegramTargets||[],"cancel",
+      `🔓 <b>فتح قفل محاسبي</b>\nيوم ${dayKey} — ${action}\nفاتورة #${order.orderNum} · ${(order.total||0).toLocaleString()}\nبواسطة: ${user.name}\nالسبب: ${reason}`);
+    setLockAsk(null);
+    run();
+    showToast("🔓 نُفّذ التعديل وسُجّل في سجل النشاط","warn");
+  };
+
   const cancelOrder=(order,reason="")=>{
     store.setOrders(p=>p.map(o=>o.id===order.id?{...o,status:"cancelled",cancelReason:reason||""}:o));
     restoreOrderStock(store, order, { userId: user.id, userName: user.name, userRole: user.role }); // v23: يُرجع فقط إن كان قد خُصم
@@ -616,6 +656,8 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
   return(
     <div className="fade-in">
       {editOrder&&<OrderEditModal key={editOrder.id} order={editOrder} onClose={()=>setEditOrder(null)} store={store} showToast={showToast} CUR={CUR} user={user}/>}
+      {lockAsk&&<LockModal order={lockAsk.order} dayKey={lockAsk.dayKey} actionLabel={lockAsk.action}
+        CUR={CUR} onConfirm={runUnlocked} onClose={()=>setLockAsk(null)}/>}
       {cancelModal&&<CancelOrderModal order={cancelModal.order} cur={settings?.currency||"ل.س"}
         onConfirm={(reason)=>{cancelOrder(cancelModal.order,reason);setCancelModal(null);}}
         onClose={()=>setCancelModal(null)}/>}
@@ -687,12 +729,12 @@ export function OrdersTab({store,user,showToast,addNotification,dm,settings}){
                 )}
                 {canManage&&!["paid","cancelled","complimentary","debt"].includes(order.status)&&(
                   <>
-                    <button onClick={()=>lockedAfterReady(order)?showToast("🔒 الطلب جاهز — التعديل بعد الجاهزية للأدمن فقط","error"):setEditOrder(order)}
+                    <button onClick={()=>lockedAfterReady(order)?showToast("🔒 الطلب جاهز — التعديل بعد الجاهزية للأدمن فقط","error"):guardLocked(order,"تعديل",()=>setEditOrder(order))}
                       title={lockedAfterReady(order)?"مقفل — الأدمن فقط":"تعديل الطلب"}
                       style={{background:lockedAfterReady(order)?"var(--card2)":"rgba(25,118,210,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:lockedAfterReady(order)?"var(--sub)":"#1565c0",cursor:"pointer"}}>
                       {lockedAfterReady(order)?"🔒":"✏"}
                     </button>
-                    <button onClick={()=>lockedAfterReady(order)?showToast("🔒 الطلب جاهز — الإلغاء بعد الجاهزية للأدمن فقط","error"):setCancelModal({order})}
+                    <button onClick={()=>lockedAfterReady(order)?showToast("🔒 الطلب جاهز — الإلغاء بعد الجاهزية للأدمن فقط","error"):guardLocked(order,"إلغاء",()=>setCancelModal({order}))}
                       title={lockedAfterReady(order)?"مقفل — الأدمن فقط":"إلغاء الطلب"}
                       style={{background:lockedAfterReady(order)?"var(--card2)":"rgba(198,40,40,.15)",border:"none",borderRadius:8,padding:"8px 10px",fontSize:13,color:lockedAfterReady(order)?"var(--sub)":"#c62828",cursor:"pointer"}}>
                       {lockedAfterReady(order)?"🔒":"🚫"}

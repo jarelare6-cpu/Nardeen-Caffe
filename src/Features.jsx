@@ -8,10 +8,12 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
 import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
-import { buildDailyPacket } from "./lib/dailyReport.js"; // v42
+import { buildDailyPacket, shouldSendOnClose } from "./lib/dailyReport.js"; // v46
+import { DenominationCounter, denominationNote, HandoverPanel, handoverNote } from "./CashierTools.jsx"; // v47
 import {
   getOrderUrgency, getAvgPrepTime, calcShiftSummary, playOrderAlert, businessDayStart, workDayStart, businessDayLabel, weekStartThursday, orderCash, orderTron, orderCogs, orderCashFrac, orderSale,
-  businessDayKey, businessDayEnd, formatDayKey, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR } from "./lib/utils.js";
+  businessDayKey, businessDayEnd, formatDayKey, closedShiftsOfDay, sumShifts, ordersOfShifts, DAY_START_UTC_HOUR,
+  shiftExpectedCash, shiftBusinessDay, openShiftsOfDay } from "./lib/utils.js";
 
 // ══════════════════════════════════════════════════════════════
 // 1. KITCHEN DISPLAY SYSTEM (KDS)
@@ -21,6 +23,7 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
   const CUR = settings?.currency || "ل.س";
   const [now, setNow] = useState(Date.now());
   const [station, setStation] = useState("all"); // all | bar | hookah
+  const [view, setView] = useState("kanban");   // v47: kanban | cards
   const prevCount = useRef(0);
 
   // ساعة حية كل 10 ثوانٍ لإعادة حساب الألوان
@@ -38,9 +41,14 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
   };
 
   // الطلبات النشطة (pending + preparing)
+  // v47: نُدخل «جاهز» أيضاً — عامل البار يحتاج أن يرى ما ينتظر التسليم،
+  // وإخفاؤه فور الجاهزية كان يجعله ينسى طلباً واقفاً على الطاولة.
+  // نكتفي بآخر 45 دقيقة من الجاهز حتى لا يتضخّم العمود.
+  const READY_WINDOW_MS = 45 * 60 * 1000;
   const activeOrders = useMemo(() => {
     return (store.orders || [])
-      .filter(o => ["pending", "preparing"].includes(o.status))
+      .filter(o => ["pending", "preparing"].includes(o.status)
+        || (o.status === "ready" && o.readyAt && Date.now() - new Date(o.readyAt).getTime() < READY_WINDOW_MS))
       .map(o => {
         const items = (o.items || []).filter(it => {
           const m = store.menu.find(x => x.id === it.itemId);
@@ -101,6 +109,13 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
     danger: settings?.kdsDangerMinutes ?? 10,
   };
 
+  // v47: أعمدة مسار التحضير — جديد ← قيد التحضير ← جاهز
+  const COLUMNS = [
+    { key: "pending",   label: "🆕 جديد",        color: "#e65100" },
+    { key: "preparing", label: "👨‍🍳 قيد التحضير", color: "#1565c0" },
+    { key: "ready",     label: "✅ جاهز",         color: "#2e7d32" },
+  ];
+
   return (
     <div className="fade-in" ref={kdsRef} style={{ background: isFs ? "var(--bg)" : "transparent", minHeight: isFs ? "100vh" : "auto", padding: isFs ? 18 : 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
@@ -133,44 +148,145 @@ export function KitchenDisplayTab({ store, user, showToast, addNotification, set
         ))}
       </div>
 
+      {/* v47: تبديل العرض — أعمدة (Kanban) أو بطاقات */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        {[["kanban", "🗂 أعمدة"], ["cards", "🃏 بطاقات"]].map(([v, l]) => (
+          <button key={v} onClick={() => setView(v)}
+            style={{
+              padding: "6px 16px", borderRadius: 18, border: "none", fontWeight: 800, fontSize: 12, cursor: "pointer",
+              fontFamily: "inherit",
+              background: view === v ? "#1565c0" : "var(--card2)", color: view === v ? "#fff" : "var(--sub)",
+            }}>{l}</button>
+        ))}
+      </div>
+
       {!activeOrders.length ? (
         <div className="card" style={{ textAlign: "center", padding: 60, color: "var(--sub)" }}>
           <div style={{ fontSize: 56, marginBottom: 12 }}>✅</div>
           <div style={{ fontSize: 16, fontWeight: 700 }}>لا توجد طلبات قيد التحضير</div>
           <div style={{ fontSize: 13, marginTop: 6 }}>كل الطلبات منتهية — عمل رائع!</div>
         </div>
+      ) : view === "kanban" ? (
+        /* ══════════════════════════════════════════════════════════
+           v47 — عرض الأعمدة
+           عمود لكل مرحلة: جديد ← قيد التحضير ← جاهز. عامل البار يرى
+           مساره كاملاً في نظرة واحدة بدل شبكة بطاقات مختلطة، ويعرف
+           فوراً أين يتكدّس العمل. لون كل بطاقة من مؤقّتها، والمتأخّر
+           فوق حدّ الخطر ينبض بالأحمر.
+           ══════════════════════════════════════════════════════════ */
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 12, alignItems: "start" }}>
+          {COLUMNS.map(col => {
+            const list = activeOrders.filter(o => o.status === col.key);
+            const late = list.filter(o => getOrderUrgency(o.createdAt, thresholds).level === "danger").length;
+            return (
+              <div key={col.key} style={{ background: "var(--card2)", borderRadius: 14, padding: 10, minHeight: 120 }}>
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+                  paddingBottom: 8, marginBottom: 8, borderBottom: `2px solid ${col.color}`,
+                }}>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: col.color }}>{col.label}</span>
+                  <span style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                    {late > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 900, background: "#c62828", color: "#fff", borderRadius: 7, padding: "1px 6px" }}>
+                        {late} متأخّر
+                      </span>
+                    )}
+                    <span style={{ fontSize: 12, fontWeight: 900, background: col.color, color: "#fff", borderRadius: 9, minWidth: 22, textAlign: "center", padding: "1px 6px" }}>
+                      {list.length}
+                    </span>
+                  </span>
+                </div>
+
+                {!list.length ? (
+                  <div style={{ textAlign: "center", padding: "18px 0", color: "var(--sub)", fontSize: 11.5 }}>—</div>
+                ) : list.map(order => {
+                  const u = getOrderUrgency(order.createdAt, thresholds);
+                  const isOutdoor = order.branch === "outdoor";
+                  const done = order.status === "ready";
+                  return (
+                    <div key={order.id} style={{
+                      background: "var(--card)", borderRadius: 11, marginBottom: 8, overflow: "hidden",
+                      border: `1px solid var(--border)`,
+                      boxShadow: !done && u.level === "danger" ? `0 0 0 2.5px ${u.color}` : "none",
+                      animation: !done && u.level === "danger" ? "pulse 1.5s infinite" : "none",
+                    }}>
+                      <div style={{
+                        background: done ? "#2e7d32" : u.color, color: "#fff", padding: "6px 10px",
+                        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
+                      }}>
+                        <span style={{ fontWeight: 900, fontSize: 13 }}>
+                          #{order.orderNum}
+                          {isOutdoor && <span style={{ fontSize: 9, marginRight: 5, background: "rgba(255,255,255,.25)", borderRadius: 5, padding: "1px 5px" }}>🌿</span>}
+                        </span>
+                        <span style={{ fontWeight: 900, fontSize: 12 }}>
+                          {done ? "✓ جاهز" : `⏱ ${u.minutes}د`}
+                        </span>
+                      </div>
+
+                      <div style={{ padding: "8px 10px" }}>
+                        {order.table && (
+                          <div style={{ fontSize: 11, color: "#1565c0", fontWeight: 800, marginBottom: 5 }}>🪑 {order.table}</div>
+                        )}
+                        {order._filteredItems.map((it, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                            <span style={{ fontSize: 15 }}>{it.emoji}</span>
+                            <span style={{ flex: 1, fontWeight: 700, fontSize: 12.5 }}>{it.itemName}</span>
+                            <span style={{ fontWeight: 900, color: done ? "#2e7d32" : u.color, fontSize: 15 }}>×{it.qty}</span>
+                          </div>
+                        ))}
+                        {order.notes && (
+                          <div style={{ background: "rgba(249,168,37,.14)", borderRadius: 7, padding: "5px 8px", fontSize: 11, color: "#e65100", marginTop: 6, lineHeight: 1.6 }}>
+                            📝 {order.notes}
+                          </div>
+                        )}
+                        {order.status !== "ready" && (
+                          <button onClick={() => advanceOrder(order)}
+                            style={{
+                              width: "100%", marginTop: 8, border: "none", borderRadius: 8, padding: "8px",
+                              fontWeight: 900, fontSize: 12.5, cursor: "pointer", color: "#fff", fontFamily: "inherit",
+                              background: order.status === "pending" ? "#1565c0" : "#2e7d32",
+                            }}>
+                            {order.status === "pending" ? "▶ بدء التحضير" : "✅ جاهز للتقديم"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14 }}>
           {activeOrders.map(order => {
             const urgency = getOrderUrgency(order.createdAt, thresholds);
             const isOutdoor = order.branch === "outdoor";
+            const done = order.status === "ready";
             return (
               <div key={order.id} style={{
                 background: "var(--card)", borderRadius: 16, overflow: "hidden",
-                boxShadow: urgency.level === "danger" ? `0 0 0 3px ${urgency.color}` : "var(--shadow)",
-                animation: urgency.level === "danger" ? "pulse 1.5s infinite" : "none",
+                boxShadow: !done && urgency.level === "danger" ? `0 0 0 3px ${urgency.color}` : "var(--shadow)",
+                animation: !done && urgency.level === "danger" ? "pulse 1.5s infinite" : "none",
                 border: `1px solid var(--border)`,
               }}>
-                {/* رأس البطاقة */}
-                <div style={{ background: urgency.color, color: "#fff", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ background: done ? "#2e7d32" : urgency.color, color: "#fff", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 900, fontSize: 16 }}>
                     #{order.orderNum}
                     {isOutdoor && <span style={{ fontSize: 11, marginRight: 6, background: "rgba(255,255,255,.25)", borderRadius: 6, padding: "2px 6px" }}>🌿 حديقة</span>}
                   </span>
-                  <span style={{ fontWeight: 900, fontSize: 14 }}>⏱ {urgency.minutes} د</span>
+                  <span style={{ fontWeight: 900, fontSize: 14 }}>{done ? "✓ جاهز" : `⏱ ${urgency.minutes} د`}</span>
                 </div>
 
                 <div style={{ padding: 14 }}>
                   {order.table && (
-                    <div style={{ fontSize: 12, color: "#1565c0", fontWeight: 700, marginBottom: 8 }}>
-                      🪑 {order.table}
-                    </div>
+                    <div style={{ fontSize: 12, color: "#1565c0", fontWeight: 700, marginBottom: 8 }}>🪑 {order.table}</div>
                   )}
                   {order._filteredItems.map((it, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: i < order._filteredItems.length - 1 ? "1px dashed var(--border)" : "none" }}>
                       <span style={{ fontSize: 20 }}>{it.emoji}</span>
                       <span style={{ flex: 1, fontWeight: 600, fontSize: 14 }}>{it.itemName}</span>
-                      <span style={{ fontWeight: 900, color: urgency.color, fontSize: 18 }}>×{it.qty}</span>
+                      <span style={{ fontWeight: 900, color: done ? "#2e7d32" : urgency.color, fontSize: 18 }}>×{it.qty}</span>
                     </div>
                   ))}
 
@@ -220,6 +336,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   const [shiftType, setShiftType] = useState(""); // v31.6: بلا افتراضي — يُجبَر الكاشير على الاختيار
   const [confirmType, setConfirmType] = useState(false);  // تأكيد توقيت الوردية
   const [countedCash, setCountedCash] = useState("");
+  const [countBreakdown, setCountBreakdown] = useState(null); // v47: تفصيل عدّ الفئات
   const [notes, setNotes] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
   const isAdmin = user?.role === "admin"; // v30.1: حذف/تعديل الورديات المقفلة (أدمن فقط)
@@ -244,10 +361,20 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   };
 
   // الوردية المفتوحة الحالية لهذا الفرع
+  // v46: (s.branch || "main") — المقارنة الصارمة كانت تُخفي أي وردية قديمة
+  // بحقل branch فارغ، فتظهر «لا وردية مفتوحة» هنا بينما شاشة الطلبات تراها.
   const openShift = useMemo(() =>
-    (store.shifts || []).find(s => s.status === "open" && s.branch === branch),
+    (store.shifts || []).find(s => s.status === "open" && (s.branch || "main") === branch),
     [store.shifts, branch]
   );
+  // v47: آخر وردية مُقفلة على هذا الفرع — مصدر رقم التسليم
+  const lastClosedShift = useMemo(() =>
+    (store.shifts || [])
+      .filter(s => s.status === "closed" && (s.branch || "main") === branch && s.closedAt)
+      .sort((a, b) => new Date(b.closedAt) - new Date(a.closedAt))[0] || null,
+    [store.shifts, branch]
+  );
+
   // v44: ورديات مفتوحة على فروع أخرى — كانت غير مرئية من هنا
   const otherOpen = useMemo(() =>
     (store.shifts || []).filter(s => s.status === "open" && (s.branch || "main") !== branch),
@@ -255,7 +382,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
   );
   const shiftTypeLabel = (t) => t === "night" ? "ليلية" : t === "evening" ? "مسائية" : t === "morning" ? "صباحية" : "—";
   const [forceClose, setForceClose] = useState(null);
-  const summaryCash = (sum) => (sum.cashSales || 0) + (sum.tronSales || 0) + (sum.debtSettledCash || 0) - (sum.expensesTotal || 0);
+  const [closing, setClosing] = useState(false); // v46: منع النقر المزدوج أثناء انتظار السحابة
 
   // ══════════════════════════════════════════════════════════════
   // v44: إغلاق إداري لوردية عالقة (أدمن فقط)
@@ -267,7 +394,7 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     const sh = forceClose;
     if (!sh) return;
     const sum = calcShiftSummary(store.orders, store.expenses, sh.id, sh.openedAt, sh.branch || "main");
-    const expected = (sh.openingCash || 0) + summaryCash(sum);
+    const expected = shiftExpectedCash(sh.openingCash, sum); // v46: معادلة واحدة مشتركة
     const closedRow = {
       ...sh,
       closedAt: new Date().toISOString(),
@@ -277,6 +404,8 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       debtTotal: sum.debtTotal, compTotal: sum.compTotal, totalSales: sum.totalSales,
       ordersCount: sum.ordersCount, expensesTotal: sum.expensesTotal,
       secExpensesTotal: sum.secExpensesTotal,
+      debtSettledCash: sum.debtSettledCash || 0,   // v46: كان يدخل المعادلة ولا يُحفَظ
+      businessDay: shiftBusinessDay(sh),           // v46: يوم الفتح — سجل ثابت
       status: "closed",
       notes: [(sh.notes || "").trim(), "⚠ إغلاق إداري بلا جرد صندوق"].filter(Boolean).join(" — "),
     };
@@ -310,14 +439,22 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       return;
     }
     const oc = Math.max(0, +openingCash || 0);
+    const openedAt = new Date().toISOString();
     const newShift = {
-      id: "shift_" + Date.now(),
+      // v46: معرّف يحمل لاحقة عشوائية — "shift_"+Date.now() وحده يمكن أن
+      // يتطابق بين جهازين يفتحان في نفس الميلي ثانية، فيدمج الصفّان في القاعدة.
+      id: "shift_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
       userId: user.id, userName: user.name, branch,
       shiftType, // v31.2: مسائي/ليلي/صباحي
-      openedAt: new Date().toISOString(),
+      openedAt,
+      // v46: اليوم المحاسبي يُختم لحظة الفتح ويبقى ثابتاً مدى حياة الوردية
+      businessDay: businessDayKey(openedAt),
       closedAt: null, openingCash: oc,
-      status: "open", notes: "",
-      createdAt: new Date().toISOString(),
+      status: "open",
+      // v47: أثر التسليم — إن خالف الافتتاحي معدود الوردية السابقة يُسجَّل
+      // الفرق باسم المُسلِّم والمُستلِم لحظة وقوعه، فينتهي الجدل اللاحق.
+      notes: handoverNote(lastClosedShift, oc, user.name),
+      createdAt: openedAt,
     };
     store.setShifts(p => [newShift, ...p]);
     setOpeningCash(""); setConfirmType(false);
@@ -325,10 +462,22 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     showToast(`🔓 فُتحت وردية ${tLabel} — ${branch === "outdoor" ? "الحديقة" : "الكافيه"}`);
   };
 
-  const closeShift = () => {
-    if (!openShift || !summary) return;
+  // ══════════════════════════════════════════════════════════════
+  // v46 — الإقفال بتأكيد فعلي من السحابة
+  // ──────────────────────────────────────────────────────────────
+  // كانت الدالة متزامنة: تُحدّث الحالة المحلية وتُظهر «✅ أُقفلت الوردية»
+  // فوراً، ثم تُطلق كتابة السحابة وتنساها. أي تجاوز للمهلة (10 ثوانٍ)
+  // كان يُفقد الإقفال، ويُعيد أول pullAll الوردية مفتوحة — بينما الكاشير
+  // انصرف واثقاً من الرسالة. الآن ننتظر الطابور ونقول الحقيقة:
+  //   • وصلت السحابة  ⇒ رسالة نجاح مع نتيجة جرد الصندوق.
+  //   • لم تصل بعد    ⇒ رسالة صريحة بأن الإقفال محفوظ ومعلّق للمزامنة،
+  //     ولا يُعتبر منتهياً حتى تصل. لا رسالة نجاح كاذبة بعد اليوم.
+  // ══════════════════════════════════════════════════════════════
+  const closeShift = async () => {
+    if (!openShift || !summary || closing) return;
+    setClosing(true);
     const counted = Math.max(0, +countedCash || 0);
-    const expectedCash = (openShift.openingCash || 0) + summary.cashSales + (summary.tronSales || 0) + (summary.debtSettledCash || 0) - summary.expensesTotal; // v40: + الترون (نقده في الصندوق) — v31.6: + نقد سداد الديون
+    const expectedCash = shiftExpectedCash(openShift.openingCash, summary); // v46: معادلة مشتركة
     const difference = counted - expectedCash;
 
     const closed = {
@@ -350,10 +499,24 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       ordersCount: summary.ordersCount,
       expensesTotal: summary.expensesTotal,
       secExpensesTotal: summary.secExpensesTotal, // v40: بند منفصل في التقرير
+      // v46: نقد سداد الديون — كان يدخل معادلة المتوقّع ولا يُحفَظ في أي
+      // عمود، فيستحيل على أي تقرير لاحق إعادة إنتاج الرقم المعروض للكاشير.
+      debtSettledCash: summary.debtSettledCash || 0,
+      // v46: اليوم المحاسبي = يوم **الفتح**. يُخزَّن مرة واحدة كسجل ثابت،
+      // فلا يتغيّر الجرد التاريخي مهما تغيّرت قواعد الحساب مستقبلاً.
+      businessDay: shiftBusinessDay(openShift),
       status: "closed",
-      notes,
+      // v47: تفصيل عدّ الفئات يُحفَظ مع الوردية — أثر يُراجَع عند وجود فرق
+      notes: [notes.trim(), denominationNote(countBreakdown)].filter(Boolean).join(" — "),
     };
     store.setShifts(p => p.map(s => s.id === openShift.id ? closed : s));
+
+    // ── انتظار تأكيد السحابة قبل أي رسالة نجاح ──────────────────
+    let synced = true, offline = false;
+    try {
+      const res = await store.commitShift(openShift.id);
+      synced = res.synced; offline = res.offline;
+    } catch { synced = false; }
 
     // v27: إرسال صامت لتليجرام — التقرير محفوظ في shifts بالفعل (شبكة أمان)
     try {
@@ -361,66 +524,81 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       const targets = settings?.telegramTargets || [];
       notifyTelegram(targets, "shift", buildShiftReport(closed, cafeName, CUR));
 
-      // v31.2: ملخص اليوم يُرسل عند إغلاق الوردية المسائية فقط (لا بالساعة)
-      const isEveningClose = openShift.shiftType === "evening"; // v31.6: صريح فقط
-      if (isEveningClose) {
-        // ══════════════════════════════════════════════════════════════
-        // v41 — الجرد اليومي يُبنى من الورديات المقفلة لهذا اليوم المحاسبي
-        // ──────────────────────────────────────────────────────────────
-        // كان يُبنى من نافذة زمنية (كل ما دُفع منذ بداية اليوم). المشكلة:
-        // الوردية الليلية تُفتح ~22:30 UTC وتُقفل 06:00 UTC من اليوم التالي،
-        // فطلباتها المدفوعة قبل 00:00 UTC كانت تسقط من الجرد كلياً — نقص
-        // صامت في الإيراد اليومي المُرسَل على تلغرام كل ليلة.
-        //
-        // الآن: يوم UTC = مجموع الورديات التي أُقفلت فيه:
-        //   ليلية (أُقفلت 06:00 UTC) + صباحية (14:00) + مسائية (~22:30 الآن).
-        // وإقفال المسائية هو آخر إقفال في اليوم، فهو التوقيت الصحيح للإرسال.
-        // ══════════════════════════════════════════════════════════════
-        // store.shifts لم يُحدَّث بعد في هذه الإغلاقة — نُمرّر الوردية المُقفلة يدوياً
-        const dayKey = businessDayKey(closed.closedAt);
+      // ══════════════════════════════════════════════════════════════
+      // v46 — الجرد اليومي يُرسَل عند إقفال **آخر** وردية في اليوم
+      // ──────────────────────────────────────────────────────────────
+      // الشرط السابق كان: openShift.shiftType === "evening". وهو معطوب من
+      // جذره لأن عمود shift_type لم يكن موجوداً في قاعدة البيانات إطلاقاً،
+      // فتحذفه دالة upsertStrip بصمت وتعود الوردية من السحابة بنوع فارغ ⇒
+      // الشرط false دائماً ⇒ الجرد اليومي لا يُرسَل من المسار الأساسي أبداً.
+      //
+      // البديل وصفي لا اسمي: نرسل حين لا تبقى وردية مفتوحة تنتمي لهذا اليوم
+      // المحاسبي. مع تسلسلك (صباحية ← مسائية ← ليلية) يقع ذلك عند إقفال
+      // الليلية، وهي فعلاً آخر ورديات اليوم — ويبقى صحيحاً لو نسي الكاشير
+      // اختيار النوع أو اختلف عدد الورديات يوماً ما.
+      // ══════════════════════════════════════════════════════════════
+      const dayKey = shouldSendOnClose(store, settings, closed);
+      if (dayKey) {
         const daily = buildDailyPacket(store, dayKey, [closed]);
         notifyTelegram(targets, "daily", buildDailySummary(daily, cafeName, CUR));
-        // v42: نختم اليوم كمُرسَل — شبكة الأمان لن تُعيد إرساله
-        try { store.setSettings(p => ({ ...p, lastDailySent: dayKey })); } catch {}
 
-        // v31.2: التقرير الأسبوعي — بعد اليومي، يوم الخميس فقط، مرة واحدة لكل أسبوع
+        // v46: كل أختام الإرسال في تحديث واحد بصيغة الدالة.
+        // كان اليومي يُختم بـ setSettings(p => ...) ثم يُختم الأسبوعي بـ
+        // setSettings({ ...settings, ... }) باستخدام settings **القديم**،
+        // فيمحو الثاني ختمَ الأول ⇒ شبكة الأمان تُعيد إرسال جرد اليوم مكرراً
+        // كل خميس. الآن ختم واحد يحمل الاثنين.
+        const stamps = { lastDailySent: dayKey };
+
+        // v31.2: التقرير الأسبوعي — بعد اليومي، يوم الخميس فقط، مرة لكل أسبوع
         if (new Date().getDay() === 4) { // 4 = الخميس
           const wkStart = weekStartThursday();
           const wkKey = wkStart.toISOString().slice(0, 10);
-          const lastWk = settings?.lastWeeklySent || "";
-          if (lastWk !== wkKey) {
+          if ((settings?.lastWeeklySent || "") !== wkKey) {
             const inWeek = (iso) => iso && new Date(iso) >= wkStart;
             const paidWk = (store.orders || []).filter(o => o.status === "paid" && inWeek(o.paidAt || o.createdAt));
             const expWk = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
-            const secExpWk = (store.expenses || []).filter(e => e.isSecondary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0); // v40: منفصل
-            const costWk = paidWk.reduce((s, o) => s + orderCogs(o, store.menu), 0); // v39: التكلفة الكاملة
-            const revWk = sum(paidWk, orderSale); // v39: مبيعات كاملة
+            const secExpWk = (store.expenses || []).filter(e => e.isSecondary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0);
+            const costWk = paidWk.reduce((s, o) => s + orderCogs(o, store.menu), 0);
+            const revWk = paidWk.reduce((s, o) => s + orderSale(o), 0);
             const weekly = {
               revenue: revWk, expenses: expWk,
-              secExpenses: secExpWk, // v40: بند منفصل — لا يُطرح من الربح
+              secExpenses: secExpWk, // بند منفصل — لا يُطرح من الربح
               profit: revWk - costWk - expWk,
               orders: paidWk.length,
-              cash: sum(paidWk.filter(o => o.paymentType === "cash"), orderCash),
-              card: sum(paidWk.filter(o => o.paymentType === "card"), orderCash),
-              tron: sum(paidWk, orderTron), // v36: بند الترون المنفصل
-              debts: sum((store.orders || []).filter(o => o.status === "debt" && inWeek(o.createdAt))),
-              comp: (store.orders || []).filter(o => inWeek(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0), // v31.6
+              cash: paidWk.filter(o => o.paymentType === "cash").reduce((s, o) => s + orderCash(o), 0),
+              card: paidWk.filter(o => o.paymentType === "card").reduce((s, o) => s + orderCash(o), 0),
+              tron: paidWk.reduce((s, o) => s + orderTron(o), 0),
+              debts: (store.orders || []).filter(o => o.status === "debt" && inWeek(o.createdAt)).reduce((s, o) => s + (o.total || 0), 0),
+              comp: (store.orders || []).filter(o => inWeek(o.paidAt || o.createdAt)).reduce((a, o) => a + (o.compAmount || 0), 0),
               fromLabel: wkStart.toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
               toLabel: new Date().toLocaleDateString("ar-SY", { day: "numeric", month: "long" }),
             };
             notifyTelegram(targets, "weekly", buildWeeklySummary(weekly, cafeName, CUR));
-            try { store.setSettings({ ...settings, lastWeeklySent: wkKey }); } catch {}
+            stamps.lastWeeklySent = wkKey;
           }
         }
+        try { store.setSettings(p => ({ ...p, ...stamps })); } catch {}
       }
     } catch (e) { console.warn("telegram shift:", e); }
 
     setCountedCash("");
+    setCountBreakdown(null);
     setNotes("");
     setConfirmClose(false);
+    setClosing(false);
 
+    // ── الرسالة تصف الواقع، لا النيّة ───────────────────────────
+    if (!synced) {
+      showToast(
+        offline
+          ? "📴 لا اتصال — الإقفال محفوظ وسيُرسَل تلقائياً عند عودة الإنترنت. لا تُغلق التطبيق."
+          : "⏳ الإقفال محفوظ لكنه لم يصل السحابة بعد — سيُعاد إرساله تلقائياً. تحقّق من الاتصال.",
+        "warn"
+      );
+      return;
+    }
     if (Math.abs(difference) < 1) {
-      showToast("✅ أُقفلت الوردية — الصندوق مطابق تماماً");
+      showToast("✅ أُقفلت الوردية وتأكّدت في السحابة — الصندوق مطابق تماماً");
     } else if (difference > 0) {
       showToast(`⚠ أُقفلت الوردية — زيادة ${difference.toLocaleString()} ${CUR}`, "warn");
     } else {
@@ -428,9 +606,8 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     }
   };
 
-  const expectedCash = openShift && summary
-    ? (openShift.openingCash || 0) + summary.cashSales + (summary.tronSales || 0) + (summary.debtSettledCash || 0) - summary.expensesTotal // v40: + الترون (نقده في الصندوق)
-    : 0;
+  // v46: نفس الدالة المستعملة عند الإقفال — يستحيل أن يختلف المعروض عن المحفوظ
+  const expectedCash = openShift && summary ? shiftExpectedCash(openShift.openingCash, summary) : 0;
   const liveDiff = (+countedCash || 0) - expectedCash;
 
   // ══════════════════════════════════════════════════════════════
@@ -466,9 +643,40 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     [store.shifts, branch]
   );
 
+  // ══════════════════════════════════════════════════════════════
+  // v46 — كاشف «الهجرة لم تُنفَّذ»
+  // ──────────────────────────────────────────────────────────────
+  // دالة upsertStrip تحذف أي عمود ناقص بصمت وتُتمّ الكتابة بنجاح ظاهري.
+  // النتيجة أن غياب عمود shift_type ظلّ مخفياً إصدارات كاملة بينما كان
+  // يُعطّل الجرد اليومي بالكامل. هذا الفحص يجعل الغياب مرئياً فوراً:
+  // إن وُجدت ورديات مُقفلة وكلها بلا نوع رغم أن الكاشير يختاره إجبارياً
+  // عند الفتح، فالعمود غير موجود في القاعدة.
+  // ══════════════════════════════════════════════════════════════
+  const migrationMissing = useMemo(() => {
+    const closedList = (store.shifts || []).filter(s => s.status === "closed");
+    if (closedList.length < 2) return false;
+    return closedList.every(s => !s.shiftType) || closedList.every(s => !s.businessDay);
+  }, [store.shifts]);
+
   return (
     <div className="fade-in">
       <h2 style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>🔐 تقفيل الوردية</h2>
+
+      {migrationMissing && (
+        <div style={{ background: "rgba(198,40,40,.1)", border: "1.5px solid rgba(198,40,40,.4)", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: "#c62828", marginBottom: 6 }}>
+            ⛔ قاعدة البيانات ناقصة أعمدة — الجرد اليومي معطّل
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--sub)", lineHeight: 1.9 }}>
+            نوع الوردية واليوم المحاسبي لا يُحفظان (العمودان غير موجودين)، فلا يُرسَل
+            الجرد اليومي ولا يُبنى تسلسل الورديات. نفّذ مرة واحدة في Supabase ▸ SQL Editor:
+            <br />
+            <code style={{ fontSize: 11, fontWeight: 800, color: "#c62828" }}>
+              db/migrations/2026-08-16_v46_shift_integrity.sql
+            </code>
+          </div>
+        </div>
+      )}
 
       {/* اختيار الفرع */}
       <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
@@ -563,6 +771,10 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
                   color: shiftType === v ? "#fff" : "var(--sub)" }}>{l}</button>
             ))}
           </div>
+          {/* v47: تسليم الوردية — الافتتاحي يأتي من معدود الوردية السابقة */}
+          <HandoverPanel lastShift={lastClosedShift} value={openingCash}
+            onChange={setOpeningCash} CUR={CUR} />
+
           <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
             النقد الافتتاحي في الصندوق ({CUR})
           </label>
@@ -635,12 +847,18 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
           {/* تقفيل الوردية */}
           <div className="card" style={{ marginBottom: 24, borderTop: "4px solid #e65100" }}>
             <h3 style={{ fontWeight: 900, fontSize: 15, marginBottom: 14 }}>🔐 تقفيل الوردية وجرد الصندوق</h3>
-            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 6, display: "block" }}>
-              النقد المعدود فعلياً في الصندوق ({CUR})
+            <label style={{ fontSize: 12, fontWeight: 700, color: "var(--sub)", marginBottom: 8, display: "block" }}>
+              عُدّ الصندوق بالفئات ({CUR}) — الآلة تجمع بدلاً عنك
             </label>
-            <input className="input" type="number" min="0" value={countedCash}
-              onChange={e => setCountedCash(e.target.value)} placeholder="0"
-              style={{ fontSize: 20, fontWeight: 900, textAlign: "center", marginBottom: 12 }} />
+            {/* v47: العدّ بالفئات بدل رقم واحد. إدخال رقم مجموع ذهنياً يحوّل
+                أي خطأ جمع إلى «عجز» يُلام عليه شخص؛ عدّ الأوراق يترك أثراً
+                يُراجَع فئةً فئةً عند وجود فرق. */}
+            <DenominationCounter
+              value={countedCash}
+              denominations={settings?.cashDenominations}
+              CUR={CUR}
+              onChange={(total, counts) => { setCountedCash(String(total)); setCountBreakdown(counts); }} />
+            <div style={{ height: 12 }} />
 
             {countedCash !== "" && (
               <div style={{
@@ -691,9 +909,9 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
               </>
             ) : (
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={closeShift}
-                  style={{ flex: 2, background: "#c62828", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
-                  ✓ تأكيد التقفيل النهائي
+                <button onClick={closeShift} disabled={closing}
+                  style={{ flex: 2, background: closing ? "#9e9e9e" : "#c62828", color: "#fff", border: "none", borderRadius: 12, padding: 14, fontWeight: 800, fontSize: 14, cursor: closing ? "wait" : "pointer" }}>
+                  {closing ? "⏳ جارٍ التأكيد من السحابة…" : "✓ تأكيد التقفيل النهائي"}
                 </button>
                 <button onClick={() => setConfirmClose(false)}
                   style={{ flex: 1, background: "var(--card2)", color: "var(--text)", border: "1.5px solid var(--border)", borderRadius: 12, padding: 14, fontWeight: 700, cursor: "pointer" }}>

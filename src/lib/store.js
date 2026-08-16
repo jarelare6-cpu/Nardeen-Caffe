@@ -24,6 +24,7 @@ import {
 } from "./supabase";
 import {
   rowOfCash, rowOfExpense, rowOfExpenseLegacy, rowOfOrder, mapOrder, mapExpense,
+  rowOfShift, rowOfShiftLegacy, rowOfReceipt,
 } from "./rows.js";
 import {
   rowOfSupply, mapSupply, rowOfMovement, mapMovement, newMoveId, migrateExtraStock,
@@ -349,36 +350,8 @@ const sbWrite = {
   }),
   deleteCustomer: (id) => sbDelete("customers", id),
 
-  // v7: تقفيل الوردية
-  shift: (s) => { const row = {
-    id: s.id, user_id: s.userId || null, user_name: s.userName || "",
-    branch: s.branch || "main",
-    opened_at: s.openedAt || new Date().toISOString(),
-    closed_at: s.closedAt || null,
-    opening_cash: s.openingCash || 0,
-    expected_cash: s.expectedCash || 0,
-    counted_cash: s.countedCash || 0,
-    difference: s.difference || 0,
-    total_sales: s.totalSales || 0,
-    cash_sales: s.cashSales || 0,
-    card_sales: s.cardSales || 0,
-    tron_sales: s.tronSales || 0,
-    debt_total: s.debtTotal || 0,
-    comp_total: s.compTotal || 0,
-    orders_count: s.ordersCount || 0,
-    expenses_total: s.expensesTotal || 0,
-    status: s.status || "open",
-    // v44: مَن أقفل الوردية فعلاً — قد يختلف عن مَن فتحها
-    closed_by_id: s.closedById || null,
-    closed_by_name: s.closedByName || "",
-    notes: s.notes || "",
-    shift_type: s.shiftType || "", // v31.6: حفظ نوع الوردية
-    created_at: s.createdAt || new Date().toISOString(),
-    };
-    // v44: fallback لقاعدة لم تُرقَّ بعد (بلا أعمدة closed_by_*)
-    const { closed_by_id, closed_by_name, ...legacy } = row;
-    return sbUpsert("shifts", row, "id", legacy);
-  },
+  // v7: تقفيل الوردية — v46: الصف مفصول في دالة نقية ليُستعمل مع الطابور الدائم
+  shift: (s) => sbUpsert("shifts", rowOfShift(s), "id", rowOfShiftLegacy(s)),
 
   // v7: محفظة الولاء
   loyaltyLog: (l) => sbUpsert("loyalty_log", {
@@ -498,6 +471,10 @@ const mapShift = s => ({
   compTotal:     s.comp_total    ?? s.compTotal    ?? 0,
   ordersCount:   s.orders_count  ?? s.ordersCount  ?? 0,
   expensesTotal: s.expenses_total ?? s.expensesTotal ?? 0,
+  // v46: بنود كانت تُكتب ولا تُقرأ (ولا حتى تُخزَّن قبل هجرة v46)
+  secExpensesTotal: s.sec_expenses_total ?? s.secExpensesTotal ?? 0,
+  debtSettledCash:  s.debt_settled_cash  ?? s.debtSettledCash  ?? 0,
+  businessDay:      s.business_day       ?? s.businessDay      ?? null,
   status:        s.status        ?? "open",
   closedById:    s.closed_by_id   ?? s.closedById   ?? null, // v44
   closedByName:  s.closed_by_name ?? s.closedByName ?? "",   // v44
@@ -628,14 +605,16 @@ export const useStore = () => {
     });
   }, []);
 
-  // ✅ cash_log يُرفع لـ Supabase
+  // v46: سجل النقد عبر الطابور — بند مالي، لا يجوز أن يضيع بانقطاع لحظي
   const setCashLog = useCallback((v) => {
     setCashLogRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
       broadcast("nc_cash", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(e => e.id));
-        next.filter(e => !prevIds.has(e.id)).forEach(e => sbWrite.cashLog(e));
+        const added = next.filter(e => !prevIds.has(e.id));
+        added.forEach(e => enqueueWrite("cash_log", rowOfCash(e), "id"));
+        if (added.length) flushOutbox();
       }
       return next;
     });
@@ -689,14 +668,17 @@ export const useStore = () => {
     });
   }, []);
 
-  // ✅ receipts تُرفع لـ Supabase
+  // v46: الفواتير عبر الطابور الدائم — كانت تُكتب مباشرةً بلا إعادة محاولة،
+  // فأي فشل لحظي يُفقد الفاتورة نهائياً بينما تظهر على الشاشة لحظة إنشائها.
   const setReceipts = useCallback((v) => {
     setReceiptsRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
       broadcast("nc_receipts", next);
       if (SUPABASE_READY) {
         const prevIds = new Set(p.map(r => r.id));
-        next.filter(r => !prevIds.has(r.id)).forEach(r => sbWrite.receipt(r));
+        const added = next.filter(r => !prevIds.has(r.id));
+        added.forEach(r => enqueueWrite("receipts", rowOfReceipt(r), "id"));
+        if (added.length) flushOutbox();
       }
       return next;
     });
@@ -751,16 +733,32 @@ export const useStore = () => {
     });
   }, []);
 
-  // v7: الورديات — تُرفع لـ Supabase
+  // ══════════════════════════════════════════════════════════════
+  // v46 — الورديات عبر الطابور الدائم (كان أخطر مسار «أطلق وانسَ»)
+  // ──────────────────────────────────────────────────────────────
+  // سابقاً: sbWrite.shift → sbUpsert مباشرة، بمهلة 10 ثوانٍ وبلا إعادة
+  // محاولة. أي تجاوز للمهلة (شائع جداً على اتصال متقطّع) كان يعني:
+  //   ١. الحالة المحلية = «مقفلة» وتظهر رسالة النجاح فوراً.
+  //   ٢. الكتابة تُفقَد بصمت — لا طابور ولا محاولة ثانية.
+  //   ٣. أول pullAll (يعمل عند كل عودة للتطبيق) يُعيد الصف من السحابة
+  //      بحالة open ⇒ **الوردية تعود مفتوحة بعد إقفال ناجح ظاهرياً**.
+  // الآن: كل كتابة تدخل الطابور (8 محاولات + بقاء عبر إعادة التشغيل)،
+  // والحالة المحلية محميّة من الكتابة فوقها ما دامت معلّقة.
+  // ══════════════════════════════════════════════════════════════
   const setShifts = useCallback((v) => {
     setShiftsRaw(p => {
       const next = typeof v === "function" ? v(p) : v;
       broadcast("nc_shifts", next);
       if (SUPABASE_READY) {
+        let changed = 0;
         next.forEach(s => {
           const old = p.find(x => x.id === s.id);
-          if (!old || JSON.stringify(old) !== JSON.stringify(s)) sbWrite.shift(s);
+          if (!old || JSON.stringify(old) !== JSON.stringify(s)) {
+            enqueueWrite("shifts", rowOfShift(s), "id", rowOfShiftLegacy(s));
+            changed++;
+          }
         });
+        if (changed) flushOutbox();
       }
       return next;
     });
@@ -952,6 +950,20 @@ export const useStore = () => {
     return { ok: true, atomic: false };
   }, [logStockMove]);
 
+  // ══════════════════════════════════════════════════════════════
+  // v46 — تثبيت الوردية مع تأكيد فعلي من السحابة
+  // ──────────────────────────────────────────────────────────────
+  // تُستدعى بعد setShifts عند الإقفال. تدفع الطابور وتنتظر، ثم تُخبر
+  // الواجهة بالحقيقة: هل وصل الإقفال إلى القاعدة أم بقي معلّقاً؟
+  // بدونها كانت رسالة «✅ أُقفلت الوردية» تصف الحالة المحلية فقط.
+  // ══════════════════════════════════════════════════════════════
+  const commitShift = useCallback(async (shiftId) => {
+    if (!SUPABASE_READY) return { synced: false, offline: true };
+    try { await flushOutbox(); } catch {}
+    const stillPending = outboxPendingIds("shifts").has(shiftId);
+    return { synced: !stillPending, offline: typeof navigator !== "undefined" && navigator.onLine === false };
+  }, []);
+
   const addTable = useCallback(() => {
     setTablesRaw(p => {
       const maxNum = p.length > 0 ? Math.max(...p.map(t => t.number)) : 0;
@@ -1124,20 +1136,20 @@ export const useStore = () => {
       });
 
     return Promise.allSettled([
-      withTimeout(supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(500), "orders"),
+      withTimeout(supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(1200), "orders"),
       withTimeout(supabase.from("menu_items").select("*").order("category"), "menu_items"),
       withTimeout(supabase.from("profiles").select("*"), "profiles"),
       withTimeout(supabase.from("debts").select("*").order("date", { ascending: false }), "debts"),
       withTimeout(supabase.from("expenses").select("*").order("date", { ascending: false }), "expenses"),
-      withTimeout(supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(200), "cash_log"),
+      withTimeout(supabase.from("cash_log").select("*").order("at", { ascending: false }).limit(600), "cash_log"),
       withTimeout(supabase.from("tables").select("*").eq("branch","main").order("number"), "tables_main"),
       withTimeout(supabase.from("tables").select("*").eq("branch","outdoor").order("number"), "tables_outdoor"),
-      withTimeout(supabase.from("receipts").select("*").order("created_at", { ascending: false }).limit(200), "receipts"),
+      withTimeout(supabase.from("receipts").select("*").order("created_at", { ascending: false }).limit(600), "receipts"),
       withTimeout(supabase.from("comp_log").select("*").order("created_at", { ascending: false }).limit(200), "comp_log"),
       withTimeout(supabase.from("customers").select("*").order("created_at", { ascending: false }), "customers"),
       withTimeout(supabase.from("app_settings").select("*").eq("id", "main").single(), "app_settings"),
       withTimeout(supabase.from("perm_overrides").select("*").eq("id", "main").single(), "perm_overrides"),
-      withTimeout(supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(200), "shifts"),
+      withTimeout(supabase.from("shifts").select("*").order("opened_at", { ascending: false }).limit(400), "shifts"),
       withTimeout(supabase.from("loyalty_log").select("*").order("created_at", { ascending: false }).limit(300), "loyalty_log"),
       withTimeout(supabase.from("supplies").select("*").order("name"), "supplies"),                                        // v42
       withTimeout(supabase.from("stock_movements").select("*").order("at", { ascending: false }).limit(400), "stock_movements"), // v42
@@ -1183,8 +1195,24 @@ export const useStore = () => {
           return [...keepLocal, ...d];
         });
       }
-      if (cash.data) { const d = cash.data.map(mapCash);    setCashLogRaw(d);  }
-      if (rct.data)  { const d = rct.data.map(mapReceipt);  setReceiptsRaw(d); }
+      // ══════════════════════════════════════════════════════════════
+      // v46 — حماية الصفوف المعلّقة من المحو
+      // كانت الفواتير وسجل النقد يُستبدلان بالكامل بما جاء من السحابة.
+      // فاتورة أُنشئت قبل ثوانٍ ولم تُرفع بعد كانت تُمحى من الشاشة ثم تعود
+      // عند وصول حدث Realtime لاحقاً — وهذا بالضبط «الفاتورة تختفي ثم تظهر».
+      // نستعمل هنا نفس درع الطلبات: أي صف معلّق في الطابور يبقى محلياً.
+      // ══════════════════════════════════════════════════════════════
+      const keepPending = (cloudRows, prev, table) => {
+        const pend = outboxPendingIds(table);
+        if (!pend.size) return cloudRows;
+        const cloudIds = new Set(cloudRows.map(x => x.id));
+        const local = prev.filter(x => pend.has(x.id) && !cloudIds.has(x.id));
+        const merged = cloudRows.map(row => (pend.has(row.id) ? (prev.find(x => x.id === row.id) || row) : row));
+        return [...local, ...merged];
+      };
+
+      if (cash.data) { const d = cash.data.map(mapCash);   setCashLogRaw(prev => keepPending(d, prev, "cash_log")); }
+      if (rct.data)  { const d = rct.data.map(mapReceipt); setReceiptsRaw(prev => keepPending(d, prev, "receipts")); }
       if (tbl.data?.length)  { const d = tbl.data.map(mapTable);    setTablesRaw(d);   }
       if (outdoorTbl.data?.length) {
         const d = outdoorTbl.data.map(mapTable);
@@ -1203,7 +1231,9 @@ export const useStore = () => {
         }
       }
       if (perms.data?.data)  { setPermOverridesRaw(perms.data.data); }
-      if (shf?.data?.length) { const d = shf.data.map(mapShift);   setShiftsRaw(d);   }
+      // v46: الوردية المُقفَلة محليّاً والمعلّقة في الطابور لا تُستبدَل بنسخة
+      // «مفتوحة» من السحابة — هذا كان يُعيد فتح وردية أُقفلت للتوّ.
+      if (shf?.data?.length) { const d = shf.data.map(mapShift); setShiftsRaw(prev => keepPending(d, prev, "shifts")); }
       if (loy?.data?.length) { const d = loy.data.map(mapLoyalty); setLoyaltyLogRaw(d);}
 
       // ══ v42: المواد الإضافية + سجل الحركات ══
@@ -1414,9 +1444,20 @@ export const useStore = () => {
   // v7: subscriptions للورديات
   useEffect(() => {
     if (!SUPABASE_READY) return;
+    // v46: تجاهل صدى Realtime لوردية ما زالت معلّقة في طابورنا.
+    // بدونه: نُقفل وردية ⇒ يصل حدث UPDATE قديم من الخادم (أو من جهاز آخر
+    // لم يستلم إقفالنا بعد) ⇒ تعود «مفتوحة» على شاشتنا رغم نجاح الإقفال.
+    const applyShift = (r, mode) => setShiftsRaw(p => {
+      const s = mapShift(r);
+      if (outboxPendingIds("shifts").has(s.id)) return p; // تعديلنا المحلي لم يُرفَع بعد
+      const local = p.find(x => x.id === s.id);
+      if (local && JSON.stringify(local) === JSON.stringify(s)) return p; // صدى بلا تغيير
+      const n = mode === "ins" ? [s, ...p.filter(x => x.id !== s.id)] : p.map(x => x.id === s.id ? s : x);
+      broadcast("nc_shifts", n); return n;
+    });
     return subscribeShifts(
-      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = [s, ...p.filter(x => x.id !== s.id)]; broadcast("nc_shifts", n); return n; }),
-      (r) => setShiftsRaw(p => { const s = mapShift(r); const n = p.map(x => x.id === s.id ? s : x);   broadcast("nc_shifts", n); return n; }),
+      (r) => applyShift(r, "ins"),
+      (r) => applyShift(r, "upd"),
       (r) => setShiftsRaw(p => { const n = p.filter(x => x.id !== r.id);                                broadcast("nc_shifts", n); return n; }),
     );
   }, []);
@@ -1451,6 +1492,8 @@ export const useStore = () => {
     adjustStock, adjustSupply,                   // v42: تعديل ذرّي بفارق نسبي
     applyOrderStock,                             // v43: خصم/إرجاع مخزون الطلب ذرّياً ومُسجَّلاً
     payOrder,
+    commitShift,                                 // v46: تأكيد وصول الإقفال للسحابة
+    pullAll,                                     // v46: سحب يدوي (زر «تحديث» في شاشة الإقفال)
     syncing, cloudReady,
   };
 };

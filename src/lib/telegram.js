@@ -159,6 +159,8 @@ export const buildDailySummary = (data, cafeName, cur) => {
   return [
     `📊 <b>ملخص اليوم — ${cafeName}</b>`,
     `🗓 يوم العمل: ${data.dayLabel || new Date().toLocaleDateString("ar-SY")}`,
+    // v46: تسلسل الورديات — يكشف فوراً أي يوم ناقص وردية
+    data.sequence ? `🔄 الورديات: ${data.sequence}` : null,
     `━━━━━━━━━━━━━━`,
     `📈 إجمالي المبيعات: <b>${fmt(data.revenue)} ${cur}</b>`,
     `💵 نقدي: ${fmt(data.cash)} ${cur}`,
@@ -170,6 +172,15 @@ export const buildDailySummary = (data, cafeName, cur) => {
     data.comp ? `🎁 ضيافة: ${fmt(data.comp)} ${cur}` : null,
     `💰 <b>صافي الربح: ${fmt(data.profit)} ${cur}</b>`,
     `🧾 عدد الطلبات: ${data.orders}`,
+    // v46: مطابقة الصندوق على مستوى اليوم — كانت غائبة عن الجرد تماماً
+    `━━━━━━━━━━━━━━`,
+    `🧮 المتوقّع: ${fmt(data.expectedCash)} ${cur} | المعدود: ${fmt(data.countedCash)} ${cur}`,
+    Math.abs(+data.variance || 0) < 1
+      ? `✅ الصندوق مطابق`
+      : (+data.variance > 0
+          ? `⚠️ <b>زيادة صندوق: ${fmt(data.variance)} ${cur}</b>`
+          : `⛔ <b>عجز صندوق: ${fmt(Math.abs(+data.variance))} ${cur}</b>`),
+    data.debtSettled ? `📥 نقد سداد ديون: ${fmt(data.debtSettled)} ${cur}` : null,
   ].filter(Boolean).join("\n");
 };
 

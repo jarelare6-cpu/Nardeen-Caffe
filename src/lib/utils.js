@@ -53,20 +53,52 @@ export const weekStartThursday = (ref = new Date()) => {
 };
 
 // ══════════════════════════════════════════════════════════════
-// v41: الجرد اليومي — تجميع الورديات المقفلة حسب يوم إقفالها (UTC)
+// v46: الجرد اليومي — تجميع الورديات حسب يوم **فتحها** (UTC)
 // ──────────────────────────────────────────────────────────────
-// القاعدة المتفق عليها:
-//  • الوردية تُنسب لليوم المحاسبي الذي أُقفلت فيه (closedAt) لا الذي فُتحت فيه.
-//  • الوردية المفتوحة لا تدخل الجرد إطلاقاً — تدخل جرد اليوم الذي ستُقفل فيه.
-//    (مثال: الليلية تُفتح 22:00 وتُقفل فجر الغد ⇒ تدخل جرد الغد.)
-//  • الأرقام تُقرأ من لقطة الوردية المحفوظة عند الإقفال (سجل ثابت لا يُعاد حسابه).
+// تغيير جوهري عن v41 التي كانت تنسب الوردية ليوم إقفالها.
+//
+// سبب التغيير — دورة العمل الفعلية في الكافيه (24 ساعة، تسلسل دائم):
+//     صباحية (تُفتح ~03:00 UTC) ← مسائية (~11:00 UTC) ← ليلية (~19:00 UTC)
+// والليلية تُقفَل عند فتح الصباحية أي ~03:00 UTC من اليوم التالي.
+//
+// بالنسبة لوقت الإقفال كان «اليوم» يساوي:
+//     ليلةَ أمس + صباحَ اليوم + مساءَ اليوم   ← ليس يوم عمل حقيقياً.
+// وبالنسبة لوقت الفتح يساوي:
+//     صباحَ اليوم + مساءَ اليوم + ليلةَ اليوم  ← مطابق للواقع تماماً.
+//
+// ميزة إضافية: الورديات الثلاث تُفتح جميعاً بعيداً عن حدّ اليوم (0 UTC =
+// 3:00 فجراً بدمشق)، إذ لا وردية تُفتح بين 3 و6 فجراً محلياً. فالحدّ يقع
+// في «منطقة ميتة» ولم يعد تأخّر دقائق في الإقفال يقلب انتماء الوردية.
+//
+//  • businessDay المخزَّن عند الإقفال هو المرجع الأول (سجل ثابت لا يتغيّر
+//    مهما تغيّرت قواعد الحساب مستقبلاً)، ويُشتقّ من openedAt عند غيابه.
+//  • الوردية المفتوحة لها يوم أيضاً — لكنها لا تدخل الجرد حتى تُقفَل.
+//  • الأرقام تُقرأ من لقطة الوردية المحفوظة عند الإقفال، لا تُعاد حسابها.
 // ══════════════════════════════════════════════════════════════
-export const shiftDayKey = (s) => (s && s.status === "closed" && s.closedAt) ? businessDayKey(s.closedAt) : null;
+
+// اليوم المحاسبي الذي تنتمي إليه الوردية (مفتوحة كانت أو مقفلة)
+export const shiftBusinessDay = (s) => {
+  if (!s) return null;
+  if (s.businessDay) return s.businessDay;          // سجل ثابت مخزَّن
+  if (s.openedAt) return businessDayKey(s.openedAt); // اشتقاق من وقت الفتح
+  return null;
+};
+
+// اليوم الذي تدخل فيه الوردية الجردَ — المقفلة فقط
+export const shiftDayKey = (s) => (s && s.status === "closed") ? shiftBusinessDay(s) : null;
 
 export const closedShiftsOfDay = (shifts, dayKeyStr, branch = null) =>
   (shifts || [])
     .filter(s => shiftDayKey(s) === dayKeyStr && (branch === null || (s.branch || "main") === branch))
-    .sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+    // v46: الترتيب بوقت الفتح — هو تسلسل العمل الحقيقي (صباحية ← مسائية ← ليلية)
+    .sort((a, b) => new Date(a.openedAt || a.closedAt) - new Date(b.openedAt || b.closedAt));
+
+// v46: ورديات اليوم التي ما زالت مفتوحة — الجرد ناقص ما دامت موجودة
+export const openShiftsOfDay = (shifts, dayKeyStr, branch = null) =>
+  (shifts || []).filter(s =>
+    s.status === "open" &&
+    shiftBusinessDay(s) === dayKeyStr &&
+    (branch === null || (s.branch || "main") === branch));
 
 export const listBusinessDays = (shifts) => {
   const set = new Set();
@@ -86,6 +118,7 @@ export const sumShifts = (list) => (list || []).reduce((a, s) => ({
   totalSales:       a.totalSales       + N(s.totalSales),
   expensesTotal:    a.expensesTotal    + N(s.expensesTotal),
   secExpensesTotal: a.secExpensesTotal + N(s.secExpensesTotal),
+  debtSettledCash:  a.debtSettledCash  + N(s.debtSettledCash), // v46
   openingCash:      a.openingCash      + N(s.openingCash),
   expectedCash:     a.expectedCash     + N(s.expectedCash),
   countedCash:      a.countedCash      + N(s.countedCash),
@@ -93,8 +126,36 @@ export const sumShifts = (list) => (list || []).reduce((a, s) => ({
 }), {
   shiftsCount: 0, ordersCount: 0, cashSales: 0, cardSales: 0, tronSales: 0,
   debtTotal: 0, compTotal: 0, totalSales: 0, expensesTotal: 0, secExpensesTotal: 0,
+  debtSettledCash: 0,
   openingCash: 0, expectedCash: 0, countedCash: 0, difference: 0,
 });
+
+// ══════════════════════════════════════════════════════════════
+// v46: معادلة النقد المتوقّع — مصدر واحد للحقيقة
+// ──────────────────────────────────────────────────────────────
+// كانت المعادلة مكتوبة حرفياً في ثلاثة مواضع داخل Features.jsx (العرض
+// اللحظي، الإقفال، الإغلاق الإداري). أي تعديل في أحدها كان يخلق تعارضاً
+// صامتاً بين ما يراه الكاشير وما يُحفَظ في السجل. الآن دالة واحدة.
+//
+// المكوّنات ولماذا:
+//   + الافتتاحي        نقد بدأت به الوردية
+//   + النقدي           ثمن البضاعة المقبوض نقداً
+//   + الترون           إكرامية نقدية فوق الفاتورة — نقدها في الدرج فعلاً،
+//                      لذا يدخل المتوقَّع. (وهو خارج المبيعات والربح لأنه
+//                      ليس إيراد بضاعة — انظر orderSale/calcNetProfit.)
+//   + نقد سداد الديون  مبالغ ديون سابقة قُبضت نقداً خلال الوردية
+//   − المصاريف         المصاريف اليومية تُدفَع من الدرج
+//   (المصاريف الثانوية لا تمسّ الدرج ⇒ لا تدخل المعادلة إطلاقاً)
+//   (البطاقة لا تدخل الدرج ⇒ لا تدخل المعادلة)
+// ══════════════════════════════════════════════════════════════
+export const shiftExpectedCash = (openingCash, sum) => {
+  const n = (v) => +v || 0;
+  return n(openingCash)
+    + n(sum?.cashSales)
+    + n(sum?.tronSales)
+    + n(sum?.debtSettledCash)
+    - n(sum?.expensesTotal);
+};
 
 // طلبات اليوم المنسوبة لورديات هذا اليوم (لحساب التكلفة/الربح)
 export const ordersOfShifts = (orders, shiftList) => {
@@ -547,7 +608,10 @@ export const orderTron = (o) => Math.max(0, +(o?.tronAmount) || 0);
 // `total` يمثّل ثمن البضاعة فقط ولا يشمل الترون، لذا لا يُطرح منه هنا (كان يُطرح مرتين).
 export const orderCash = (o) => Math.max(0, +(o?.total) || 0);        // نقد البضاعة (الترون منفصل، يُضاف للمتوقع)
 export const orderCashFrac = (o) => 1; // البضاعة كاملة؛ الترون لا ينقص حصّة التكلفة
-// v39: قيمة البيع الكاملة (تشمل الترون) — للمبيعات/الإيراد/الربح. الترون يُستبعَد من نقد الدرج فقط.
+// v46 — تصحيح توثيقي (السلوك الرقمي لم يتغيّر، التعليقات كانت متناقضة عبر v36/v39/v40):
+// الترون إكرامية نقدية **فوق** الفاتورة. `total` ثمن البضاعة فقط ولا يشمله.
+// إذن: يدخل نقد الدرج (shiftExpectedCash) ويبقى خارج المبيعات والإيراد والربح
+// لأنه ليس إيراد بضاعة. تجده دائماً كبند مستقل باسم tronSales/tronTotal.
 export const orderSale = (o) => Math.max(0, +(o?.total) || 0);
 // ══════════════════════════════════════════════════════════════
 // v40 — تسعير حيّ: المنيو هو مصدر السعر الوحيد
@@ -627,7 +691,7 @@ export const calcShiftSummary = (orders, expenses, shiftId, openedAt, branch = "
     .reduce((s, o) => s + orderTron(o), 0);
   const debtTotal = shiftOrders.filter(o => o.status === "debt").reduce((s, o) => s + (o.total || 0), 0);
   const compTotal = shiftOrders.reduce((s, o) => s + (o.compAmount || 0), 0);
-  const totalSales = paid.reduce((s, o) => s + orderSale(o), 0); // v39: المبيعات الكاملة (تشمل الترون)
+  const totalSales = paid.reduce((s, o) => s + orderSale(o), 0); // v46: مبيعات البضاعة — الترون بند مستقل
 
   // v40: نفصل المصاريف اليومية (تمسّ الصندوق) عن الثانوية (بند منفصل لا يمسّ الصندوق)
   const inShiftWindow = (e) => {

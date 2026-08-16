@@ -13,6 +13,10 @@ import ShiftReplay from "./ShiftReplay.jsx";   // v45
 // v42: شبكة أمان الجرد اليومي عند تدوير منتصف ليل غرينتش
 import { notifyTelegram, buildDailySummary } from "./lib/telegram.js";
 import { buildDailyPacket, previousDayKey, shouldSendDaily } from "./lib/dailyReport.js";
+import { businessDayKey } from "./lib/utils.js"; // v46: مسح آخر 7 أيام في شبكة الأمان
+import { CashDrawerBar } from "./CashierTools.jsx";                       // v47
+import { StaleShiftAlert, OpeningChecklist } from "./OpeningChecklist.jsx"; // v47
+import { SyncHealthPanel, ReconcileTab } from "./AdminTools.jsx";          // v47
 
 import { BarTab, HookahTab } from "./StationScreens.jsx";
 import { NewOrderTab, OrdersTab, CashierTab, DebtsTab, ExpensesTab } from "./OperationScreens.jsx";
@@ -169,15 +173,28 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     const tick = () => {
       try {
         if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-        const prev = previousDayKey();
-        if (!shouldSendDaily(store, settings, prev)) return;
+        // ══════════════════════════════════════════════════════════
+        // v46: امسح آخر 7 أيام لا اليوم السابق وحده.
+        // كان الفحص يقتصر على previousDayKey()، فلو انقطع الجهاز يومين
+        // أو أُرسل جرد الأمس فقط، تسقط الأيام الأقدم نهائياً ولا تُرسَل
+        // أبداً. نبدأ من الأقدم فالأحدث ليصل الترتيب صحيحاً على تلغرام،
+        // ونرسل يوماً واحداً في كل نبضة حتى لا نُغرق القناة دفعةً واحدة.
+        // ══════════════════════════════════════════════════════════
+        const DAY_MS = 86400000;
+        const base = new Date();
+        let target = null;
+        for (let back = 7; back >= 1; back--) {
+          const key = businessDayKey(new Date(base.getTime() - back * DAY_MS));
+          if (shouldSendDaily(store, settings, key)) { target = key; break; }
+        }
+        if (!target) return;
         const targets = settings?.telegramTargets || [];
-        const packet = buildDailyPacket(store, prev);
+        const packet = buildDailyPacket(store, target);
         if (targets.length) {
           notifyTelegram(targets, "daily",
             buildDailySummary(packet, settings?.cafeName || "ناردين كافيه", settings?.currency || "ل.س"));
         }
-        store.setSettings(p => ({ ...p, lastDailySent: prev }));
+        store.setSettings(p => ({ ...p, lastDailySent: target }));
       } catch (e) { console.warn("daily rollover:", e); }
     };
     const t0 = setTimeout(tick, 15000);          // بعد استقرار التحميل والمزامنة
@@ -208,6 +225,8 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     ["settings","⚙","الإعدادات"],
     ["activity","📋","سجل النشاط"],
     ["replay","🔁","إعادة تشغيل الوردية"],
+    ["reconcile","⚖","المطابقة الثلاثية"],
+    ["synchealth","☁","صحة المزامنة"],
     ["outdoor_admin","🌿","الحديقة — أدمن"],
   ];
   const navItems=navDef.filter(([t])=>canAccess(user.role,t));
@@ -304,7 +323,26 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
       {/* التنقّل استُبدل بالشريط السفلي اللمسي BottomNav (v8.4) */}
 
       {/* Content */}
+      {/* ══════════════════════════════════════════════════════════════
+          v47: شريط درج الصندوق الحيّ — ثابت أسفل الترويسة للكاشير والأدمن.
+          الكاشير كان يكتشف وضع صندوقه لحظة الإقفال فقط، حين يستحيل تتبّع
+          مصدر أي فرق. الآن الرقم المتوقّع وعدد الفواتير وحالة طابور
+          المزامنة حاضرة طوال الوردية.
+          ══════════════════════════════════════════════════════════════ */}
+      {["admin","cashier"].includes(user.role) && (
+        <CashDrawerBar store={store} user={user} settings={settings}
+          branch="main" onOpenShifts={()=>setTab("shifts")} />
+      )}
+
       <main style={{flex:1,padding:16,paddingBottom:96,maxWidth:1280,width:"100%",margin:"0 auto"}}>
+        {/* v47: تنبيه الوردية المتروكة — يظهر فوق أي شاشة حتى تُقفَل */}
+        <StaleShiftAlert store={store} user={user} onGoToShifts={()=>setTab("shifts")} />
+
+        {/* v47: قائمة تحضير الافتتاح — على لوحة التحكم وشاشة البار */}
+        {["dashboard","bar"].includes(tab) && ["admin","cashier","bar","worker"].includes(user.role) && (
+          <OpeningChecklist store={store} user={user} showToast={showToast} settings={settings} />
+        )}
+
         <ErrorBoundary key={tab}>
         <React.Suspense fallback={<div style={{textAlign:"center",padding:40,color:"var(--sub)",fontSize:14}}>⏳ جارٍ التحميل...</div>}>
         {tab==="dashboard"  &&canAccess(user.role,"dashboard") &&<DashboardTab   store={store} dm={dm} settings={settings} user={user}/>}
@@ -332,6 +370,8 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         {tab==="settings"   &&canAccess(user.role,"settings")      &&<SettingsTab    store={store} showToast={showToast} dm={dm} user={user}/>}
         {tab==="activity"   &&canAccess(user.role,"activity")      &&<div className="fade-in" style={{padding:16,maxWidth:720,margin:"0 auto"}}><ActivityLog/></div>}
         {tab==="replay"     &&canAccess(user.role,"replay")        &&<ShiftReplay    store={store} settings={settings}/>}
+        {tab==="reconcile"  &&canAccess(user.role,"reconcile")     &&<ReconcileTab   store={store} settings={settings} dm={dm}/>}
+        {tab==="synchealth" &&canAccess(user.role,"synchealth")    &&<div className="fade-in"><SyncHealthPanel store={store} showToast={showToast}/></div>}
         {tab==="outdoor_admin"&&canAccess(user.role,"outdoor_admin")&&<OutdoorAdminTab store={store} showToast={showToast} dm={dm} settings={settings} user={user}/>}
         </React.Suspense>
         </ErrorBoundary>

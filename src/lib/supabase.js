@@ -170,6 +170,11 @@ export const outboxPendingIds = (table) => {
 
 export const outboxCount = () => loadOutbox().length;
 
+// v47: لقطة كاملة للطابور — تُغذّي لوحة صحة المزامنة (بلا صفوف البيانات
+// نفسها، فالغرض تشخيصي: أي جدول، منذ متى، وكم محاولة فشلت).
+export const outboxSnapshot = () =>
+  loadOutbox().map(e => ({ table: e.table, id: e.id, op: e.op, ts: e.ts, tries: e.tries || 0 }));
+
 // محاولة تفريغ الطابور — تُستدعى عند التحميل/عودة الاتصال/فتح التطبيق
 export const flushOutbox = async () => {
   if (!supabase || flushing) return;

@@ -72,6 +72,29 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
     setBusy(m=>{const n={...m};delete n[id];return n;});
     if(r&&r.ok===false&&r.reason!=="noop") showToast("⚠ تعذّر تعديل المخزون — أعد المحاولة","error");
   };
+  // ══════════════════════════════════════════════════════════════
+  // v47 — «نفد الآن»: زرّ واحد يُصفّر الرصيد فوراً
+  // ──────────────────────────────────────────────────────────────
+  // حين ينفد صنف فعلياً، كان على عامل البار أن يضغط «−» مراراً حتى يصل
+  // الصفر — فيؤجّلها، ويستمرّ الكاشير في بيع صنف غير موجود حتى يفاجَأ
+  // الزبون. الآن ضغطة واحدة تُصفّره، فيختفي من شاشة الطلب على كل الأجهزة
+  // خلال ثانية (المخزون صفر ⇒ الصنف غير متاح).
+  //
+  // نُرسل الفارق السالب كاملاً لا قيمةً مطلقة، فيبقى التعديل ذرّياً
+  // ومسجَّلاً في stock_movements بسبب صريح «نفد» — قابلاً للمراجعة.
+  // ══════════════════════════════════════════════════════════════
+  const [outAsk,setOutAsk]=useState(null);
+  const markOutOfStock=async(item)=>{
+    const cur=+item.stock||0;
+    setOutAsk(null);
+    if(cur<=0){ showToast("الصنف منفد أصلاً","warn"); return; }
+    setBusy(m=>({...m,[item.id]:true}));
+    const r=await store.adjustStock(item.id,-cur,{...moveMeta("out_of_stock","نفد أثناء الوردية")});
+    setBusy(m=>{const n={...m};delete n[item.id];return n;});
+    if(r&&r.ok===false&&r.reason!=="noop"){ showToast("⚠ تعذّر التصفير — أعد المحاولة","error"); return; }
+    showToast(`🚫 ${item.name} — نفد وأُخفي من شاشة الطلب`,"warn");
+  };
+
   const markReady=(order)=>{
     store.setOrders(p=>p.map(o=>{
       if(o.id!==order.id) return o;
@@ -87,6 +110,28 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
 
   return(
     <div className="fade-in">
+      {/* v47: تأكيد «نفد الآن» — الفعل غير قابل للتراجع بضغطة، فيستحق سؤالاً */}
+      {outAsk&&(
+        <div onClick={e=>{if(e.target===e.currentTarget)setOutAsk(null);}}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:1200,display:"flex",alignItems:"center",justifyContent:"center",padding:18}}>
+          <div className="card fade-in" style={{width:"100%",maxWidth:340,textAlign:"center"}}>
+            <div style={{fontSize:38,marginBottom:6}}>🚫</div>
+            <h3 style={{fontWeight:900,fontSize:16,marginBottom:8}}>تأكيد نفاد الصنف</h3>
+            <p style={{fontSize:12.5,color:"var(--sub)",lineHeight:1.9,marginBottom:14}}>
+              سيُصفَّر رصيد <b style={{color:"var(--text)"}}>{outAsk.name}</b> من
+              <b style={{color:"#c62828"}}> {(+outAsk.stock||0)}</b> إلى صفر، ويختفي فوراً
+              من شاشة الطلب على كل الأجهزة.
+              <br/>تُسجَّل الحركة في سجل المخزون باسمك.
+            </p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setOutAsk(null)}
+                style={{flex:1,padding:11,borderRadius:10,border:"1px solid var(--border)",background:"var(--card2)",color:"var(--text)",fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>تراجع</button>
+              <button onClick={()=>markOutOfStock(outAsk)}
+                style={{flex:1,padding:11,borderRadius:10,border:"none",background:"#c62828",color:"#fff",fontWeight:900,cursor:"pointer",fontFamily:"inherit"}}>نعم، نفد</button>
+            </div>
+          </div>
+        </div>
+      )}
       <h2 style={{fontSize:18,fontWeight:900,marginBottom:14}}>🥤 لوحة البار</h2>
       <h3 style={{fontSize:14,fontWeight:800,marginBottom:10,color:"#c62828"}}>⏳ طلبات البار ({barOrders.length})</h3>
       {!barOrders.length?(
@@ -156,6 +201,16 @@ export function BarTab({store,user,showToast,addNotification,dm,settings}){
                 </button>
               )}
               <span style={{fontWeight:900,fontSize:15,minWidth:30,textAlign:"center"}}>{item.stock}</span>
+              {/* v47: نفد الآن — تصفير فوري بضغطة واحدة */}
+              {(+item.stock||0)>0&&(
+                <button onClick={()=>setOutAsk(item)} disabled={!!busy[item.id]}
+                  title="نفد الآن — يُصفّر الرصيد ويُخفي الصنف من شاشة الطلب"
+                  style={{height:30,padding:"0 9px",background:"rgba(198,40,40,.12)",color:"#c62828",
+                    border:"1.5px solid rgba(198,40,40,.35)",borderRadius:8,fontWeight:900,fontSize:11,
+                    cursor:busy[item.id]?"wait":"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                  🚫 نفد
+                </button>
+              )}
             </div>
             {/* v41: إضافة بكميّة حرّة — زيادة فقط */}
             <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
@@ -259,6 +314,29 @@ export function HookahTab({store,user,showToast,addNotification,dm,settings}){
   const bumpStock=async(id)=>{ const q=readQty(addQty,id); setAddQty(m=>({...m,[id]:""})); await updateStock(id,q); showToast(`➕ أُضيف ${q} إلى المخزون`,"success"); };
   const qtyBox={width:56,height:30,textAlign:"center",fontWeight:800,fontSize:13,borderRadius:8,border:"1.5px solid var(--border)",background:"var(--card2)",color:"inherit",fontFamily:"inherit"};
   const chip=(active)=>({minWidth:30,height:26,padding:"0 7px",borderRadius:7,border:"none",cursor:"pointer",fontWeight:800,fontSize:11,background:active?"rgba(106,27,154,.3)":"rgba(106,27,154,.12)",color:"#6a1b9a"});
+  // ══════════════════════════════════════════════════════════════
+  // v47 — «نفد الآن»: زرّ واحد يُصفّر الرصيد فوراً
+  // ──────────────────────────────────────────────────────────────
+  // حين ينفد صنف فعلياً، كان على عامل البار أن يضغط «−» مراراً حتى يصل
+  // الصفر — فيؤجّلها، ويستمرّ الكاشير في بيع صنف غير موجود حتى يفاجَأ
+  // الزبون. الآن ضغطة واحدة تُصفّره، فيختفي من شاشة الطلب على كل الأجهزة
+  // خلال ثانية (المخزون صفر ⇒ الصنف غير متاح).
+  //
+  // نُرسل الفارق السالب كاملاً لا قيمةً مطلقة، فيبقى التعديل ذرّياً
+  // ومسجَّلاً في stock_movements بسبب صريح «نفد» — قابلاً للمراجعة.
+  // ══════════════════════════════════════════════════════════════
+  const [outAsk,setOutAsk]=useState(null);
+  const markOutOfStock=async(item)=>{
+    const cur=+item.stock||0;
+    setOutAsk(null);
+    if(cur<=0){ showToast("الصنف منفد أصلاً","warn"); return; }
+    setBusy(m=>({...m,[item.id]:true}));
+    const r=await store.adjustStock(item.id,-cur,{...moveMeta("out_of_stock","نفد أثناء الوردية")});
+    setBusy(m=>{const n={...m};delete n[item.id];return n;});
+    if(r&&r.ok===false&&r.reason!=="noop"){ showToast("⚠ تعذّر التصفير — أعد المحاولة","error"); return; }
+    showToast(`🚫 ${item.name} — نفد وأُخفي من شاشة الطلب`,"warn");
+  };
+
   const markReady=(order)=>{
     store.setOrders(p=>p.map(o=>{
       if(o.id!==order.id) return o;

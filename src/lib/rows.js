@@ -50,6 +50,71 @@ export const rowOfOrder = (o) => ({
 // fallback لقاعدة لم تُرقَّ (لا stock_deducted/updated_at/tron_shift_id)
 export const rowOfOrderLegacy = (o) => { const { stock_deducted, updated_at, tron_shift_id, ...r } = rowOfOrder(o); return r; };
 
+// v46 — مُسلسِل الفاتورة (نقي، ليمرّ بالطابور الدائم كالطلبات)
+export const rowOfReceipt = (r) => ({
+  id: r.id,
+  order_id: r.orderId || null,
+  order_num: r.orderNum || "",
+  customer_name: r.customerName || "",
+  table_num: String(r.tableNum || ""),
+  items: r.items || [],
+  total: r.total || 0,
+  discount: r.discount || 0,
+  payment_type: r.paymentType || "cash",
+  notes: r.notes || "",
+  created_by: r.createdBy || "",
+  created_at: r.createdAt || new Date().toISOString(),
+  cafe_name: r.cafeName || "Nardeen Caffe",
+  tron_amount: r.tronAmount || 0,
+  branch: r.branch || "main",
+});
+
+// ══════════════════════════════════════════════════════════════
+// v46 — مُسلسِل الوردية
+// كان مكتوباً داخل store.js فتعذّر تمريره عبر الطابور الدائم، وكانت
+// الورديات تُكتب بمسار «أطلق وانسَ»: أي انقطاع أو تجاوز مهلة يُفقد
+// الإقفال نهائياً بينما تعرض الشاشة رسالة نجاح. هنا صار نقياً وقابلاً
+// للطابور — وهذا هو إصلاح «أقفل ويعطي نجاح ولا تقفل».
+// ══════════════════════════════════════════════════════════════
+export const rowOfShift = (s) => ({
+  id: s.id,
+  user_id: s.userId || null,
+  user_name: s.userName || "",
+  branch: s.branch || "main",
+  opened_at: s.openedAt || new Date().toISOString(),
+  closed_at: s.closedAt || null,
+  opening_cash: s.openingCash || 0,
+  expected_cash: s.expectedCash || 0,
+  counted_cash: s.countedCash || 0,
+  difference: s.difference || 0,
+  total_sales: s.totalSales || 0,
+  cash_sales: s.cashSales || 0,
+  card_sales: s.cardSales || 0,
+  tron_sales: s.tronSales || 0,
+  debt_total: s.debtTotal || 0,
+  comp_total: s.compTotal || 0,
+  orders_count: s.ordersCount || 0,
+  expenses_total: s.expensesTotal || 0,
+  sec_expenses_total: s.secExpensesTotal || 0,  // v46
+  debt_settled_cash: s.debtSettledCash || 0,    // v46
+  business_day: s.businessDay || null,          // v46
+  status: s.status || "open",
+  closed_by_id: s.closedById || null,           // v44
+  closed_by_name: s.closedByName || "",         // v44
+  notes: s.notes || "",
+  shift_type: s.shiftType || "",                // v31.6
+  created_at: s.createdAt || new Date().toISOString(),
+});
+
+// fallback لقاعدة لم تُنفَّذ عليها هجرة v46 — يمنع فشل الكتابة كلياً.
+// ملاحظة: مع هذا الارتداد يضيع نوع الوردية واليوم المحاسبي، لذا تُظهر
+// الواجهة تحذيراً يطالب بتنفيذ الهجرة (انظر db/migrations/..._v46_...sql).
+export const rowOfShiftLegacy = (s) => {
+  const { sec_expenses_total, debt_settled_cash, business_day,
+          closed_by_id, closed_by_name, shift_type, ...r } = rowOfShift(s);
+  return r;
+};
+
 export const mapOrder = o => ({
   ...o,
   orderNum:     o.order_num     ?? o.orderNum     ?? "",

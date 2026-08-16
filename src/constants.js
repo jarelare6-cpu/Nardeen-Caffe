@@ -85,6 +85,8 @@ export const PERMISSIONS = {
   customers:    ["admin","cashier"],
   activity:     ["admin"],
   replay:       ["admin"],            // v45: إعادة تشغيل الوردية + كاشف الفاقد
+  reconcile:    ["admin"],            // v47: المطابقة الثلاثية (ورديات/طلبات/فواتير)
+  synchealth:   ["admin"],            // v47: لوحة صحة المزامنة
   customer_home:["customer"],
   myorders:     ["customer"],
 };
