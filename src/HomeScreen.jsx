@@ -14,6 +14,7 @@ import ShiftReplay from "./ShiftReplay.jsx";   // v45
 import { notifyTelegram, buildDailySummary } from "./lib/telegram.js";
 import { buildDailyPacket, previousDayKey, shouldSendDaily } from "./lib/dailyReport.js";
 import { businessDayKey } from "./lib/utils.js"; // v46: مسح آخر 7 أيام في شبكة الأمان
+import { claimReport } from "./lib/supabase.js";  // v47.2: قفل إرسال التقارير
 import { CashDrawerBar } from "./CashierTools.jsx";                       // v47
 import { StaleShiftAlert, OpeningChecklist } from "./OpeningChecklist.jsx"; // v47
 import { SyncHealthPanel, ReconcileTab } from "./AdminTools.jsx";          // v47
@@ -170,7 +171,7 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
   // ══════════════════════════════════════════════════════════════
   useEffect(() => {
     if (!user || !["admin", "cashier"].includes(user.role)) return;
-    const tick = () => {
+    const tick = async () => {
       try {
         if (typeof navigator !== "undefined" && navigator.onLine === false) return;
         // ══════════════════════════════════════════════════════════
@@ -180,14 +181,40 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
         // أبداً. نبدأ من الأقدم فالأحدث ليصل الترتيب صحيحاً على تلغرام،
         // ونرسل يوماً واحداً في كل نبضة حتى لا نُغرق القناة دفعةً واحدة.
         // ══════════════════════════════════════════════════════════
+        // v47.1: سقف التصريف قابل للضبط. عند أول نشر بعد إصلاح عطل
+        // shift_type تكون هناك أيام متراكمة لم يصل جردها قط، فتُرسَل
+        // يوماً واحداً كل نبضة حتى اللحاق بالحاضر ثم تتوقف. لتخطّي
+        // المتأخرات كلياً: اضبط settings.lastDailySent على تاريخ اليوم.
         const DAY_MS = 86400000;
+        const backfill = Math.max(1, Math.min(30, +settings?.dailyBackfillDays || 7));
         const base = new Date();
         let target = null;
-        for (let back = 7; back >= 1; back--) {
+        for (let back = backfill; back >= 1; back--) {
           const key = businessDayKey(new Date(base.getTime() - back * DAY_MS));
           if (shouldSendDaily(store, settings, key)) { target = key; break; }
         }
         if (!target) return;
+
+        // ══════════════════════════════════════════════════════════
+        // v47.2 — الحجز الذرّي قبل الإرسال
+        // ──────────────────────────────────────────────────────────
+        // هذه الشبكة تعمل على **كل** جهاز أدمن/كاشير. كان الفحص يعتمد
+        // على settings.lastDailySent وحده، وهو ليس قفلاً: أجهزة تنبض
+        // في النافذة نفسها ترى الختم قديماً فترسل جميعها، وأي حفظ
+        // إعدادٍ آخر من جهاز ثالث يمحو الختم فيعود الإرسال.
+        // النتيجة كانت أربع رسائل لجرد اليوم نفسه.
+        // الآن: أول جهاز يحجز الصفّ في report_log يرسل، والبقية تصمت.
+        // ══════════════════════════════════════════════════════════
+        const claim = await claimReport(`daily:${target}`,
+          { kind: "daily", dayKey: target, sentBy: user?.name || "" });
+        if (!claim.claimed) {
+          // جهاز آخر أرسله — نُحدّث ختمنا المحلي فقط ونصمت
+          if (claim.reason === "taken" || claim.reason === "local") {
+            store.setSettings(p => ({ ...p, lastDailySent: target }));
+          }
+          return;
+        }
+
         const targets = settings?.telegramTargets || [];
         const packet = buildDailyPacket(store, target);
         if (targets.length) {
@@ -200,7 +227,10 @@ export function HomeScreen({user,store,onLogout,showToast,addNotification,unread
     const t0 = setTimeout(tick, 15000);          // بعد استقرار التحميل والمزامنة
     const iv = setInterval(tick, 10 * 60 * 1000); // ثم كل 10 دقائق
     return () => { clearTimeout(t0); clearInterval(iv); };
-  }, [user, store.shifts, store.orders, settings?.lastDailySent]);
+    // v47.2: أُزيل store.orders من التبعيات — كان أي تغيّر في طلب (وهي
+    // تتغيّر عشرات المرات في الساعة) يهدم المؤقّت ويعيد بناءه، فيتحوّل
+    // الفحص الدوري إلى سلوك غير متوقّع مرتبط بحركة الطلبات لا بالوقت.
+  }, [user, store.shifts, settings?.lastDailySent]);
 
   const navDef=[
     ["dashboard","📊","لوحة التحكم"],

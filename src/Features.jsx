@@ -6,7 +6,7 @@
 // (نظام الولاء 6 مدمج داخل CashierTab في App.jsx)
 // ══════════════════════════════════════════════════════════════
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { SUPABASE_READY, sbDelete, logActivity } from "./lib/supabase.js";
+import { SUPABASE_READY, sbDelete, logActivity, claimReport } from "./lib/supabase.js"; // v47.2
 import { notifyTelegram, buildShiftReport, buildDailySummary, buildWeeklySummary } from "./lib/telegram.js";
 import { buildDailyPacket, shouldSendOnClose } from "./lib/dailyReport.js"; // v46
 import { DenominationCounter, denominationNote, HandoverPanel, handoverNote } from "./CashierTools.jsx"; // v47
@@ -522,7 +522,12 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
     try {
       const cafeName = settings?.cafeName || "ناردين كافيه";
       const targets = settings?.telegramTargets || [];
-      notifyTelegram(targets, "shift", buildShiftReport(closed, cafeName, CUR));
+      // v47.2: تقرير الوردية محجوز بمعرّفها — إعادة إقفال أو إغلاق إداري
+      // لاحق على الوردية نفسها لن يُرسل تقريراً ثانياً.
+      if ((await claimReport(`shift:${closed.id}`,
+            { kind: "shift", dayKey: closed.businessDay || "", sentBy: user?.name || "" })).claimed) {
+        notifyTelegram(targets, "shift", buildShiftReport(closed, cafeName, CUR));
+      }
 
       // ══════════════════════════════════════════════════════════════
       // v46 — الجرد اليومي يُرسَل عند إقفال **آخر** وردية في اليوم
@@ -538,7 +543,10 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
       // اختيار النوع أو اختلف عدد الورديات يوماً ما.
       // ══════════════════════════════════════════════════════════════
       const dayKey = shouldSendOnClose(store, settings, closed);
-      if (dayKey) {
+      // v47.2: احجز الإرسال ذرّياً قبل أن تُرسل. أجهزة أخرى قد تُقفل أو
+      // تُشغّل شبكة الأمان في اللحظة نفسها — الحجز يجعل واحداً فقط يرسل.
+      if (dayKey && (await claimReport(`daily:${dayKey}`,
+            { kind: "daily", dayKey, sentBy: user?.name || "" })).claimed) {
         const daily = buildDailyPacket(store, dayKey, [closed]);
         notifyTelegram(targets, "daily", buildDailySummary(daily, cafeName, CUR));
 
@@ -553,7 +561,9 @@ export function ShiftCloseTab({ store, user, showToast, dm, settings }) {
         if (new Date().getDay() === 4) { // 4 = الخميس
           const wkStart = weekStartThursday();
           const wkKey = wkStart.toISOString().slice(0, 10);
-          if ((settings?.lastWeeklySent || "") !== wkKey) {
+          if ((settings?.lastWeeklySent || "") !== wkKey
+              && (await claimReport(`weekly:${wkKey}`,
+                    { kind: "weekly", dayKey: wkKey, sentBy: user?.name || "" })).claimed) {
             const inWeek = (iso) => iso && new Date(iso) >= wkStart;
             const paidWk = (store.orders || []).filter(o => o.status === "paid" && inWeek(o.paidAt || o.createdAt));
             const expWk = (store.expenses || []).filter(e => !e.isSecondary && !e.isComplimentary && inWeek(e.date)).reduce((s, e) => s + (e.amount || 0), 0);

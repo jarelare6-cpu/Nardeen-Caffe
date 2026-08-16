@@ -96,10 +96,26 @@ export const dayIsOver = (dayKey, ref = new Date()) =>
 // تنتمي إليه. الوردية الليلية تُفتح داخل اليوم وتُقفَل بعد حدّه، فتبقى
 // «مفتوحة تنتمي لليوم» حتى تُقفَل — وعندها يكتمل اليوم فعلياً.
 // ══════════════════════════════════════════════════════════════════════
-export const dayIsComplete = (shifts, dayKey, extraShifts = []) => {
+export const dayIsComplete = (shifts, dayKey, extraShifts = [], ref = new Date()) => {
   if (!dayKey) return false;
+
+  // ══════════════════════════════════════════════════════════════════
+  // v47.1 — الشرط الحاسم: **اليوم المحاسبي انقضى فعلاً**
+  // ──────────────────────────────────────────────────────────────────
+  // بدونه كان يقع عطل الإرسال المبكّر: عند إقفال الوردية المسائية
+  // (~19:00 غرينتش) لم تكن الليلية قد فُتحت بعد، فتمرّ دقائق لا توجد
+  // فيها وردية مفتوحة تخصّ اليوم — فيبدو اليوم «مكتملاً» ويُرسَل جرده
+  // ناقصاً الوردية الليلية كاملةً، ثم يُختم فلا يُعاد إرساله أبداً.
+  //
+  // مع هذا الشرط: الليلية تُقفَل ~03:00 غرينتش من الغد، أي بعد انقضاء
+  // اليوم، فيُرسَل الجرد عند إقفالها وهو التوقيت الصحيح تماماً.
+  // والفجوة بين المسائية والليلية تقع داخل اليوم الجاري ⇒ لا إرسال.
+  // ══════════════════════════════════════════════════════════════════
+  if (businessDayKey(ref) === dayKey) return false;
+
   const all = mergeShifts(shifts, extraShifts);
   if (!closedShiftsOfDay(all, dayKey, null).length) return false;
+  // وردية من ذلك اليوم ما زالت مفتوحة ⇒ ننتظر إقفالها بدل جرد ناقص
   if (openShiftsOfDay(all, dayKey, null).length) return false;
   return true;
 };
@@ -109,11 +125,11 @@ export const dayIsComplete = (shifts, dayKey, extraShifts = []) => {
 // يُرسَل جرد اليوم الذي تنتمي إليه الوردية المُقفَلة للتوّ، بشرط أن تكون
 // آخر وردية فيه ولم يُرسَل جرده من قبل. يُعيد مفتاح اليوم أو null.
 // ══════════════════════════════════════════════════════════════════════
-export const shouldSendOnClose = (store, settings, closedShift) => {
+export const shouldSendOnClose = (store, settings, closedShift, ref = new Date()) => {
   const dayKey = shiftBusinessDay(closedShift);
   if (!dayKey) return null;
   if ((settings?.lastDailySent || "") === dayKey) return null;
-  if (!dayIsComplete(store.shifts, dayKey, [closedShift])) return null;
+  if (!dayIsComplete(store.shifts, dayKey, [closedShift], ref)) return null;
   return dayKey;
 };
 
@@ -124,7 +140,6 @@ export const shouldSendOnClose = (store, settings, closedShift) => {
 // ══════════════════════════════════════════════════════════════════════
 export const shouldSendDaily = (store, settings, dayKey, ref = new Date()) => {
   if (!dayKey) return false;
-  if (!dayIsOver(dayKey, ref)) return false;
   if ((settings?.lastDailySent || "") === dayKey) return false;
-  return dayIsComplete(store.shifts, dayKey);
+  return dayIsComplete(store.shifts, dayKey, [], ref);
 };

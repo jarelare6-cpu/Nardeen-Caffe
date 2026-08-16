@@ -215,6 +215,76 @@ if (typeof window !== "undefined") {
   window.addEventListener("online", () => { flushOutbox(); });
 }
 
+// ══════════════════════════════════════════════════════════════
+// v47.2 — حجز إرسال التقرير (قفل ذرّي بين الأجهزة)
+// ──────────────────────────────────────────────────────────────
+// المشكلة: شبكة أمان الجرد تعمل على كل جهاز أدمن/كاشير، والمنع الوحيد
+// للتكرار كان settings.lastDailySent — وهو ليس قفلاً:
+//   • جهازان ينبضان معاً ⇒ كلاهما يرى الختم قديماً ⇒ رسالتان.
+//   • app_settings صفٌّ مشترك؛ أي حفظ إعداد آخر يمحو الختم بقاعدة
+//     «آخر كتابة تفوز» ⇒ يعود الإرسال بعد أن استقرّ.
+//
+// الحل: INSERT على مفتاح أساسي هو معرّف التقرير. أول جهاز يفوز؛ البقية
+// يصطدمون بـ 23505 (مفتاح مكرر) فيصمتون. القاعدة هي الحَكَم لا التطبيق.
+//
+// حالات الارتداد المتعمّدة (نُرسل رغم تعذّر الحجز):
+//   • الجدول غير منشأ (هجرة v47.2 لم تُنفَّذ) ⇒ نعود للسلوك القديم
+//     بدل منع التقرير كلياً — تقرير مكرر أهون من تقرير مفقود.
+//   • السحابة غير مفعّلة (وضع محلي) ⇒ جهاز واحد، لا تعارض أصلاً.
+// أمّا انقطاع الشبكة فيمنع الإرسال: تلغرام لن يصل أصلاً، وشبكة الأمان
+// ستعيد المحاولة لاحقاً.
+// ══════════════════════════════════════════════════════════════
+const deviceId = () => {
+  try {
+    let id = localStorage.getItem("nc_dev_id");
+    if (!id) { id = "dev_" + Math.random().toString(36).slice(2, 10); localStorage.setItem("nc_dev_id", id); }
+    return id;
+  } catch { return "unknown"; }
+};
+
+export const claimReport = async (id, { kind = "daily", dayKey = "", sentBy = "", meta = null } = {}) => {
+  // حارس محلي سريع: يمنع التكرار على الجهاز نفسه حتى قبل ملامسة الشبكة
+  try {
+    const seen = JSON.parse(localStorage.getItem("nc_reports_sent") || "[]");
+    if (seen.includes(id)) return { claimed: false, reason: "local" };
+  } catch {}
+
+  const remember = () => {
+    try {
+      const seen = JSON.parse(localStorage.getItem("nc_reports_sent") || "[]");
+      localStorage.setItem("nc_reports_sent", JSON.stringify([id, ...seen].slice(0, 120)));
+    } catch {}
+  };
+
+  if (!supabase) { remember(); return { claimed: true, reason: "local_only" }; }
+
+  try {
+    const { error } = await withNet("claim:report", () =>
+      supabase.from("report_log").insert({
+        id, kind, day_key: dayKey, sent_by: sentBy, device: deviceId(),
+        sent_at: new Date().toISOString(), meta,
+      }));
+
+    if (!error) { remember(); return { claimed: true }; }
+
+    const msg = error.message || "";
+    // مفتاح مكرر ⇒ جهاز آخر أرسله بالفعل. هذا نجاح للنظام لا فشل.
+    if (/duplicate key|23505|already exists/i.test(msg)) {
+      remember();
+      return { claimed: false, reason: "taken" };
+    }
+    // الجدول غير منشأ ⇒ ارتدّ للسلوك القديم بدل كتم التقرير
+    if (/does not exist|schema cache|relation|PGRST205|PGRST202/i.test(msg)) {
+      remember();
+      return { claimed: true, reason: "no_table" };
+    }
+    reportSyncError("claimReport", "report_log", msg);
+    return { claimed: false, reason: "error" };
+  } catch (e) {
+    return { claimed: false, reason: "offline", message: String(e?.message || e) };
+  }
+};
+
 export const sbDeleteAll = async (table) => {
   if (!supabase) return;
   const { error } = await supabase.from(table).delete().neq("id", "__never__");
